@@ -52,12 +52,8 @@ class SeqOutTest extends AnyFunSuite{
     }
   }
 
-  /**
-   * @param maxDistanceBetweenTwoConsecutivePSN for example:
-   *  '0 2 1' distance between 0 and 1 is 2
-   *  '0 2 1 3 5 6 4' distance between 3 and 4 is 3, so the max distance of this seq is 3
-   */
-  class DisorderPsnGenerator(maxDistanceBetweenTwoConsecutivePSN:Int){
+  class DisorderPsnGenerator(bufferDepth:Int){
+    val maxDistanceBetweenTwoConsecutivePSN = bufferDepth-1
     var PSN: Int = -1
     def setPsn(psn:Int): Unit ={
       PSN = psn
@@ -89,9 +85,21 @@ class SeqOutTest extends AnyFunSuite{
   }
 
   def waitTargetPsn(dut:SeqOut, psn:Int): Unit ={
-    dut.clockDomain.waitSamplingWhere(
-      dut.io.tx.bth.psn.toInt == psn && dut.io.tx.valid.toBoolean && dut.io.tx.ready.toBoolean
-    )
+    var timeOut = 1000
+    while(
+      !(dut.io.tx.bth.psn.toInt == psn && dut.io.tx.valid.toBoolean && dut.io.tx.ready.toBoolean)
+    ){
+      timeOut -= 1
+      dut.clockDomain.waitRisingEdge()
+      if(timeOut==0){
+        simFailure(Seq(
+          s"sim time out when waiting psn = ${psn}, opsnReg = ${dut.opsnReg.toInt}",
+          s"rxOtherResp.psn = ${dut.io.rxOtherResp.bth.psn.toInt}, valid ${dut.io.rxOtherResp.valid.toBoolean}, ready ${dut.io.rxOtherResp.ready.toBoolean}",
+          s"tx.psn          = ${dut.io.tx.bth.psn.toInt}, valid ${dut.io.tx.valid.toBoolean}, ready ${dut.io.tx.ready.toBoolean}",
+          ).reduce((a,b)=>a++"\n"++b)
+        )
+      }
+    }
   }
 
   def simRxOtherRespSimple(dut:SeqOut, bufferDepth:Int): Unit ={
@@ -128,7 +136,6 @@ class SeqOutTest extends AnyFunSuite{
     // test 4 write until full
     dut.io.tx.ready #= false
     psnSetter.set(1000)
-    // add 1 is because the real capacity is this
     val fullPsn = 1000 + bufferDepth + 1
     rxOtherDriver.push((1000 to fullPsn).toList)
     // the 'ready' fall means full
@@ -138,7 +145,6 @@ class SeqOutTest extends AnyFunSuite{
   }
 
   def simRxOtherRespRandom(dut: SeqOut, bufferDepth:Int): Unit ={
-    SimTimeout(10000000)
     dut.clockDomain.forkStimulus(2)
     fork{
       while(true){
@@ -153,8 +159,11 @@ class SeqOutTest extends AnyFunSuite{
 
     for(_ <- 0 to 100){
       // the psn width is 24, so...
-      val psn = Random.nextInt(0xFFF)
-      val packetNum = Random.nextInt(0xFFF)
+      val psn = Random.nextInt(0xFFFFFF)
+      var packetNum = Random.nextInt(0xFFF)
+      if(psn+packetNum>0xFFFFFF){
+        packetNum = 0xFFFFFF - psn
+      }
       psnSetter.set(psn)
       disorderPsn.setPsn(psn)
       rxOtherDriver.push(disorderPsn.genNext(packetNum))
@@ -163,7 +172,7 @@ class SeqOutTest extends AnyFunSuite{
       }
     }
   }
-  test("rxOtherResp path test"){
+  test("rxOtherResp simple test"){
     val bufferDepth = 64
     SimConfig
       .withWave
@@ -172,10 +181,10 @@ class SeqOutTest extends AnyFunSuite{
   }
 
   test("rxOtherResp random test"){
-    val bufferDepth = 64
-    SimConfig
-      .withWave
-      .compile(new SeqOut(BusWidth.W128, bufferDepth, false))
-      .doSim(simRxOtherRespRandom(_, bufferDepth))
+    for(bufferDepth <- List(32, 64, 128, 256, 512)){
+      SimConfig
+        .compile(new SeqOut(BusWidth.W128, bufferDepth, false))
+        .doSim{simRxOtherRespRandom(_, bufferDepth)}
+    }
   }
 }
