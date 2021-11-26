@@ -19,7 +19,11 @@ class SeqOutTest extends AnyFunSuite{
       psnQueue ++= psnList
     }
 
-    fork{
+    def clear(): Unit ={
+      psnQueue.clear()
+    }
+
+    val driver = fork{
       while(true){
         if(psnQueue.nonEmpty){
           rx.bth.psn #= psnQueue.dequeue()
@@ -48,12 +52,14 @@ class SeqOutTest extends AnyFunSuite{
         qpAttr.epsn #= psn
         clockDomain.waitSamplingWhere(qpAttrUpdate.ready.toBoolean)
         qpAttrUpdate.valid #= false
-        println(s"psn is set to $psn")
+        // println(s"psn is set to $psn")
     }
   }
 
-  class DisorderPsnGenerator(bufferDepth:Int){
-    val maxDistanceBetweenTwoConsecutivePSN = bufferDepth-1
+  class DisorderPsnGenerator(maxDistance:Int){
+    // maxDistance define:
+    // [1 3 2 4] max distance is 2
+    // [1 3 2 4 6 7 5] max distance is 3
     var PSN: Int = -1
     def setPsn(psn:Int): Unit ={
       PSN = psn
@@ -62,21 +68,15 @@ class SeqOutTest extends AnyFunSuite{
       assert(PSN!=(-1))
       var psnList = (PSN until PSN+n).toList
       var moved = List.fill(n)(false)
-      var distance = maxDistanceBetweenTwoConsecutivePSN
+      var distance = maxDistance/2
       for(i <- psnList.indices){
-        if(!moved(i)){
-          val r = Random.nextInt(distance)
-          val j = i + r
-          if(j<psnList.length){
-            val t = psnList(j)
-            psnList = psnList.updated(j, psnList(i))
-            psnList = psnList.updated(i, t)
-            distance = distance + 1 - r
-            if(distance>maxDistanceBetweenTwoConsecutivePSN){
-              distance = maxDistanceBetweenTwoConsecutivePSN
-            }
-            moved = moved.updated(j, true)
-          }
+        val r = Random.nextInt(distance)
+        val j = i + r
+        if(j<psnList.length && !moved(i)){
+          val t = psnList(j)
+          psnList = psnList.updated(j, psnList(i))
+          psnList = psnList.updated(i, t)
+          moved = moved.updated(j, true)
         }
       }
       println(s"generate psn from $PSN until ${PSN+n}")
@@ -133,15 +133,13 @@ class SeqOutTest extends AnyFunSuite{
     waitTargetPsn(dut, 20520)
     test3End = true
 
-    // test 4 write until full
-    dut.io.tx.ready #= false
+    // test 4 construct a full
+    dut.io.tx.ready #= true
     psnSetter.set(1000)
-    val fullPsn = 1000 + bufferDepth + 1
-    rxOtherDriver.push((1000 to fullPsn).toList)
+    val fullPsn = 1000 + bufferDepth
+    rxOtherDriver.push(List(fullPsn))
     // the 'ready' fall means full
     dut.clockDomain.waitSamplingWhere(!dut.io.rxOtherResp.ready.toBoolean)
-    dut.io.tx.ready #= true
-    waitTargetPsn(dut, fullPsn)
   }
 
   def simRxOtherRespRandom(dut: SeqOut, bufferDepth:Int): Unit ={
