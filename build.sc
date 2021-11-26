@@ -23,8 +23,8 @@ object rocev2 extends CommonSpinalModule {
   object test extends Tests with TestModule.ScalaTest {
     def ivyDeps = Agg(ivy"org.scalatest::scalatest:3.2.10")
     def testFrameworks = Seq("org.scalatest.tools.Framework")
-    // def testOnly(args: String*) = T.command {
-    //   super.runMain("org.scalatest.run", args: _*)
-    // }
+    def testOnly(args: String*) = T.command {
+      super.runMain("org.scalatest.run", args: _*)
+    }
   }
 }

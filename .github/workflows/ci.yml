@@ -10,7 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - name: Run
+      - name: build and simulate
         run : |
+          sudo apt-get update
+          sudo apt-get install -y iverilog verilator
+          # Local install Cocotb and set PATH env
+          pip3 install cocotb
+          export PATH="$HOME/.local/bin:$PATH"
           ./run.sh
 
