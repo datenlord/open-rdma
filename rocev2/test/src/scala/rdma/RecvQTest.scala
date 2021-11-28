@@ -7,7 +7,6 @@ import spinal.core.sim._
 import spinal.lib._
 
 import scala.collection.mutable
-import scala.tools.nsc.doc.base.comment.Body
 import scala.util.Random
 
 /** The SeqOut module can be divided into two channels
@@ -68,7 +67,6 @@ class SeqOutTest extends AnyFunSuite {
       qpAttr.epsn #= psn
       clockDomain.waitSamplingWhere(qpAttrUpdate.ready.toBoolean)
       qpAttrUpdate.valid #= false
-      // println(s"psn is set to $psn")
     }
   }
 
@@ -97,14 +95,12 @@ class SeqOutTest extends AnyFunSuite {
           moved = moved.updated(j, true)
         }
       }
-      // println(s"generate psn from $PSN until ${PSN + n}")
       PSN += n
       psnList
     }
 
     def genNextOrder(n: Int): List[Int] = {
       val psnList = (PSN until PSN + n).toList
-      // println(s"generate psn from $PSN until ${PSN + n}")
       PSN += n
       psnList
     }
@@ -137,9 +133,9 @@ class SeqOutTest extends AnyFunSuite {
       if (timeOut == 0) {
         simFailure(
           Seq(
-            s"sim time out when waiting psn = ${psn}",
+            s"sim time out when waiting ${psn} PSN",
             s"rxOtherResp.psn = ${dut.io.rxOtherResp.bth.psn.toInt}, valid ${dut.io.rxOtherResp.valid.toBoolean}, ready ${dut.io.rxOtherResp.ready.toBoolean}",
-            s"rxReadResp.psn = ${dut.io.rxReadResp.bth.psn.toInt}, valid ${dut.io.rxReadResp.valid.toBoolean}, ready ${dut.io.rxReadResp.ready.toBoolean}",
+            s"rxReadResp.psn  = ${dut.io.rxReadResp.bth.psn.toInt}, valid ${dut.io.rxReadResp.valid.toBoolean}, ready ${dut.io.rxReadResp.ready.toBoolean}",
             s"tx.psn          = ${dut.io.tx.bth.psn.toInt}, valid ${dut.io.tx.valid.toBoolean}, ready ${dut.io.tx.ready.toBoolean}"
           ).reduce((a, b) => a ++ "\n" ++ b)
         )
@@ -294,17 +290,43 @@ class SeqOutTest extends AnyFunSuite {
     )
   }
 
+  val bufferDepthList = List(32, 64, 128, 256, 512)
+  var randomConfigs = bufferDepthList.zip(List.fill(5)(true)) ++ bufferDepthList.zip(List.fill(5)(false))
+
+  test("flush logic test") {
+    val bufferDepth = 64
+    SimConfig.withWave
+      .compile {
+        val dut = new SeqOut(BusWidth.W128, bufferDepth, true)
+        dut.rxOtherRespSort.flushed.simPublic()
+        dut
+      }
+      .doSim{dut=>
+        dut.clockDomain.forkStimulus(2)
+        val _ = setInputDrivers(dut)
+        for( _ <- 0 until bufferDepth){
+          dut.clockDomain.waitRisingEdge()
+          assert(!dut.rxOtherRespSort.flushed.toBoolean)
+        }
+        dut.clockDomain.waitRisingEdge()
+        assert(dut.rxOtherRespSort.flushed.toBoolean)
+      }
+  }
+
   test("rxOtherResp simple test") {
     val bufferDepth = 64
     SimConfig.withWave
       .compile(new SeqOut(BusWidth.W128, bufferDepth, false))
       .doSim(simRxOtherRespSimple(_, bufferDepth))
+    SimConfig.withWave
+      .compile(new SeqOut(BusWidth.W128, bufferDepth, true))
+      .doSim(simRxOtherRespSimple(_, bufferDepth))
   }
 
   test("rxOtherResp random test") {
-    for (bufferDepth <- List(32, 64, 128, 256, 512)) {
+    for ((bufferDepth, bootFlush) <- randomConfigs) {
       SimConfig.withWave
-        .compile(new SeqOut(BusWidth.W128, bufferDepth, false))
+        .compile(new SeqOut(BusWidth.W128, bufferDepth, bootFlush))
         .doSim { simRxOtherRespRandom(_, bufferDepth) }
     }
   }
@@ -313,13 +335,13 @@ class SeqOutTest extends AnyFunSuite {
     val bufferDepth = 64
     SimConfig.withWave
       .compile(new SeqOut(BusWidth.W128, bufferDepth, false))
-      .doSim(simSeqOut(_, bufferDepth))
+      .doSim { simSeqOut(_, bufferDepth) }
   }
 
   test("SeqOut test random") {
-    for (bufferDepth <- List(32, 64, 128, 256, 512)) {
+    for ((bufferDepth, bootFlush) <- randomConfigs) {
       SimConfig.withWave
-        .compile(new SeqOut(BusWidth.W128, bufferDepth, false))
+        .compile(new SeqOut(BusWidth.W128, bufferDepth, bootFlush))
         .doSim { simSeqOutRandom(_, bufferDepth) }
     }
   }
