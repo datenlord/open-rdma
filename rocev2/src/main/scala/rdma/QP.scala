@@ -85,6 +85,7 @@ class QP(busWidth: BusWidth) extends Component {
   sq.io.workReq <-/< io.workReq.continueWhen(sendContinueCond)
 
   val rq = new RecvQ(busWidth)
+  rq.io.qpAttr := io.qpAttr
   rq.io.rx <-/< reqRx
 
   Vec(sq.io.qpAttrUpdate, rq.io.qpAttrUpdate) <> StreamFork(
