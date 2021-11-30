@@ -27,10 +27,10 @@ class ReqVerifier(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val qpAttrUpdate = slave(Stream(Bits(QP_ATTR_MASK_WIDTH bits)))
-    val rx = slave(Stream(Fragment(RdmaDataBus(busWidth))))
-    val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
-    val txErr = master(Stream(Fragment(RdmaDataBus(busWidth))))
-    val txDup = master(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
+    val tx = master(Stream(RdmaDataBus(busWidth)))
+    val txDupResp = master(Stream(Fragment(RdmaDataBus(busWidth))))
+    val txErrResp = master(Stream(Fragment(RdmaDataBus(busWidth))))
   }
 
   val epsnReg = Reg(UInt(PSN_WIDTH bits)) init (0)
@@ -45,12 +45,21 @@ class ReqVerifier(busWidth: BusWidth) extends Component {
     epsnReg := io.qpAttr.epsn
   }
 
+  // TODO: implementation
   val outSel = U(0, 2 bits)
-  val outStreams =
-    StreamDemux(io.rx, select = outSel, portCount = 3)
-  io.tx <-/< outStreams(0)
-  io.txErr <-/< outStreams(1)
-  io.txDup <-/< outStreams(2)
+
+  val dupReqHandler = new DupReqHandler(busWidth)
+  val errReqHandler = new ErrReqHandler(busWidth)
+
+  Vec(io.tx, dupReqHandler.io.rx, errReqHandler.io.rx) <> StreamDemux(
+    io.rx,
+    select = outSel,
+    portCount = 3
+  )
+  val dupReqRespTx = dupReqHandler.io.tx
+  val errReqRespTx = errReqHandler.io.tx
+  io.txDupResp <-/< dupReqRespTx
+  io.txErrResp <-/< errReqRespTx
 }
 
 // If multiple duplicate reqeusts received, also ACK in PSN order;
@@ -62,20 +71,22 @@ class ReqVerifier(busWidth: BusWidth) extends Component {
 // Discard duplicate Atomic if not match original PSN (should not happen);
 class DupReqHandler(busWidth: BusWidth) extends Component {
   val io = new Bundle {
-    val rx = slave(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
     val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
   }
 
-  io.tx <-/< io.rx
+  // TODO: implementation
+  io.tx <-/< io.rx.addFragmentLast(False)
 }
 
 class ErrReqHandler(busWidth: BusWidth) extends Component {
   val io = new Bundle {
-    val rx = slave(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
     val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
   }
 
-  io.tx <-/< io.rx
+  // TOOD: implementation
+  io.tx <-/< io.rx.addFragmentLast(False)
 }
 
 // RQ must complete all previous requests before sending an NAK,
@@ -90,7 +101,7 @@ class ErrReqHandler(busWidth: BusWidth) extends Component {
 // RQ could return ACK before Send/Write finish saving data to main memory;
 class ReqHandler(busWidth: BusWidth) extends Component {
   val io = new Bundle {
-    val rx = slave(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
     val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
     val dmaReadReq = master(Stream(DmaReadReq()))
     val dmaReadResp = slave(Stream(Fragment(DmaReadResp())))
@@ -98,8 +109,8 @@ class ReqHandler(busWidth: BusWidth) extends Component {
     val dmaWriteResp = slave(Stream(DmaWriteResp()))
   }
 
-  // TODO: remove this
-  io.tx <-/< io.rx
+  // TODO: implementation
+  io.tx <-/< io.rx.addFragmentLast(False)
 }
 
 class SendReqHandler(busWidth: BusWidth) extends ReqHandler(busWidth) {}
@@ -118,24 +129,20 @@ class RecvQ(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val qpAttrUpdate = slave(Stream(Bits(QP_ATTR_MASK_WIDTH bits)))
-    val rx = slave(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
     val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
     val dmaReadReq = master(Stream(DmaReadReq()))
     val dmaReadResp = slave(Stream(Fragment(DmaReadResp())))
     val dmaWriteReq = master(Stream(Fragment(DmaWriteReq())))
     val dmaWriteResp = slave(Stream(DmaWriteResp()))
   }
+
   val reqVerifier = new ReqVerifier(busWidth)
   reqVerifier.io.qpAttr := io.qpAttr
   reqVerifier.io.rx <-/< io.rx
   val normReq = reqVerifier.io.tx
-  val errReqRespTx = reqVerifier.io.txErr
-  val dupReq = reqVerifier.io.txDup
 
-  val dupReqHandler = new DupReqHandler(busWidth)
-  dupReqHandler.io.rx <-/< dupReq
-  val dupReqRespTx = dupReqHandler.io.tx
-
+  // TODO: connect to DMA controller
   val sendReqHandler = new SendReqHandler(busWidth)
   val writeReqHandler = new WriteReqHandler(busWidth)
   val readReqHandler = new ReadReqHandler(busWidth)
@@ -144,33 +151,28 @@ class RecvQ(busWidth: BusWidth) extends Component {
   val reqHandlers =
     List(sendReqHandler, writeReqHandler, readReqHandler, atomicReqHandler)
   val reqTypeFuncs = List(
-    OpCode.isSendReq(_),
-    OpCode.isWriteReq(_),
-    OpCode.isReadReq(_),
-    OpCode.isAtomicReq(_)
+    OpCode.isSendReqPkt(_),
+    OpCode.isWriteReqPkt(_),
+    OpCode.isReadReqPkt(_),
+    OpCode.isAtomicReqPkt(_)
   )
 
   val reqHandlerSel = reqTypeFuncs.map(typeFunc => typeFunc(io.rx.bth.opcode))
   val reqHandlerIdx = OHToUInt(reqHandlerSel)
-  // TODO: handle output order
   Vec(reqHandlers.map(_.io.rx)) <> StreamDemux(
     normReq.pipelined(m2s = true, s2m = true),
     reqHandlerIdx,
     reqHandlers.size
   )
 
-  val txVec = Vec(
-    sendReqHandler.io.tx,
-    writeReqHandler.io.tx,
-    atomicReqHandler.io.tx,
-    errReqRespTx,
-    dupReqRespTx
-  )
-  val txSel = StreamArbiterFactory.roundRobin.fragmentLock.on(txVec)
   val seqOut = new SeqOut(busWidth)
   seqOut.io.qpAttr := io.qpAttr
-  seqOut.io.rxOtherResp <-/< txSel
+  seqOut.io.rxSendResp <-/< sendReqHandler.io.tx
+  seqOut.io.rxWriteResp <-/< writeReqHandler.io.tx
   seqOut.io.rxReadResp <-/< readReqHandler.io.tx
+  seqOut.io.rxAtomicResp <-/< atomicReqHandler.io.tx
+  seqOut.io.rxDupReqResp <-/< reqVerifier.io.txErrResp
+  seqOut.io.rxErrReqResp <-/< reqVerifier.io.txDupResp
   io.tx <-/< seqOut.io.tx
 
   Vec(reqVerifier.io.qpAttrUpdate, seqOut.io.qpAttrUpdate) <> StreamFork(
@@ -183,8 +185,12 @@ class SeqOut(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val qpAttrUpdate = slave(Stream(Bits(QP_ATTR_MASK_WIDTH bits)))
+    val rxAtomicResp = slave(Stream(Fragment(RdmaDataBus(busWidth))))
     val rxReadResp = slave(Stream(Fragment(RdmaDataBus(busWidth))))
-    val rxOtherResp = slave(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rxSendResp = slave(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rxWriteResp = slave(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rxDupReqResp = slave(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rxErrReqResp = slave(Stream(Fragment(RdmaDataBus(busWidth))))
     val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
   }
 
@@ -202,6 +208,21 @@ class SeqOut(busWidth: BusWidth) extends Component {
 
   // TODO: select output by PSN order
   val txSel = StreamArbiterFactory.roundRobin.fragmentLock
-    .onArgs(io.rxReadResp, io.rxOtherResp)
+    .onArgs(
+      io.rxAtomicResp,
+      io.rxReadResp,
+      io.rxSendResp,
+      io.rxWriteResp,
+      io.rxDupReqResp,
+      io.rxErrReqResp
+    )
+  when(txSel.valid) {
+    assert(
+      assertion = OpCode.isRespPkt(txSel.bth.opcode),
+      message =
+        L"SeqOut can only output response packet, but with invalid opcode=${txSel.bth.opcode}",
+      severity = ERROR
+    )
+  }
   io.tx <-/< txSel
 }

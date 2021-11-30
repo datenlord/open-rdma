@@ -13,51 +13,12 @@ case class DevMetaData() extends Bundle {
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
-    maxPendingReqNum := 0
-    maxPendingReadAtomicReqNum := 0
-    this
-  }
-}
-/*
-case class QpCreateData() extends Bundle {
-  val ipv4Peer = Bits(IPV4_WIDTH bits) // IPv4 only
-  val npsn = UInt(PSN_WIDTH bits)
-  val epsn = UInt(PSN_WIDTH bits)
-  val pmtu = Bits(PMTU_WIDTH bits)
-  val maxPendingReadAtomicReqNum = UInt(MAX_WR_NUM_WIDTH bits)
-  val maxDstPendingReadAtomicReqNum = UInt(MAX_WR_NUM_WIDTH bits)
-  val valid = Bool()
-
-  // TODO: remove this
-  def setDefaultVal(): this.type = {
-    ipv4Peer := 0
-    //cpsn := 0
-    npsn := 0
-    epsn := 0
-    pmtu := PMTU.U1024.id
-    maxPendingReadAtomicReqNum := 0
-    maxDstPendingReadAtomicReqNum := 0
-    valid := False
+    maxPendingReqNum := Constants.PENDING_REQ_NUM
+    maxPendingReadAtomicReqNum := Constants.PENDING_READ_ATOMIC_REQ_NUM
     this
   }
 }
 
-case class QpModifyData() extends Bundle {
-  val qpCreateData = QpCreateData()
-  val sqpn = UInt(QPN_WIDTH bits)
-  val state = Bits(QP_STATE_WIDTH bits)
-  val modified = Bool()
-
-  // TODO: remove this
-  def setDefaultVal(): this.type = {
-    qpCreateData.setDefaultVal()
-    sqpn := 0
-    state := QpState.RESET.id
-    modified := False
-    this
-  }
-}
- */
 case class QpAttrData() extends Bundle {
   val ipv4Peer = Bits(IPV4_WIDTH bits) // IPv4 only
   val npsn = UInt(PSN_WIDTH bits)
@@ -264,8 +225,20 @@ case class UdpDataBus(busWidth: BusWidth) extends Bundle {
 
 case class RdmaDataBus(busWidth: BusWidth) extends Bundle {
   //val sop = Bool()
-  val bth = BTH()
+  //val bth = BTH()
   val data = Bits(busWidth.id bits)
   val mty = Bits(log2Up(busWidth.id / 8) bits)
   //val eop = Bool()
+
+  def bth: BTH = {
+    val bth = BTH()
+    val bthWidth = widthOf(bth)
+    bth.assignFromBits(data(busWidth.id - bthWidth, bthWidth bits))
+    require(
+      busWidth.id > bthWidth,
+      s"Bus width=${busWidth.id} must > BTH width=$bthWidth"
+    )
+
+    bth
+  }
 }

@@ -26,8 +26,9 @@ object IPv4Addr {
   }
 }
 
+// 48 bytes
 case class BTH() extends Bundle {
-  val transport = Bits(TRANSPORT_WIDTH bits)
+  // val transport = Bits(TRANSPORT_WIDTH bits)
   val opcode = Bits(OPCODE_WIDTH bits)
   val solicited = Bool()
   val migreq = Bool()
@@ -42,25 +43,25 @@ case class BTH() extends Bundle {
   val resv7 = Bits(7 bits)
   val psn = UInt(PSN_WIDTH bits)
 
+  def transport = opcode(OPCODE_WIDTH - TRANSPORT_WIDTH, TRANSPORT_WIDTH bits)
   // TODO: remove this
-  def setDefaultVal(): this.type = {
-    transport := Transports.RC.id
-    opcode := 0
-    solicited := False
-    migreq := False
-    padcount := 0
-    version := 0
-    //pkey := B(0xffff, PKEY_WIDTH bits)
-    pkey := 0xffff
-    fecn := False
-    becn := False
-    resv6 := 0
-    dqpn := 0
-    ackreq := False
-    resv7 := 0
-    psn := 0
-    this
-  }
+//  def setDefaultVal(): this.type = {
+//    transport := Transports.RC.id
+//    opcode := 0
+//    solicited := False
+//    migreq := False
+//    padcount := 0
+//    version := 0
+//    pkey := 0xffff // Default PKEY
+//    fecn := False
+//    becn := False
+//    resv6 := 0
+//    dqpn := 0
+//    ackreq := False
+//    resv7 := 0
+//    psn := 0
+//    this
+//  }
 }
 
 case class AETH() extends Bundle {

@@ -14,18 +14,18 @@ import Constants._
 class RespVerifer(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val npsn = in(UInt(PSN_WIDTH bits))
-    val rx = slave(Stream(Fragment(RdmaDataBus(busWidth))))
-    val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
+    val tx = master(Stream(RdmaDataBus(busWidth)))
   }
 
   val validResp = False
-  io.tx <-/< io.rx.continueWhen(validResp)
+  io.tx <-/< io.rx.throwWhen(!validResp)
 }
 
 class RespHandler(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val npsn = in(UInt(PSN_WIDTH bits))
-    val rx = slave(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rx = slave(Stream((RdmaDataBus(busWidth))))
     val qpStateUpdate = master(Stream(Bits(QP_STATE_WIDTH bits)))
     val cacheReq = master(Stream(CacheReq()))
     val cacheResp = slave(Stream(CacheData()))
