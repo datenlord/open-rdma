@@ -7,26 +7,30 @@ import spinal.lib.fsm._
 import BusWidth.BusWidth
 import Constants._
 
-class ReqRespSpliter(busWidth: BusWidth) extends Component {
+class ReqRespSplitter(busWidth: BusWidth) extends Component {
   val io = new Bundle {
-    val rx = slave(Stream(Fragment(RdmaDataBus(busWidth))))
-    val reqTx = master(Stream(Fragment(RdmaDataBus(busWidth))))
-    val respTx = master(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
+    val reqTx = master(Stream(RdmaDataBus(busWidth)))
+    val respTx = master(Stream(RdmaDataBus(busWidth)))
   }
 
-  val isReq = True // TODO: check req or resp
+  val isReq = OpCode.isReqPkt(io.rx.bth.opcode)
   Vec(io.reqTx, io.respTx) <> StreamDemux(
     io.rx,
     select = isReq.asUInt,
     portCount = 2
   )
+//  val reqTx = tx(0)
+//  val respTx = tx(1)
+//  io.reqTx <-/< reqTx
+//  io.respTx <-/< respTx
 }
 
 class RetryRespSpliter(busWidth: BusWidth) extends Component {
   val io = new Bundle {
-    val rx = slave(Stream(Fragment(RdmaDataBus(busWidth))))
-    val normalTx = master(Stream(Fragment(RdmaDataBus(busWidth))))
-    val retryTx = master(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
+    val normalTx = master(Stream(RdmaDataBus(busWidth)))
+    val retryTx = master(Stream(RdmaDataBus(busWidth)))
   }
 
   val isNormalResp = True // TODO: check req or resp
@@ -37,13 +41,16 @@ class RetryRespSpliter(busWidth: BusWidth) extends Component {
   )
 }
 
+// CNP format, Figure 349, pp. 1948, spec 1.4
 class FlowCtrl(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
-    val resp = slave(Flow(Fragment(RdmaDataBus(busWidth))))
+    val resp = slave(Flow(RdmaDataBus(busWidth)))
     val rx = slave(Stream(Fragment(RdmaDataBus(busWidth))))
     val tx = master(Stream(UdpDataBus(busWidth)))
   }
+
+  // TODO: send out CNP as soon as ECN tagged
 
   // TODO: Translate RdmaDataBus to UdpDataBus
   io.tx <-/< io.rx.translateWith {
@@ -61,7 +68,7 @@ class QP(busWidth: BusWidth) extends Component {
     val qpStateUpdate = master(Stream(Bits(QP_STATE_WIDTH bits)))
     val qpAttrUpdate = slave(Stream(Bits(QP_ATTR_MASK_WIDTH bits)))
     val workReq = slave(Stream(WorkReq()))
-    val rx = slave(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
     val tx = master(Stream(UdpDataBus(busWidth)))
     val dmaReadReq = master(Stream(DmaReadReq()))
     val dmaReadResp = slave(Stream(Fragment(DmaReadResp())))
@@ -69,20 +76,15 @@ class QP(busWidth: BusWidth) extends Component {
     val dmaWriteResp = slave(Stream(DmaWriteResp()))
   }
 
-  // TODO: check QP state to continue send/recv
-  // also verify whether it still needs to process pending requests/responses when QP state is ERR
-  val sendContinueCond = io.qpAttr.state === QpState.RTS.id
-  val recvContinueCond = False
-
   // Seperate incoming requests and responses
-  val reqSpliter = new ReqRespSpliter(busWidth)
-  reqSpliter.io.rx <-/< io.rx.continueWhen(recvContinueCond)
-  val reqRx = reqSpliter.io.reqTx
-  val respRx = reqSpliter.io.respTx
+  val reqRespSplitter = new ReqRespSplitter(busWidth)
+  reqRespSplitter.io.rx <-/< io.rx
+  val reqRx = reqRespSplitter.io.reqTx
+  val respRx = reqRespSplitter.io.respTx
 
   val sq = new SendQ(busWidth)
   sq.io.qpAttr := io.qpAttr
-  sq.io.workReq <-/< io.workReq.continueWhen(sendContinueCond)
+  sq.io.workReq <-/< io.workReq
 
   val rq = new RecvQ(busWidth)
   rq.io.qpAttr := io.qpAttr

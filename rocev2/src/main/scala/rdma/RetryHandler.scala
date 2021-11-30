@@ -10,7 +10,7 @@ import Constants._
 class RetryHandler(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     //val qpAttr = in(QpAttrData())
-    val rx = slave(Stream(Fragment(RdmaDataBus(busWidth))))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
     val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
     val cacheReadReq = master(Stream(CacheReq()))
     val cacheReadResp = slave(Stream(CacheData()))

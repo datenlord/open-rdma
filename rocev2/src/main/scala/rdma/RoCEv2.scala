@@ -6,6 +6,7 @@ import spinal.lib._
 import BusWidth.BusWidth
 import Constants._
 
+// Table 40, pp. 296, spec 1.4
 // Silently drop illegal incoming packets
 // Head verification does not consider: IETH, SOLICITED EVENT
 // Head verification will check:
@@ -14,24 +15,37 @@ import Constants._
 // - QP state is valid:
 //   * for incoming requests, QP state should be RTS, SQ Drain, RTR, SQ Error;
 //   * for incoming responses, QP state should be SQ Drain, RTR, SQ Error;
-// - PKey matches. TODO: should support PKey?
-class HeadVerifier(busWidth: BusWidth) extends Component {
+// - PKey matches.
+// TODO: should support PKey?
+// TODO: check whether it still needs to process pending requests/responses when QP state is ERR
+class HeadVerifier(numMaxQPs: Int, busWidth: BusWidth) extends Component {
   val io = new Bundle {
+    val qpAttrVec = in(Vec(QpAttrData(), numMaxQPs))
     val rx = slave(Stream(UdpDataBus(busWidth)))
-    val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
+    val tx = master(Stream(RdmaDataBus(busWidth)))
   }
 
-  // TODO: verify BTH
-  io.tx <-/< io.rx.translateWith {
-    val bth = BTH()
-    bth.setDefaultVal()
-    val frag = Fragment(RdmaDataBus(busWidth))
-    frag.bth := bth
-    frag.data := io.rx.data
-    frag.mty := io.rx.mty
-    frag.last := False
-    frag
+  val rdmaData = RdmaDataBus(busWidth)
+  rdmaData.data := io.rx.data
+  rdmaData.mty := io.rx.mty
+
+  val validHeader =
+    Transports.isSupportedType(rdmaData.bth.transport) && OpCode.isValidCode(
+      rdmaData.bth.opcode
+    )
+  val qpStateValid = io.qpAttrVec.map(qpAttr =>
+    qpAttr.sqpn === rdmaData.bth.dqpn && QpState.allowRecv(
+      rdmaData.bth.opcode,
+      qpAttr.state
+    )
+  )
+  val cond = !validHeader || !(qpStateValid.asBits().orR)
+  when(io.rx.valid && cond) {
+    report(
+      L"HeadVerifier dropped one packet, psn=${rdmaData.bth.psn}, opcode=${rdmaData.bth.opcode}, dqpn=${rdmaData.bth.dqpn}"
+    )
   }
+  io.tx <-/< io.rx.throwWhen(cond).translateWith(rdmaData)
 }
 
 class QpCtrl(numMaxQPs: Int) extends Component {
@@ -82,13 +96,14 @@ class QPs(numMaxQPs: Int, busWidth: BusWidth) extends Component {
     val dmaWriteResp = slave(Stream(DmaWriteResp()))
   }
 
-  val headVerifier = new HeadVerifier(busWidth)
-  headVerifier.io.rx <-/< io.rx
-  val rdmaRx = headVerifier.io.tx
-
   val qpIdxVec = (0 until numMaxQPs)
   val qpCtrl = new QpCtrl(numMaxQPs)
   qpCtrl.io.qpCreateOrModify <-/< io.qpCreateOrModify
+
+  val headVerifier = new HeadVerifier(numMaxQPs, busWidth)
+  headVerifier.io.qpAttrVec := qpCtrl.io.qpAttrVec
+  headVerifier.io.rx <-/< io.rx
+  val rdmaRx = headVerifier.io.tx
 
   val qpVec = qpIdxVec.map(qpIdx => {
     val qp = new QP(busWidth)
@@ -160,7 +175,7 @@ class RoCEv2(numMaxQPs: Int, busWidth: BusWidth) extends Component {
 
 object RoCEv2 {
   def main(args: Array[String]): Unit = {
-    SpinalVerilog(new RoCEv2(numMaxQPs = 4, BusWidth.W256))
+    SpinalVerilog(new RoCEv2(numMaxQPs = 4, BusWidth.W512))
       .printPrunedIo()
       .printPruned()
   }
