@@ -5,7 +5,8 @@ import spinal.lib._
 import spinal.lib.fsm._
 
 import BusWidth.BusWidth
-import Constants._
+import RdmaConstants._
+import ConstantSettings._
 
 // Discard all invalid responses:
 // - NAK with reserved code;

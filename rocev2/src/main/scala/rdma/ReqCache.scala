@@ -5,7 +5,7 @@ import spinal.lib._
 import spinal.lib.fsm._
 
 import BusWidth.BusWidth
-import Constants._
+import RdmaConstants._
 
 class ReqCache(busWidth: BusWidth) extends Component {
   val io = new Bundle {

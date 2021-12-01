@@ -18,4 +18,6 @@ jobs:
           pip3 install cocotb
           export PATH="$HOME/.local/bin:$PATH"
           ./run.sh
-
+      - name: Setup tmate session
+        if: ${{ failure() }}
+        uses: mxschmitt/action-tmate@v3
