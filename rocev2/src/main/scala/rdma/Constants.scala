@@ -3,19 +3,21 @@ package rdma
 import spinal.core._
 import spinal.lib._
 
-object Constants {
+import RdmaConstants._
+
+object ConstantSettings {
   val PENDING_REQ_NUM = 32
   val PENDING_READ_ATOMIC_REQ_NUM = 16
+  val MIN_RNR_TIMEOUT = 1
 
-  val TRANSPORT_WIDTH = 3
-  val OPCODE_WIDTH = 8
-  val PADCOUNT_WIDTH = 2
-  val VERSION_WIDTH = 4
-  val PKEY_WIDTH = 16
-  val QPN_WIDTH = 24
-  val PSN_WIDTH = 24
-  val REQ_LEN_WIDTH = 31 // RDMA max packet length 2GB
   val IPV4_WIDTH = 32
+
+  val MAX_PSN = (1 << PSN_WIDTH) - 1
+  val HALF_MAX_PSN = 1 << (PSN_WIDTH - 1)
+  val PSN_MASK = (1 << PSN_WIDTH) - 1
+  val PSN_COMP_RESULT_WIDTH = 2
+
+  val ACK_TYPE_WIDTH = 3
 
   val WR_OPCODE_WIDTH = 4
   val RETRY_CNT_WIDTH = 3
@@ -27,12 +29,54 @@ object Constants {
   val DMA_LEN_WIDTH = 10
   val DMA_BUS_WIDTH = 64
 
-  val INT_WIDTH = 32
-  val LONG_WIDTH = 64
-
   val MAX_WR_NUM_WIDTH = 8 // RDMA max in-flight packets 2^23
 
   val QP_ATTR_MASK_WIDTH = 32
+}
+
+object PsnCompResult extends Enumeration {
+  type PsnCompResult = Value
+
+  val GREATER = Value(1)
+  val EQUAL = Value(0)
+  val LESSER = Value(2)
+}
+
+object AckType extends Enumeration {
+  type AckType = Value
+
+  val NORMAL = Value(0)
+  val NAK_SEQ = Value(1)
+  val NAK_INV = Value(2)
+  val NAK_RMT_ACC = Value(3)
+  val NAK_RMT_OP = Value(4)
+  val NAK_RNR = Value(5)
+}
+
+object BusWidth extends Enumeration {
+  type BusWidth = Value
+
+  // Internal bus width, must be larger than BTH width=48B
+  val W512 = Value(512)
+}
+
+//----------RDMA related constants----------//
+object RdmaConstants {
+  val TRANSPORT_WIDTH = 3
+  val OPCODE_WIDTH = 8
+  val PADCOUNT_WIDTH = 2
+  val VERSION_WIDTH = 4
+  val PKEY_WIDTH = 16
+  val QPN_WIDTH = 24
+  val PSN_WIDTH = 24
+  val REQ_LEN_WIDTH = 31 // RDMA max packet length 2GB
+
+  val INT_WIDTH = 32
+  val LONG_WIDTH = 64
+
+  val RNR_TIMER_WIDTH = 5
+  val MSN_WIDTH = 24
+  val AETH_VALUE_WIDTH = 5
 }
 
 object QpAttrMask extends Enumeration {
@@ -64,13 +108,6 @@ object QpAttrMask extends Enumeration {
   val QP_CAP = Value(524288) // Use the value of attr->cap
   val QP_DEST_QPN = Value(1048576) // Use the value of attr->dest_qp_num
   val QP_RATE_LIMIT = Value(33554432) // 33554432 = 2^25
-}
-
-object BusWidth extends Enumeration {
-  type BusWidth = Value
-
-  // Internal bus width, must be larger than BTH width=48B
-  val W512 = Value(512)
 }
 
 object PMTU extends Enumeration {
@@ -158,7 +195,6 @@ object Transports extends Enumeration {
   }.rslt
 }
 
-import Constants._
 object OpCode extends Enumeration {
   type OpCode = Value
 
@@ -418,6 +454,7 @@ object OpCode extends Enumeration {
   }.rslt
 }
 
+// Table 46, pp. 348, spec 1.4
 object AethCode extends Enumeration {
   type AethCode = Value
 
@@ -425,6 +462,18 @@ object AethCode extends Enumeration {
   val RNR = Value(1)
   val RSVD = Value(2)
   val NAK = Value(3)
+}
+
+// Table 47, pp. 347, spec 1.4
+object NakCode extends Enumeration {
+  type NakCode = Value
+
+  val SEQ = Value(0)
+  val INV = Value(1)
+  val RMT_ACC = Value(2)
+  val RMT_OP = Value(3)
+  val INV_RD = Value(4)
+  val RSVD = Value(5) // 5 - 31 reserved
 }
 
 object SendFlags extends Enumeration {

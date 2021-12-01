@@ -5,16 +5,19 @@ import spinal.lib._
 
 import BusWidth.BusWidth
 import PMTU.PMTU
-import Constants._
+import RdmaConstants._
+import ConstantSettings._
 
 case class DevMetaData() extends Bundle {
   val maxPendingReqNum = UInt(MAX_WR_NUM_WIDTH bits)
   val maxPendingReadAtomicReqNum = UInt(MAX_WR_NUM_WIDTH bits)
+  val minRnrTimeOut = UInt(RNR_TIMER_WIDTH bits)
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
-    maxPendingReqNum := Constants.PENDING_REQ_NUM
-    maxPendingReadAtomicReqNum := Constants.PENDING_READ_ATOMIC_REQ_NUM
+    maxPendingReqNum := PENDING_REQ_NUM
+    maxPendingReadAtomicReqNum := PENDING_READ_ATOMIC_REQ_NUM
+    minRnrTimeOut := MIN_RNR_TIMEOUT
     this
   }
 }
@@ -241,4 +244,11 @@ case class RdmaDataBus(busWidth: BusWidth) extends Bundle {
 
     bth
   }
+}
+
+case class ReqCheckResult(busWidth: BusWidth) extends Bundle {
+  val checkPass = Bool()
+  val dupReq = Bool()
+  val nak = ACK()
+  val rdmaData = RdmaDataBus(busWidth)
 }

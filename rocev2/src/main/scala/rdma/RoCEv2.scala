@@ -4,7 +4,8 @@ import spinal.core._
 import spinal.lib._
 
 import BusWidth.BusWidth
-import Constants._
+import RdmaConstants._
+import ConstantSettings._
 
 // Table 40, pp. 296, spec 1.4
 // Silently drop illegal incoming packets

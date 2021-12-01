@@ -4,7 +4,8 @@ import spinal.core._
 import spinal.lib._
 
 import BusWidth.BusWidth
-import Constants._
+import RdmaConstants._
+import ConstantSettings._
 
 class ReqBuilder(busWidth: BusWidth) extends Component {
   val io = new Bundle {
@@ -71,7 +72,7 @@ class SqLogic(busWidth: BusWidth, retry: Boolean = false) extends Component {
 
   // TODO: support fence
   val allBuilderReady = RegNext(
-    reqBuilders.map(_.io.workReqPSN.ready).reduce(_ || _)
+    reqBuilders.map(_.io.workReqPSN.ready).reduceBalancedTree(_ || _)
   )
   // TODO: do retry requests need to keep order?
   val continueCond = if (retry) True else allBuilderReady
