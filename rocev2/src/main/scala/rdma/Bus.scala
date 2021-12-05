@@ -4,7 +4,6 @@ import spinal.core._
 import spinal.lib._
 
 import BusWidth.BusWidth
-import PMTU.PMTU
 import RdmaConstants._
 import ConstantSettings._
 
@@ -18,6 +17,27 @@ case class DevMetaData() extends Bundle {
     maxPendingReqNum := PENDING_REQ_NUM
     maxPendingReadAtomicReqNum := PENDING_READ_ATOMIC_REQ_NUM
     minRnrTimeOut := MIN_RNR_TIMEOUT
+    this
+  }
+}
+
+case class QpAttrUpdateNotifier() extends Bundle {
+  val pulseRqPsnReset = Bool()
+  val pulseSqPsnReset = Bool()
+  //  val mask = Bits(QP_ATTR_MASK_WIDTH bits)
+  //
+  //  def rqPsnReset(): Bool = {
+  //    (mask === QpAttrMask.QP_RQ_PSN.id || mask === QpAttrMask.QP_CREATE.id)
+  //  }
+  //
+  //  def sqPsnReset(): Bool = {
+  //    (mask === QpAttrMask.QP_SQ_PSN.id || mask === QpAttrMask.QP_CREATE.id)
+  //  }
+
+  // TODO: remove this
+  def setDefaultVal(): this.type = {
+    pulseRqPsnReset := False
+    pulseSqPsnReset := False
     this
   }
 }
@@ -246,9 +266,21 @@ case class RdmaDataBus(busWidth: BusWidth) extends Bundle {
   }
 }
 
-case class ReqCheckResult(busWidth: BusWidth) extends Bundle {
+//----------Local bus for pipeline stages----------//
+
+case class ReqCommCheckResult(busWidth: BusWidth) extends Bundle {
   val checkPass = Bool()
+  val psnCheckRslt = Bool()
   val dupReq = Bool()
-  val nak = ACK()
+  val opSeqCheckRslt = Bool()
+  val pktLenCheckRslt = Bool()
+  val nak = Acknowlege()
   val rdmaData = RdmaDataBus(busWidth)
+}
+
+case class QpSearchResult(numMaxQPs: Int) extends Bundle {
+  val qpCreation = Bool()
+  val rqPsnReset = Bool()
+  val sqPsnReset = Bool()
+  val qpSelIdx = UInt(log2Up(numMaxQPs) bits)
 }

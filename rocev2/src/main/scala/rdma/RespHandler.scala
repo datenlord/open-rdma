@@ -27,7 +27,7 @@ class RespHandler(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val npsn = in(UInt(PSN_WIDTH bits))
     val rx = slave(Stream((RdmaDataBus(busWidth))))
-    val qpStateUpdate = master(Stream(Bits(QP_STATE_WIDTH bits)))
+    val qpStateChange = master(Stream(Bits(QP_STATE_WIDTH bits)))
     val cacheReq = master(Stream(CacheReq()))
     val cacheResp = slave(Stream(CacheData()))
     // Save read/atomic response data to main memory
@@ -39,8 +39,8 @@ class RespHandler(busWidth: BusWidth) extends Component {
   respVerifer.io.rx <-/< io.rx
   val validRespRx = respVerifer.io.tx
 
-  io.qpStateUpdate.valid := False
-  io.qpStateUpdate.payload := QpState.ERR.id
+  io.qpStateChange.valid := False
+  io.qpStateChange.payload := QpState.ERR.id
 
   io.cacheReq <-/< validRespRx.translateWith {
     CacheReq().setDefaultVal()

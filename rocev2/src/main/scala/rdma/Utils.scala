@@ -27,7 +27,7 @@ object IPv4Addr {
   }
 }
 
-object PsnComp {
+object psnComp {
   def apply(psnA: UInt, psnB: UInt, curPsn: UInt) = new Composite(curPsn) {
     val rslt = UInt(PSN_COMP_RESULT_WIDTH bits)
     val oldestPSN = (curPsn - HALF_MAX_PSN) & PSN_MASK
@@ -51,5 +51,91 @@ object PsnComp {
         rslt := PsnCompResult.LESSER.id
       }
     }
+  }.rslt
+}
+
+object StreamSink {
+  def apply(): Stream[NoData] = {
+    val ret = Stream(NoData)
+    ret.ready := True
+    ret
+  }
+}
+
+object OpCodeSeq {
+  import OpCode._
+
+  def checkReqSeq(preOpCode: Bits, curOpCode: Bits) = new Composite(
+    curOpCode
+  ) {
+    val rslt = Bool()
+
+    switch(preOpCode) {
+      is(SEND_FIRST.id, SEND_MIDDLE.id) {
+        rslt := curOpCode === SEND_MIDDLE.id || OpCode.isSendLastReqPkt(
+          curOpCode
+        )
+      }
+      is(RDMA_WRITE_FIRST.id, RDMA_WRITE_MIDDLE.id) {
+        rslt := curOpCode === RDMA_WRITE_MIDDLE.id || OpCode.isWriteLastReqPkt(
+          curOpCode
+        )
+      }
+      is(
+        SEND_ONLY.id,
+        SEND_ONLY_WITH_IMMEDIATE.id,
+        SEND_ONLY_WITH_INVALIDATE.id,
+        RDMA_WRITE_ONLY.id,
+        RDMA_WRITE_ONLY_WITH_IMMEDIATE.id,
+        RDMA_READ_REQUEST.id,
+        COMPARE_SWAP.id,
+        FETCH_ADD.id
+      ) {
+        rslt := OpCode.isFirstOrOnlyReqPkt(curOpCode)
+      }
+      default {
+        rslt := False
+      }
+    }
+  }.rslt
+
+  def checkReadRespSeq(preOpCode: Bits, curOpCode: Bits) = new Composite(
+    curOpCode
+  ) {
+    val rslt = Bool()
+
+    switch(preOpCode) {
+      is(RDMA_READ_RESPONSE_FIRST.id, RDMA_READ_RESPONSE_MIDDLE.id) {
+        rslt := curOpCode === RDMA_READ_RESPONSE_MIDDLE.id || curOpCode === RDMA_READ_RESPONSE_LAST.id
+      }
+      is(RDMA_READ_RESPONSE_ONLY.id, RDMA_READ_RESPONSE_LAST.id) {
+        rslt := curOpCode === RDMA_READ_RESPONSE_FIRST.id || curOpCode === RDMA_READ_RESPONSE_ONLY.id
+      }
+      default {
+        rslt := False
+      }
+    }
+  }.rslt
+}
+
+object pktLengthCheck {
+  def apply(pkt: RdmaDataBus, busWidth: BusWidth) = new Composite(pkt) {
+    val opcode = pkt.bth.opcode
+    val paddingCheck = True
+    val lengthCheck = Bool()
+    when(
+      OpCode.isFirstReqPkt(opcode) || OpCode.isMidReqPkt(opcode) || OpCode
+        .isMidReadRespPkt(opcode)
+    ) {
+      paddingCheck := pkt.bth.padcount === 0
+      lengthCheck := pkt.mty === ((1 << busWidth.id) - 1)
+    } elsewhen (OpCode.isLastReqPkt(opcode) || OpCode.isLastReadRespPkt(
+      opcode
+    )) {
+      lengthCheck := pkt.mty.orR
+    } otherwise {
+      lengthCheck := True
+    }
+    val rslt = lengthCheck && paddingCheck
   }.rslt
 }
