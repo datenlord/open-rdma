@@ -66,8 +66,8 @@ class FlowCtrl(busWidth: BusWidth) extends Component {
 class QP(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
-    val qpStateUpdate = master(Stream(Bits(QP_STATE_WIDTH bits)))
-    val qpAttrUpdate = slave(Stream(Bits(QP_ATTR_MASK_WIDTH bits)))
+    val qpAttrUpdate = in(QpAttrUpdateNotifier())
+    val qpStateChange = master(Stream(Bits(QP_STATE_WIDTH bits)))
     val workReq = slave(Stream(WorkReq()))
     val rx = slave(Stream(RdmaDataBus(busWidth)))
     val tx = master(Stream(UdpDataBus(busWidth)))
@@ -85,16 +85,18 @@ class QP(busWidth: BusWidth) extends Component {
 
   val sq = new SendQ(busWidth)
   sq.io.qpAttr := io.qpAttr
+  sq.io.qpAttrUpdate := io.qpAttrUpdate
   sq.io.workReq <-/< io.workReq
 
   val rq = new RecvQ(busWidth)
   rq.io.qpAttr := io.qpAttr
+  rq.io.qpAttrUpdate := io.qpAttrUpdate
   rq.io.rx <-/< reqRx
 
-  Vec(sq.io.qpAttrUpdate, rq.io.qpAttrUpdate) <> StreamFork(
-    io.qpAttrUpdate,
-    portCount = 2
-  )
+//  Vec(sq.io.qpAttrUpdate, rq.io.qpAttrUpdate) <> StreamFork(
+//    io.qpAttrUpdate,
+//    portCount = 2
+//  )
 
   // Seperate normal and retry responses
   val respSpliter = new RetryRespSpliter(busWidth)
@@ -106,7 +108,7 @@ class QP(busWidth: BusWidth) extends Component {
   respHandler.io.npsn := sq.io.npsn
   respHandler.io.rx <-/< normalResp
   io.dmaWriteReq <-/< respHandler.io.dmaWriteReq
-  io.qpStateUpdate <-/< respHandler.io.qpStateUpdate
+  io.qpStateChange <-/< respHandler.io.qpStateChange
   respHandler.io.dmaWriteResp <-/< io.dmaWriteResp
 
   val retryHandler = new RetryHandler(busWidth)

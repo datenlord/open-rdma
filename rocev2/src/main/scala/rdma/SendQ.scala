@@ -98,7 +98,7 @@ class SqLogic(busWidth: BusWidth, retry: Boolean = false) extends Component {
 class SendQ(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
-    val qpAttrUpdate = slave(Stream(Bits(QP_ATTR_MASK_WIDTH bits)))
+    val qpAttrUpdate = in(QpAttrUpdateNotifier())
     val npsn = out(UInt(PSN_WIDTH bits))
     val workReq = slave(Stream(WorkReq()))
     val dmaReadReq = master(Stream(DmaReadReq()))
@@ -110,13 +110,14 @@ class SendQ(busWidth: BusWidth) extends Component {
   val npsnReg = Reg(UInt(PSN_WIDTH bits)) init (0)
   io.npsn := npsnReg
 
-  io.qpAttrUpdate.ready := True
-  when(
-    io.qpAttrUpdate.valid && (
-      io.qpAttrUpdate.payload === QpAttrMask.QP_SQ_PSN.id
-        || io.qpAttrUpdate.payload === QpAttrMask.QP_CREATE.id
-    )
-  ) {
+//  io.qpAttrUpdate.ready := True
+//  when(
+//    io.qpAttrUpdate.valid && (
+//      io.qpAttrUpdate.payload === QpAttrMask.QP_SQ_PSN.id
+//        || io.qpAttrUpdate.payload === QpAttrMask.QP_CREATE.id
+//    )
+//  ) {
+  when(io.qpAttrUpdate.pulseSqPsnReset) {
     npsnReg := io.qpAttr.npsn
   }
 

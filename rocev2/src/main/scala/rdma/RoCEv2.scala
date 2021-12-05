@@ -53,9 +53,9 @@ class QpCtrl(numMaxQPs: Int) extends Component {
   val io = new Bundle {
     val qpAttrVec = out(Vec(QpAttrData(), numMaxQPs))
     val qpCreateOrModify = slave(Stream(QpAttrData()))
-    val qpStateUpdate = Vec(slave(Stream(Bits(QP_STATE_WIDTH bits))), numMaxQPs)
-    val qpAttrUpdate =
-      Vec(master(Stream(Bits(QP_ATTR_MASK_WIDTH bits))), numMaxQPs)
+    val qpAttrUpdate = Vec(out(QpAttrUpdateNotifier()), numMaxQPs)
+    val qpStateChange = Vec(slave(Stream(Bits(QP_STATE_WIDTH bits))), numMaxQPs)
+    val full = out(Bool())
   }
 
   val qpIdxVec = (0 until numMaxQPs)
@@ -65,23 +65,73 @@ class QpCtrl(numMaxQPs: Int) extends Component {
   }))
   io.qpAttrVec := qpAttrVec
 
-  val qpCreation = io.qpCreateOrModify.modifyMask === QpAttrMask.QP_CREATE.id
-  val availableIdx = OHMasking.first(qpAttrVec.map(_.isValid() === False))
-  val modifyQpIdx = Vec(qpAttrVec.map(_.sQPN() === io.qpCreateOrModify.sqpn))
-  val qpSel = OHToUInt(qpCreation ? availableIdx | modifyQpIdx)
-  io.qpAttrUpdate <> StreamDemux(
-    io.qpCreateOrModify.translateWith(io.qpCreateOrModify.modifyMask),
-    qpSel,
-    numMaxQPs
-  )
-
   for (qpIdx <- qpIdxVec) {
-    io.qpStateUpdate(qpIdx).ready := False
-    when(io.qpStateUpdate(qpIdx).valid) {
-      qpAttrVec(qpIdx).state := io.qpStateUpdate(qpIdx).payload
-      io.qpStateUpdate(qpIdx).ready := True
+    io.qpAttrUpdate(qpIdx).pulseRqPsnReset := False
+    io.qpAttrUpdate(qpIdx).pulseSqPsnReset := False
+
+    // Change QPS from RQ or SQ
+    io.qpStateChange(qpIdx).ready := False
+    when(io.qpStateChange(qpIdx).valid) {
+      qpAttrVec(qpIdx).state := io.qpStateChange(qpIdx).payload
+      io.qpStateChange(qpIdx).ready := True
     }
   }
+
+  val qpVecAvailable = qpAttrVec.map(_.isValid() === False)
+  io.full := !(qpVecAvailable.asBits().orR)
+
+  // QP attribute change notification
+  val findQpStage = io.qpCreateOrModify
+    .combStage()
+    .translateWith {
+      val qpCreation =
+        io.qpCreateOrModify.modifyMask === QpAttrMask.QP_CREATE.id
+      val rqPsnReset =
+        io.qpCreateOrModify.modifyMask === QpAttrMask.QP_RQ_PSN.id
+      val sqPsnReset =
+        io.qpCreateOrModify.modifyMask === QpAttrMask.QP_SQ_PSN.id
+      val availableQpOH = OHMasking.first(qpVecAvailable)
+      val modifyQpOH = Vec(qpAttrVec.map(_.sQPN() === io.qpCreateOrModify.sqpn))
+      val qpSelIdx = OHToUInt(qpCreation ? availableQpOH | modifyQpOH)
+//      TupleBundle6(
+//        qpCreation,
+//        rqPsnReset,
+//        sqPsnReset,
+//        availableQpOH,
+//        modifyQpOH,
+//        qpSelIdx
+//      )
+      val rslt = QpSearchResult(numMaxQPs)
+      rslt.qpCreation := qpCreation
+      rslt.rqPsnReset := rqPsnReset
+      rslt.sqPsnReset := sqPsnReset
+      rslt.qpSelIdx := qpSelIdx
+      rslt
+    }
+    .pipelined(m2s = true)
+
+  StreamSink() << findQpStage.combStage().translateWith {
+//    val qpCreation = findQpStage.payload._1
+//    val rqPsnReset = findQpStage.payload._2
+//    val sqPsnReset = findQpStage.payload._3
+//    val availableQpOH = findQpStage.payload._4
+//    val modifyQpOH = findQpStage.payload._5
+//    val qpSelIdx = findQpStage.payload._6
+    val rslt = findQpStage.payload
+
+    io.qpAttrUpdate(rslt.qpSelIdx)
+      .pulseRqPsnReset := findQpStage.valid && (rslt.qpCreation || rslt.rqPsnReset)
+    io.qpAttrUpdate(rslt.qpSelIdx)
+      .pulseSqPsnReset := findQpStage.valid && (rslt.qpCreation || rslt.sqPsnReset)
+
+    NoData
+  }
+
+//  io.qpAttrUpdate <> StreamDemux(
+//    io.qpCreateOrModify.translateWith(io.qpCreateOrModify.modifyMask),
+//    qpSel,
+//    numMaxQPs
+//  )
 }
 
 // TODO: RoCE should have QP1?
@@ -109,8 +159,8 @@ class QPs(numMaxQPs: Int, busWidth: BusWidth) extends Component {
   val qpVec = qpIdxVec.map(qpIdx => {
     val qp = new QP(busWidth)
     qp.io.qpAttr := qpCtrl.io.qpAttrVec(qpIdx)
-    qpCtrl.io.qpStateUpdate(qpIdx) <-/< qp.io.qpStateUpdate
-    qp.io.qpAttrUpdate <-/< qpCtrl.io.qpAttrUpdate(qpIdx)
+    qpCtrl.io.qpStateChange(qpIdx) << qp.io.qpStateChange
+    qp.io.qpAttrUpdate := qpCtrl.io.qpAttrUpdate(qpIdx)
     qp
   })
 

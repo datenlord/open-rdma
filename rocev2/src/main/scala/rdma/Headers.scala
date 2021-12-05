@@ -4,6 +4,7 @@ import spinal.core._
 import spinal.lib._
 
 import BusWidth.BusWidth
+import PMTU.PMTU
 import RdmaConstants._
 import ConstantSettings._
 
@@ -12,7 +13,7 @@ import ConstantSettings._
 // 48 bytes
 case class BTH() extends Bundle {
   // val transport = Bits(TRANSPORT_WIDTH bits)
-  val opcode = Bits(OPCODE_WIDTH bits)
+  private val opcodeFull = Bits(TRANSPORT_WIDTH + OPCODE_WIDTH bits)
   val solicited = Bool()
   val migreq = Bool()
   val padcount = UInt(PADCOUNT_WIDTH bits)
@@ -26,10 +27,15 @@ case class BTH() extends Bundle {
   val resv7 = Bits(7 bits)
   val psn = UInt(PSN_WIDTH bits)
 
-  def transport = opcode(OPCODE_WIDTH - TRANSPORT_WIDTH, TRANSPORT_WIDTH bits)
+//  def transport =
+//    opcodeFull(OPCODE_WIDTH - TRANSPORT_WIDTH, TRANSPORT_WIDTH bits)
+//  def opcode = opcodeFull(0, OPCODE_WIDTH - TRANSPORT_WIDTH bits)
+
+  def transport = opcodeFull(OPCODE_WIDTH, TRANSPORT_WIDTH bits)
+  def opcode = opcodeFull(0, OPCODE_WIDTH bits)
 
   def setDefaultVal(): this.type = {
-    // transport := Transports.RC.id
+    transport := Transports.RC.id
     opcode := 0
     solicited := False
     migreq := False
@@ -135,9 +141,68 @@ case class CNPPadding() extends Bundle {
   }
 }
 
-//----------Combined headers----------//
-case class ACK() extends Bundle {
+//----------Combined packets----------//
+trait RdmaPacket {
+  this: Bundle => // RdmaPacket must be of Bundle class
+
   val bth = BTH()
+
+  def asRdmaDataBus(busWidth: BusWidth): RdmaDataBus = {
+    require(busWidth.id > widthOf(this), "bus width must > ACK width")
+
+    val rdmaData = RdmaDataBus(busWidth)
+    // TODO: big endian or little endian
+    rdmaData.data.assignFromBits(this.asBits.resize(busWidth.id))
+    // TODO: check MTY validity
+    rdmaData.mty := log2Up((busWidth.id - widthOf(this)) / 8)
+    rdmaData
+  }
+}
+
+trait RdmaDataPacket extends RdmaPacket {
+  this: Bundle => // RdmaDataPacket must be of Bundle class
+
+  val data: Bits
+
+  def mtuWidth(pmtu: PMTU): Int = {
+    pmtu match {
+      case PMTU.U256  => 256
+      case PMTU.U512  => 512
+      case PMTU.U1024 => 1024
+      case PMTU.U2048 => 2048
+      case PMTU.U4096 => 4096
+    }
+  }
+}
+
+case class SendReq(pmtu: PMTU, imm: Boolean, inv: Boolean)
+    extends Bundle
+    with RdmaDataPacket {
+  val immdt = if (imm) Some(ImmDt()) else None
+  val ieth = if (inv) Some(IETH()) else None
+  override val data = Bits(mtuWidth(pmtu) bits)
+}
+
+case class WriteReq(pmtu: PMTU, firstOrOnly: Boolean, imm: Boolean)
+    extends Bundle
+    with RdmaDataPacket {
+  val reth = if (firstOrOnly) Some(RETH()) else None
+  val immdt = if (imm) Some(ImmDt()) else None
+  override val data = Bits(mtuWidth(pmtu) bits)
+}
+
+case class ReadReq() extends Bundle with RdmaPacket {
+  val reth = RETH()
+}
+
+case class ReadResp(pmtu: PMTU, middle: Boolean)
+    extends Bundle
+    with RdmaDataPacket {
+  val aeth = if (middle) None else Some(AETH())
+  override val data = Bits(mtuWidth(pmtu) bits)
+}
+
+case class Acknowlege() extends Bundle with RdmaPacket {
   val aeth = AETH()
 
   def setDefaultVal(): this.type = {
@@ -145,23 +210,6 @@ case class ACK() extends Bundle {
     aeth.setDefaultVal()
     this
   }
-
-  def asRdmaDataBus(busWidth: BusWidth): RdmaDataBus = {
-    require(busWidth.id > widthOf(this), "bus width must > ACK width")
-
-    val rdmaData = RdmaDataBus(busWidth)
-    rdmaData.data.assignFromBits(this.asBits.resize(busWidth.id))
-    // TODO: check MTY validity
-    rdmaData.mty := log2Up((busWidth.id - widthOf(this)) / 8)
-    rdmaData
-  }
-
-//  def set(ackType: Bits, psn: UInt, dqpn: UInt): this.type = {
-//    val msn = B(0, MSN_WIDTH bits)
-//    val creditCnt = B(0, AETH_VALUE_WIDTH bits)
-//    val rnrTimeOut = B(MIN_RNR_TIMEOUT, RNR_TIMER_WIDTH bits)
-//    set(ackType, psn, dqpn, msn, creditCnt, rnrTimeOut)
-//  }
 
   def set(
       ackType: Bits,
@@ -171,13 +219,6 @@ case class ACK() extends Bundle {
       creditCnt: Bits = 0,
       rnrTimeOut: Bits = MIN_RNR_TIMEOUT
   ): this.type = {
-//    bth.setDefaultVal()
-//    aeth.rsvd := 0
-//
-//    bth.dqpn.removeAssignments()
-//    bth.opcode.removeAssignments()
-//    bth.psn.removeAssignments()
-//    aeth.msn.removeAssignments()
     bth.dqpn := dqpn
     bth.opcode := OpCode.ACKNOWLEDGE.id
     bth.psn := psn
@@ -218,4 +259,13 @@ case class ACK() extends Bundle {
     }
     this
   }
+}
+
+case class AtomicReq() extends Bundle with RdmaPacket {
+  val atomicETH = AtomicETH()
+}
+
+case class AtomicResp() extends Bundle with RdmaPacket {
+  val aeth = AETH()
+  val atomicAckETH = AtomicAckETH()
 }
