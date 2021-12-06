@@ -2,10 +2,8 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-import spinal.lib.fsm._
 
 import BusWidth.BusWidth
-import RdmaConstants._
 
 class ReqCache(busWidth: BusWidth) extends Component {
   val io = new Bundle {

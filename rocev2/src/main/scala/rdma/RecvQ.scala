@@ -34,46 +34,24 @@ class ReqVerifier(busWidth: BusWidth) extends Component {
     val txErrResp = master(Stream(Fragment(RdmaDataBus(busWidth))))
   }
 
-  val reqCommValidater = new ReqCommValidater(busWidth)
-  reqCommValidater.io.epsn := io.epsn
-  reqCommValidater.io.qpAttrUpdate := io.qpAttrUpdate
-  reqCommValidater.io.rx << io.rx
-  io.tx << reqCommValidater.io.tx
+  val reqCommValidator = new ReqCommValidator(busWidth)
+  reqCommValidator.io.epsn := io.epsn
+  reqCommValidator.io.qpAttrUpdate := io.qpAttrUpdate
+  reqCommValidator.io.rx << io.rx
+  io.tx << reqCommValidator.io.tx
 
   val errResqHandler = new ErrResqHandler(busWidth)
   errResqHandler.io.epsnInc := False // TODO: add ePSN increment notifier
   errResqHandler.io.qpAttrUpdate := io.qpAttrUpdate
-  errResqHandler.io.rxCommCheckErr << reqCommValidater.io.txErrResp
+  errResqHandler.io.rxCommCheckErr << reqCommValidator.io.txErrResp
   io.txErrResp << errResqHandler.io.tx
-//  val normalTx = cloneOf(reqCommValidater.io.tx)
-//  val dupTx = cloneOf(reqCommValidater.io.tx)
-//  val errTx = cloneOf(reqCommValidater.io.tx)
-//  val selIdx = UInt(2 bits)
-//  when(reqCommValidater.io.tx.checkPass) {
-//    when(reqCommValidater.io.tx.dupReq) {
-//      selIdx := 1
-//    } otherwise {
-//      selIdx := 0
-//    }
-//  } otherwise {
-//    selIdx := 2
-//  }
-//  Vec(normalTx, dupTx, errTx) <> StreamDemux(
-//    reqCommValidater.io.tx,
-//    select = selIdx,
-//    portCount = 3
-//  )
-//  io.tx <-/< normalTx.translateWith(normalTx.rdmaData)
-//  io.txErrResp <-/< errTx
-//    .translateWith(errTx.nak.asRdmaDataBus(busWidth))
-//    .addFragmentLast(True)
 
   val dupReqHandler = new DupReqHandler(busWidth)
-  dupReqHandler.io.rx << reqCommValidater.io.txDupReq
+  dupReqHandler.io.rx << reqCommValidator.io.txDupReq
   io.txDupResp << dupReqHandler.io.tx
 }
 
-class ReqCommValidater(busWidth: BusWidth) extends Component {
+class ReqCommValidator(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val epsn = in(UInt(PSN_WIDTH bits))
     val qpAttrUpdate = in(QpAttrUpdateNotifier())
@@ -92,122 +70,113 @@ class ReqCommValidater(busWidth: BusWidth) extends Component {
     preOpCodeReg := io.rx.bth.opcode
   }
 
-  val checkStage = io.rx.asFlow
-    .combStage()
-    .translateWith {
-      // PSN sequence check
-      val psnCheckRslt = Bool()
-      val dupReq = Bool()
-      val cmpRslt = psnComp(io.rx.bth.psn, io.epsn, curPsn = io.epsn)
-      switch(cmpRslt) {
-        is(PsnCompResult.GREATER.id) {
-          psnCheckRslt := False
-          dupReq := False
+  // Pipeline for request common checks
+  case class ReqCommCheckResult(busWidth: BusWidth) extends Bundle {
+    val checkPass = Bool()
+    val psnCheckRslt = Bool()
+    val dupReq = Bool()
+    val opSeqCheckRslt = Bool()
+    val pktLenCheckRslt = Bool()
+    val nak = RdmaDataBus(busWidth)
+    val rdmaData = RdmaDataBus(busWidth)
+  }
+
+  val checkStage = new Area {
+    val input = io.rx.asFlow
+    val output = input
+      .combStage()
+      .translateWith {
+        // PSN sequence check
+        val psnCheckRslt = Bool()
+        val dupReq = Bool()
+        val cmpRslt = psnComp(io.rx.bth.psn, io.epsn, curPsn = io.epsn)
+        switch(cmpRslt) {
+          is(PsnCompResult.GREATER.id) {
+            psnCheckRslt := False
+            dupReq := False
+          }
+          is(PsnCompResult.LESSER.id) {
+            psnCheckRslt := True
+            dupReq := True
+          }
+          default { // PsnCompResult.EQUAL
+            psnCheckRslt := True
+            dupReq := False
+          }
         }
-        is(PsnCompResult.LESSER.id) {
-          psnCheckRslt := True
-          dupReq := True
-        }
-        default { // PsnCompResult.EQUAL
-          psnCheckRslt := True
-          dupReq := False
-        }
-      }
 
-      // OpCode sequence check
-      val opSeqCheckRslt = OpCodeSeq.checkReqSeq(preOpCodeReg, io.rx.bth.opcode)
+        // OpCode sequence check
+        val opSeqCheckRslt =
+          OpCodeSeq.checkReqSeq(preOpCodeReg, io.rx.bth.opcode)
 
-      // Packet length check
-      val pktLenCheckRslt = pktLengthCheck(io.rx.payload, busWidth)
+        // Packet length check
+        val pktLenCheckRslt = pktLengthCheck(io.rx.payload, busWidth)
 
-//      TupleBundle6(
-//        io.rx.payload,
-//        io.epsn,
-//        psnCheckRslt,
-//        dupReq,
-//        opSeqCheckRslt,
-//        pktLenCheckRslt
-//      )
-      val rslt = ReqCommCheckResult(busWidth)
-      rslt.psnCheckRslt := psnCheckRslt
-      rslt.dupReq := dupReq
-      rslt.pktLenCheckRslt := pktLenCheckRslt
-      rslt.opSeqCheckRslt := opSeqCheckRslt
-      rslt.nak.setDefaultVal()
-      rslt.rdmaData := io.rx.payload
-      rslt.checkPass := False
-      rslt
-    }
-    .m2sPipe()
-
-  val outStage = checkStage
-    .combStage()
-    .translateWith {
-//    val rdmaData = checkStage.payload._1
-//    val epsn = checkStage.payload._2
-//    val psnCheckRslt = checkStage.payload._3
-//    val dupReq = checkStage.payload._4
-//    val opSeqCheckRslt = checkStage.payload._5
-//    val pktLenCheckRslt = checkStage.payload._6
-
-//    val (
-//      rdmaData,
-//      epsn,
-//      psnCheckRslt,
-//      dupReq,
-//      opSeqCheckRslt,
-//      pktLenCheckRslt
-//    ) = checkStage.payload match {
-//      case TupleBundle6(_1, _2, _3, _4, _5, _6) =>
-//        (_1(), _2(), _3(), _4(), _5(), _6())
-//    }
-
-      val rslt = checkStage.payload
-//      val rslt = ReqCommCheckResult(busWidth)
-//      rslt.assignAllByName(checkStage.payload)
-//    rslt.nak.setDefaultVal()
-//    rslt.dupReq := False
-      val ackType = Bits(ACK_TYPE_WIDTH bits)
-      when(!rslt.psnCheckRslt) {
-        ackType := AckType.NAK_SEQ.id
-        rslt.nak.set(ackType, io.epsn, rslt.rdmaData.bth.dqpn)
+        val rslt = ReqCommCheckResult(busWidth)
+        rslt.psnCheckRslt := psnCheckRslt
+        rslt.dupReq := dupReq
+        rslt.pktLenCheckRslt := pktLenCheckRslt
+        rslt.opSeqCheckRslt := opSeqCheckRslt
+        rslt.nak.setDefaultVal()
+        rslt.rdmaData := io.rx.payload
         rslt.checkPass := False
-      } elsewhen (rslt.dupReq) {
-        ackType := AckType.NORMAL.id
-        // rslt.nak.setDefaultVal()
-        // rslt.dupReq := True
-        rslt.checkPass := True
-      } elsewhen (!rslt.opSeqCheckRslt || !rslt.pktLenCheckRslt) {
-        ackType := AckType.NAK_INV.id
-        rslt.nak.set(ackType, rslt.rdmaData.bth.psn, rslt.rdmaData.bth.dqpn)
-        rslt.checkPass := False
-      } otherwise {
-        ackType := AckType.NORMAL.id
-        // rslt.nak.setDefaultVal()
-        rslt.checkPass := True
+        rslt
       }
+  }
 
-      rslt
-    }
-    .m2sPipe()
+  val dataBuildStage = new Area {
+    val input = checkStage.output.m2sPipe()
+    val output = input
+      .combStage()
+      .translateWith {
+        val rslt = cloneOf(input.payload)
+        rslt.assignAllByName(input.payload)
 
-  // TODO: check correctness, TX and RX fire at same time, and pay attention to duplicate data
-  io.tx <-/< outStage.toStream
-    .throwWhen(
-      outStage.rdmaData.bth.psn =/= io.epsn
-    )
-    .translateWith(outStage.rdmaData)
-  // TODO: pay attention to duplicate data
-  io.txDupReq <-/< outStage.toStream
-    .continueWhen(
-      outStage.checkPass && outStage.dupReq
-    )
-    .translateWith(outStage.rdmaData)
-  // TODO: pay attention to duplicate data
-  io.txErrResp <-/< outStage.toStream
-    .continueWhen(!outStage.checkPass)
-    .translateWith(outStage.nak.asRdmaDataBus(busWidth))
-  io.rx.ready := io.tx.fire
+        val ackType = Bits(ACK_TYPE_WIDTH bits)
+        when(!rslt.psnCheckRslt) {
+          ackType := AckType.NAK_SEQ.id
+          rslt.nak.setAck(ackType, io.epsn, rslt.rdmaData.bth.dqpn)
+          rslt.checkPass := False
+        } elsewhen (rslt.dupReq) {
+          ackType := AckType.NORMAL.id
+          rslt.checkPass := True
+        } elsewhen (!rslt.opSeqCheckRslt || !rslt.pktLenCheckRslt) {
+          ackType := AckType.NAK_INV.id
+          rslt.nak.setAck(
+            ackType,
+            rslt.rdmaData.bth.psn,
+            rslt.rdmaData.bth.dqpn
+          )
+          rslt.checkPass := False
+        } otherwise {
+          ackType := AckType.NORMAL.id
+          rslt.checkPass := True
+        }
+
+        rslt
+      }
+  }
+
+  val outputStage = new Area {
+    val input = dataBuildStage.output.m2sPipe()
+    // TODO: check correctness, TX and RX fire at same time, and pay attention to duplicate data
+    io.tx <-/< input.toStream
+      .throwWhen(
+        input.rdmaData.bth.psn =/= io.epsn
+      )
+      .translateWith(input.rdmaData)
+    // TODO: pay attention to duplicate data
+    io.txDupReq <-/< input.toStream
+      .continueWhen(
+        input.checkPass && input.dupReq
+      )
+      .translateWith(input.rdmaData)
+    // TODO: pay attention to duplicate data
+    io.txErrResp <-/< input.toStream
+      .continueWhen(!input.checkPass)
+      .translateWith(input.nak)
+    io.rx.ready := io.tx.fire
+  }
 }
 
 // If multiple duplicate reqeusts received, also ACK in PSN order;
@@ -340,21 +309,6 @@ class RecvQ(busWidth: BusWidth) extends Component {
   when(io.qpAttrUpdate.pulseRqPsnReset) {
     epsnReg := io.qpAttr.epsn
   }
-//  val epsnHandler = new Area {
-//    val epsnResetNotifier = cloneOf(io.qpAttrUpdate)
-//    Vec(
-//      epsnResetNotifier,
-//      reqVerifier.io.qpAttrUpdate,
-//      seqOut.io.qpAttrUpdate
-//    ) <> StreamFork(
-//      io.qpAttrUpdate,
-//      portCount = 3
-//    )
-//
-//    streamAckWhen(epsnResetNotifier, io.qpAttrUpdate.rqPsnReset()) {
-//      epsnReg := io.qpAttr.epsn
-//    }
-//  }
 }
 
 class SeqOut(busWidth: BusWidth) extends Component {

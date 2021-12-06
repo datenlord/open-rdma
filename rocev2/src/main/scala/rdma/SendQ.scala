@@ -5,7 +5,6 @@ import spinal.lib._
 
 import BusWidth.BusWidth
 import RdmaConstants._
-import ConstantSettings._
 
 class ReqBuilder(busWidth: BusWidth) extends Component {
   val io = new Bundle {
@@ -29,10 +28,9 @@ class ReqBuilder(busWidth: BusWidth) extends Component {
   // TODO: implement SQ logic
   io.tx <-/< io.workReqPSN.translateWith {
     val frag = Fragment(RdmaDataBus(busWidth))
+    frag.setDefaultVal()
     // TODO: WR opcode to RC opcode
     frag.bth.opcode := io.workReqPSN.workReq.opcode.resize(OPCODE_WIDTH)
-    frag.data.setAll()
-    frag.mty.setAll()
     frag.last := False
     frag
   }
@@ -110,13 +108,6 @@ class SendQ(busWidth: BusWidth) extends Component {
   val npsnReg = Reg(UInt(PSN_WIDTH bits)) init (0)
   io.npsn := npsnReg
 
-//  io.qpAttrUpdate.ready := True
-//  when(
-//    io.qpAttrUpdate.valid && (
-//      io.qpAttrUpdate.payload === QpAttrMask.QP_SQ_PSN.id
-//        || io.qpAttrUpdate.payload === QpAttrMask.QP_CREATE.id
-//    )
-//  ) {
   when(io.qpAttrUpdate.pulseSqPsnReset) {
     npsnReg := io.qpAttr.npsn
   }
@@ -126,7 +117,6 @@ class SendQ(busWidth: BusWidth) extends Component {
   val sqLogic = new SqLogic(busWidth)
   io.dmaReadReq <-/< sqLogic.io.dmaReadReq
   sqLogic.io.dmaReadResp <-/< io.dmaReadResp
-  //sqLogic.io.qpAttr := io.qpAttr
   sqLogic.io.workReqPSN <-/< workReq0.translateWith {
     val workReqPSN = WorkReqPSN()
     workReqPSN.workReq := workReq0.payload

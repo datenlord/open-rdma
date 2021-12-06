@@ -2,10 +2,8 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-import spinal.lib.fsm._
 
 import BusWidth.BusWidth
-import RdmaConstants._
 import ConstantSettings._
 
 class ReqRespSplitter(busWidth: BusWidth) extends Component {
@@ -21,10 +19,6 @@ class ReqRespSplitter(busWidth: BusWidth) extends Component {
     select = isReq.asUInt,
     portCount = 2
   )
-//  val reqTx = tx(0)
-//  val respTx = tx(1)
-//  io.reqTx <-/< reqTx
-//  io.respTx <-/< respTx
 }
 
 class RetryRespSpliter(busWidth: BusWidth) extends Component {
@@ -48,18 +42,19 @@ class FlowCtrl(busWidth: BusWidth) extends Component {
     val qpAttr = in(QpAttrData())
     val resp = slave(Flow(RdmaDataBus(busWidth)))
     val rx = slave(Stream(Fragment(RdmaDataBus(busWidth))))
-    val tx = master(Stream(UdpDataBus(busWidth)))
+    val tx = master(Stream(RdmaDataBus(busWidth)))
   }
 
   // TODO: send out CNP as soon as ECN tagged
 
   // TODO: Translate RdmaDataBus to UdpDataBus
   io.tx <-/< io.rx.translateWith {
-    val udpData = UdpDataBus(busWidth)
-    udpData.assignSomeByName(io.rx.fragment)
-    udpData.udp.ip := io.qpAttr.ipv4Peer
-    udpData.udp.len := 1024 // TODO: actual packet length
-    udpData
+    io.rx.payload
+//    val udpData = UdpDataBus(busWidth)
+//    udpData.assignSomeByName(io.rx.fragment)
+//    udpData.udp.ip := io.qpAttr.ipv4Peer
+//    udpData.udp.len := 1024 // TODO: actual packet length
+//    udpData
   }
 }
 
@@ -70,7 +65,7 @@ class QP(busWidth: BusWidth) extends Component {
     val qpStateChange = master(Stream(Bits(QP_STATE_WIDTH bits)))
     val workReq = slave(Stream(WorkReq()))
     val rx = slave(Stream(RdmaDataBus(busWidth)))
-    val tx = master(Stream(UdpDataBus(busWidth)))
+    val tx = master(Stream(RdmaDataBus(busWidth)))
     val dmaReadReq = master(Stream(DmaReadReq()))
     val dmaReadResp = slave(Stream(Fragment(DmaReadResp())))
     val dmaWriteReq = master(Stream(Fragment(DmaWriteReq())))
@@ -93,12 +88,7 @@ class QP(busWidth: BusWidth) extends Component {
   rq.io.qpAttrUpdate := io.qpAttrUpdate
   rq.io.rx <-/< reqRx
 
-//  Vec(sq.io.qpAttrUpdate, rq.io.qpAttrUpdate) <> StreamFork(
-//    io.qpAttrUpdate,
-//    portCount = 2
-//  )
-
-  // Seperate normal and retry responses
+  // Separate normal and retry responses
   val respSpliter = new RetryRespSpliter(busWidth)
   respSpliter.io.rx <-/< respRx
   val normalResp = respSpliter.io.normalTx
