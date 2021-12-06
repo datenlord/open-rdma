@@ -1,7 +1,7 @@
 package rdma
 
 import spinal.core._
-import spinal.lib._
+// import spinal.lib._
 
 import BusWidth.BusWidth
 import RdmaConstants._
@@ -21,7 +21,7 @@ abstract class RdmaHeader() extends Bundle {
 
 // 48 bytes
 case class BTH() extends RdmaHeader {
-  private val opcodeFull = Bits(TRANSPORT_WIDTH + OPCODE_WIDTH bits)
+  val opcodeFull = Bits(TRANSPORT_WIDTH + OPCODE_WIDTH bits)
   val solicited = Bool()
   val migreq = Bool()
   val padcount = UInt(PADCOUNT_WIDTH bits)
