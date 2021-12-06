@@ -117,7 +117,7 @@ class QP(busWidth: BusWidth) extends Component {
     portCount = 2
   )
 
-  val reqCache = new ReqCache(busWidth)
+  val reqCache = new ReqCache
   reqCache.io.portW.writeReq <-/< sq.io.cacheWriteReq
   reqCache.io.portRW.rwReq <-/< respHandler.io.cacheReq
   respHandler.io.cacheResp <-/< reqCache.io.portRW.readResp

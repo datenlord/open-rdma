@@ -19,7 +19,8 @@ jobs:
           # Local install Cocotb and set PATH env
           pip3 install cocotb
           export PATH="$HOME/.local/bin:$PATH"
-          ./run.sh
+          CI_ENV="true"
+          ./run.sh $CI_ENV
       - name: Setup tmate session
         if: ${{ failure() }}
         uses: mxschmitt/action-tmate@v3

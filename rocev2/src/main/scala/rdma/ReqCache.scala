@@ -3,9 +3,7 @@ package rdma
 import spinal.core._
 import spinal.lib._
 
-import BusWidth.BusWidth
-
-class ReqCache(busWidth: BusWidth) extends Component {
+class ReqCache extends Component {
   val io = new Bundle {
     val portW = new Bundle {
       val writeReq = slave(Stream(CacheData()))
