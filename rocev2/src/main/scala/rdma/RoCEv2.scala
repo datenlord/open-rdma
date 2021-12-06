@@ -4,7 +4,6 @@ import spinal.core._
 import spinal.lib._
 
 import BusWidth.BusWidth
-import RdmaConstants._
 import ConstantSettings._
 
 // Table 40, pp. 296, spec 1.4
@@ -22,13 +21,11 @@ import ConstantSettings._
 class HeadVerifier(numMaxQPs: Int, busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttrVec = in(Vec(QpAttrData(), numMaxQPs))
-    val rx = slave(Stream(UdpDataBus(busWidth)))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
     val tx = master(Stream(RdmaDataBus(busWidth)))
   }
 
-  val rdmaData = RdmaDataBus(busWidth)
-  rdmaData.data := io.rx.data
-  rdmaData.mty := io.rx.mty
+  val rdmaData = io.rx.payload
 
   val validHeader =
     Transports.isSupportedType(rdmaData.bth.transport) && OpCode.isValidCode(
@@ -81,66 +78,59 @@ class QpCtrl(numMaxQPs: Int) extends Component {
   io.full := !(qpVecAvailable.asBits().orR)
 
   // QP attribute change notification
-  val findQpStage = io.qpCreateOrModify
-    .combStage()
-    .translateWith {
-      val qpCreation =
-        io.qpCreateOrModify.modifyMask === QpAttrMask.QP_CREATE.id
-      val rqPsnReset =
-        io.qpCreateOrModify.modifyMask === QpAttrMask.QP_RQ_PSN.id
-      val sqPsnReset =
-        io.qpCreateOrModify.modifyMask === QpAttrMask.QP_SQ_PSN.id
-      val availableQpOH = OHMasking.first(qpVecAvailable)
-      val modifyQpOH = Vec(qpAttrVec.map(_.sQPN() === io.qpCreateOrModify.sqpn))
-      val qpSelIdx = OHToUInt(qpCreation ? availableQpOH | modifyQpOH)
-//      TupleBundle6(
-//        qpCreation,
-//        rqPsnReset,
-//        sqPsnReset,
-//        availableQpOH,
-//        modifyQpOH,
-//        qpSelIdx
-//      )
-      val rslt = QpSearchResult(numMaxQPs)
-      rslt.qpCreation := qpCreation
-      rslt.rqPsnReset := rqPsnReset
-      rslt.sqPsnReset := sqPsnReset
-      rslt.qpSelIdx := qpSelIdx
-      rslt
-    }
-    .pipelined(m2s = true)
-
-  StreamSink() << findQpStage.combStage().translateWith {
-//    val qpCreation = findQpStage.payload._1
-//    val rqPsnReset = findQpStage.payload._2
-//    val sqPsnReset = findQpStage.payload._3
-//    val availableQpOH = findQpStage.payload._4
-//    val modifyQpOH = findQpStage.payload._5
-//    val qpSelIdx = findQpStage.payload._6
-    val rslt = findQpStage.payload
-
-    io.qpAttrUpdate(rslt.qpSelIdx)
-      .pulseRqPsnReset := findQpStage.valid && (rslt.qpCreation || rslt.rqPsnReset)
-    io.qpAttrUpdate(rslt.qpSelIdx)
-      .pulseSqPsnReset := findQpStage.valid && (rslt.qpCreation || rslt.sqPsnReset)
-
-    NoData
+  case class QpSearchResult(numMaxQPs: Int) extends Bundle {
+    val qpCreation = Bool()
+    val rqPsnReset = Bool()
+    val sqPsnReset = Bool()
+    val qpSelIdx = UInt(log2Up(numMaxQPs) bits)
   }
 
-//  io.qpAttrUpdate <> StreamDemux(
-//    io.qpCreateOrModify.translateWith(io.qpCreateOrModify.modifyMask),
-//    qpSel,
-//    numMaxQPs
-//  )
+  val findQpStage = new Area {
+    val input = io.qpCreateOrModify
+    val output = input
+      .combStage()
+      .translateWith {
+        val qpCreation =
+          io.qpCreateOrModify.modifyMask === QpAttrMask.QP_CREATE.id
+        val rqPsnReset =
+          io.qpCreateOrModify.modifyMask === QpAttrMask.QP_RQ_PSN.id
+        val sqPsnReset =
+          io.qpCreateOrModify.modifyMask === QpAttrMask.QP_SQ_PSN.id
+        val availableQpOH = OHMasking.first(qpVecAvailable)
+        val modifyQpOH =
+          Vec(qpAttrVec.map(_.sQPN() === io.qpCreateOrModify.sqpn))
+        val qpSelIdx = OHToUInt(qpCreation ? availableQpOH | modifyQpOH)
+
+        val rslt = QpSearchResult(numMaxQPs)
+        rslt.qpCreation := qpCreation
+        rslt.rqPsnReset := rqPsnReset
+        rslt.sqPsnReset := sqPsnReset
+        rslt.qpSelIdx := qpSelIdx
+        rslt
+      }
+  }
+
+  val notifyStage = new Area {
+    val input = findQpStage.output.pipelined(m2s = true)
+
+    StreamSink() << input.combStage().translateWith {
+      io.qpAttrUpdate(input.qpSelIdx)
+        .pulseRqPsnReset := input.valid && (input.qpCreation || input.rqPsnReset)
+      io.qpAttrUpdate(input.qpSelIdx)
+        .pulseSqPsnReset := input.valid && (input.qpCreation || input.sqPsnReset)
+
+      NoData
+    }
+  }
 }
 
 // TODO: RoCE should have QP1?
-class QPs(numMaxQPs: Int, busWidth: BusWidth) extends Component {
+class AllQpModules(numMaxQPs: Int, busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpCreateOrModify = slave(Stream(QpAttrData()))
     val workReq = slave(Stream(WorkReq()))
-    val rx = slave(Stream(UdpDataBus(busWidth)))
-    val tx = master(Stream(UdpDataBus(busWidth)))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
+    val tx = master(Stream(RdmaDataBus(busWidth)))
     val dmaReadReq = master(Stream(DmaReadReq()))
     val dmaReadResp = slave(Stream(Fragment(DmaReadResp())))
     val dmaWriteReq = master(Stream(Fragment(DmaWriteReq())))
@@ -207,21 +197,21 @@ class RoCEv2(numMaxQPs: Int, busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpCreateOrModify = slave(Stream(QpAttrData()))
     val workReq = slave(Stream(WorkReq()))
-    val rx = slave(Stream(UdpDataBus(busWidth)))
-    val tx = master(Stream(UdpDataBus(busWidth)))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
+    val tx = master(Stream(RdmaDataBus(busWidth)))
   }
 
-  val qpModule = new QPs(numMaxQPs, busWidth)
-  qpModule.io.qpCreateOrModify <-/< io.qpCreateOrModify
-  qpModule.io.workReq <-/< io.workReq
-  qpModule.io.rx <-/< io.rx
-  io.tx <-/< qpModule.io.tx
+  val allQpModules = new AllQpModules(numMaxQPs, busWidth)
+  allQpModules.io.qpCreateOrModify <-/< io.qpCreateOrModify
+  allQpModules.io.workReq <-/< io.workReq
+  allQpModules.io.rx <-/< io.rx
+  io.tx <-/< allQpModules.io.tx
 
   val dma = new DmaHandler()
-  dma.io.dmaReadReq <-/< qpModule.io.dmaReadReq
-  qpModule.io.dmaReadResp <-/< dma.io.dmaReadResp
-  dma.io.dmaWriteReq <-/< qpModule.io.dmaWriteReq
-  qpModule.io.dmaWriteResp <-/< dma.io.dmaWriteResp
+  dma.io.dmaReadReq <-/< allQpModules.io.dmaReadReq
+  allQpModules.io.dmaReadResp <-/< dma.io.dmaReadResp
+  dma.io.dmaWriteReq <-/< allQpModules.io.dmaWriteReq
+  allQpModules.io.dmaWriteResp <-/< dma.io.dmaWriteResp
 }
 
 object RoCEv2 {

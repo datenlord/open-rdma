@@ -12,6 +12,9 @@ fi
 
 ./mill version
 
+# Generate IDEA config
+# ./mill mill.scalalib.GenIdea/idea
+
 # Check format and lint
 ./mill mill.scalalib.scalafmt.ScalafmtModule/reformatAll __.sources
 # ./mill workshop.checkFormat

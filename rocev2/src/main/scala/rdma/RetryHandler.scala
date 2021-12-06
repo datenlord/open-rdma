@@ -2,14 +2,11 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-import spinal.lib.fsm._
 
 import BusWidth.BusWidth
-import RdmaConstants._
 
 class RetryHandler(busWidth: BusWidth) extends Component {
   val io = new Bundle {
-    //val qpAttr = in(QpAttrData())
     val rx = slave(Stream(RdmaDataBus(busWidth)))
     val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
     val cacheReadReq = master(Stream(CacheReq()))
@@ -23,7 +20,6 @@ class RetryHandler(busWidth: BusWidth) extends Component {
   }
 
   val retryLogic = new SqLogic(busWidth, retry = true)
-  //retryLogic.io.qpAttr := io.qpAttr
   retryLogic.io.workReqPSN <-/< io.cacheReadResp.translateWith {
     io.cacheReadResp.workReqPSN
   }

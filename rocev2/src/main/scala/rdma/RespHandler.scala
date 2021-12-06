@@ -2,7 +2,6 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-import spinal.lib.fsm._
 
 import BusWidth.BusWidth
 import RdmaConstants._
@@ -35,9 +34,9 @@ class RespHandler(busWidth: BusWidth) extends Component {
     val dmaWriteResp = slave(Stream(DmaWriteResp()))
   }
 
-  val respVerifer = new RespVerifer(busWidth)
-  respVerifer.io.rx <-/< io.rx
-  val validRespRx = respVerifer.io.tx
+  val respVerifier = new RespVerifer(busWidth)
+  respVerifier.io.rx <-/< io.rx
+  val validRespRx = respVerifier.io.tx
 
   io.qpStateChange.valid := False
   io.qpStateChange.payload := QpState.ERR.id

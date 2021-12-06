@@ -1,7 +1,6 @@
 package rdma
 
 import spinal.core._
-import spinal.lib._
 
 import BusWidth.BusWidth
 import RdmaConstants._
@@ -24,15 +23,6 @@ case class DevMetaData() extends Bundle {
 case class QpAttrUpdateNotifier() extends Bundle {
   val pulseRqPsnReset = Bool()
   val pulseSqPsnReset = Bool()
-  //  val mask = Bits(QP_ATTR_MASK_WIDTH bits)
-  //
-  //  def rqPsnReset(): Bool = {
-  //    (mask === QpAttrMask.QP_RQ_PSN.id || mask === QpAttrMask.QP_CREATE.id)
-  //  }
-  //
-  //  def sqPsnReset(): Bool = {
-  //    (mask === QpAttrMask.QP_SQ_PSN.id || mask === QpAttrMask.QP_CREATE.id)
-  //  }
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
@@ -238,49 +228,18 @@ case class UdpMetaData() extends Bundle {
 }
 
 case class UdpDataBus(busWidth: BusWidth) extends Bundle {
-  //val sop = Bool()
   val udp = UdpMetaData()
-  //val bth = BTH()
   val data = Bits(busWidth.id bits)
   val mty = Bits(log2Up(busWidth.id / 8) bits)
-  //val eop = Bool()
 }
 
-case class RdmaDataBus(busWidth: BusWidth) extends Bundle {
-  //val sop = Bool()
-  //val bth = BTH()
-  val data = Bits(busWidth.id bits)
-  val mty = Bits(log2Up(busWidth.id / 8) bits)
-  //val eop = Bool()
-
-  def bth: BTH = {
-    val bth = BTH()
-    val bthWidth = widthOf(bth)
-    bth.assignFromBits(data(busWidth.id - bthWidth, bthWidth bits))
-    require(
-      busWidth.id > bthWidth,
-      s"Bus width=${busWidth.id} must > BTH width=$bthWidth"
-    )
-
-    bth
-  }
-}
-
-//----------Local bus for pipeline stages----------//
-
-case class ReqCommCheckResult(busWidth: BusWidth) extends Bundle {
-  val checkPass = Bool()
-  val psnCheckRslt = Bool()
-  val dupReq = Bool()
-  val opSeqCheckRslt = Bool()
-  val pktLenCheckRslt = Bool()
-  val nak = Acknowlege()
-  val rdmaData = RdmaDataBus(busWidth)
-}
-
-case class QpSearchResult(numMaxQPs: Int) extends Bundle {
-  val qpCreation = Bool()
-  val rqPsnReset = Bool()
-  val sqPsnReset = Bool()
-  val qpSelIdx = UInt(log2Up(numMaxQPs) bits)
-}
+case class RdmaDataBus(busWidth: BusWidth)
+    extends RdmaDataPacket(busWidth)
+    with SendReq
+    with WriteReq
+    with ReadReq
+    with AtomicReq
+    with Acknowlege
+    with ReadResp
+    with AtomicResp
+    with CNP {}
