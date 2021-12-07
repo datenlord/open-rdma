@@ -358,12 +358,12 @@ class SeqOut(busWidth: BusWidth) extends Component {
 
     assert(
       assertion = CountOne(rxFiltered.map(_.valid)) <= 1,
-      message = "SeqOut has duplicate PSN input",
+      message = L"SeqOut has duplicate PSN input, oPSN=${opsnReg}",
       severity = ERROR
     )
   }
 
-  val rxAllValid = rxSeq.map(_.valid).reduce(_ && _)
+  val rxAllValid = Vec(rxSeq.map(_.valid)).asBits.andR
   when(rxAllValid) {
     assert(
       assertion = txSel.valid,

@@ -63,36 +63,32 @@ class SeqOutTest extends AnyFunSuite {
     }
   }
 
-  class PsnGenerator {
-    var PSN: Int = -1
-    def setPsn(psn: Int): this.type = {
-      PSN = psn
-      this
-    }
-
-    def genOrderedNext(n: Int): List[Int] = {
-      val psnList = (PSN until PSN + n).toList
-      PSN += n
-      psnList
+  def psnGen(startPsn: Int, n: Int): (List[Int], Int) = {
+    val maxPSN = (1 << PSN_WIDTH) - 1
+    val startPsnNext = startPsn + n
+    if (startPsnNext > maxPSN) {
+      val startPsnNextWrapped = startPsnNext - maxPSN
+      val psnList =
+        (startPsn to maxPSN).toList ++ (0 until startPsnNextWrapped).toList
+      (psnList, startPsnNextWrapped)
+    } else {
+      val psnList = (startPsn until startPsnNext).toList
+      (psnList, startPsnNext)
     }
   }
 
   class TargetPsnWaiter(dut: SeqOut) {
-    var psnAll: List[Int] = List()
 
     fork {
+      val readyInterval = 8
       while (true) {
         dut.io.tx.ready #= !dut.io.tx.ready.toBoolean
-        dut.clockDomain.waitRisingEdge(Random.nextInt(8))
+        dut.clockDomain.waitRisingEdge(Random.nextInt(readyInterval))
       }
     }
 
-    def add(psnList: List[Int]): Unit = {
-      psnAll ++= psnList
-    }
-
-    def start(): Unit = {
-      for (psn <- psnAll) {
+    def wait(psnList: List[Int]): Unit = {
+      for (psn <- psnList) {
         while (
           !(dut.io.tx.bth.psn.toInt == psn &&
             dut.io.tx.valid.toBoolean &&
@@ -102,82 +98,96 @@ class SeqOutTest extends AnyFunSuite {
           dut.clockDomain.waitRisingEdge()
         }
       }
-      psnAll = List()
     }
   }
 
   def setInputDrivers(
       dut: SeqOut
   ): (Seq[RxDriver], PsnSetter, TargetPsnWaiter) = {
-    val rxErrReqDriver =
-      new RxDriver(dut.io.rxErrReqResp, dut.clockDomain, OpCode.ACKNOWLEDGE, 1)
-    val rxDupReqDriver =
-      new RxDriver(dut.io.rxDupReqResp, dut.clockDomain, OpCode.ACKNOWLEDGE, 1)
-    val rxSendDriver =
-      new RxDriver(dut.io.rxSendResp, dut.clockDomain, OpCode.ACKNOWLEDGE, 1)
+    val rxReadRespFragmentsLen = 8
+    val rxOtherRespFragmentsLen = 1
+
     val rxAtomicDriver = new RxDriver(
       dut.io.rxAtomicResp,
       dut.clockDomain,
       OpCode.ATOMIC_ACKNOWLEDGE,
-      1
+      rxOtherRespFragmentsLen
     )
-    val rxWriteDriver =
-      new RxDriver(dut.io.rxWriteResp, dut.clockDomain, OpCode.ACKNOWLEDGE, 1)
     val rxReadDriver = new RxDriver(
       dut.io.rxReadResp,
       dut.clockDomain,
       OpCode.RDMA_READ_RESPONSE_ONLY,
-      8
+      rxReadRespFragmentsLen
     )
+    val rxDrivers = Seq(
+      rxAtomicDriver,
+      rxReadDriver
+    ) ++ Seq(
+      dut.io.rxErrReqResp,
+      dut.io.rxDupReqResp,
+      dut.io.rxSendResp
+    ).map(
+      new RxDriver(
+        _,
+        dut.clockDomain,
+        OpCode.ACKNOWLEDGE,
+        rxOtherRespFragmentsLen
+      )
+    )
+
     val psnSetter = {
       new PsnSetter(dut.io.qpAttr, dut.io.qpAttrUpdate, dut.clockDomain)
     }
     val targetPsnWaiter = new TargetPsnWaiter(dut)
-    val rxDrivers = Seq(
-      rxErrReqDriver,
-      rxDupReqDriver,
-      rxSendDriver,
-      rxAtomicDriver,
-      rxWriteDriver,
-      rxReadDriver
-    )
     (rxDrivers, psnSetter, targetPsnWaiter)
   }
 
-  def simSeqOut(dut: SeqOut): Unit = {
+  def simPsnWarp(dut: SeqOut): Unit = {
     dut.clockDomain.forkStimulus(2)
     val (rxDrivers, psnSetter, targetPsnWaiter) = setInputDrivers(dut)
-    val psnGen = new PsnGenerator
     val maxPSN = (1 << PSN_WIDTH) - 1
-    val maxPacketNum = 0xff
+    val nPackets = 10
+    val startPsn = maxPSN - nPackets / 2
+    val (psnList, _) = psnGen(startPsn, nPackets)
 
-    // test 1, case for psn wrap
-    psnSetter.set(maxPSN - 10)
-    psnGen.setPsn(maxPSN - 10)
-    val psnList1 = (maxPSN - 10 to maxPSN).toList
-    val psnList2 = (0 to 10).toList
-    rxDrivers(1).push(psnList1)
-    rxDrivers(2).push(psnList2)
-    targetPsnWaiter.add(psnList1 ++ psnList2)
-    targetPsnWaiter.start()
-
-    // test 2, random test
-    for (psn <- Seq.fill(64)(Random.nextInt(maxPSN - maxPacketNum))) {
-      psnSetter.set(psn)
-      psnGen.setPsn(psn)
-      for (_ <- 0 to 8) {
-        val rxDriver = rxDrivers(Random.nextInt(rxDrivers.length))
-        val psnList = psnGen.genOrderedNext(Random.nextInt(maxPacketNum))
-        rxDriver.push(psnList)
-        targetPsnWaiter.add(psnList)
-      }
-      targetPsnWaiter.start()
-    }
+    rxDrivers.foreach(driver => {
+      psnSetter.set(startPsn)
+      driver.push(psnList)
+      targetPsnWaiter.wait(psnList)
+    })
   }
 
-  test("SeqOut test") {
+  def simSeqOutRandom(dut: SeqOut): Unit = {
+    dut.clockDomain.forkStimulus(2)
+    val (rxDrivers, psnSetter, targetPsnWaiter) = setInputDrivers(dut)
+    val maxPSN = (1 << PSN_WIDTH) - 1
+    val maxPacketsNum = 0xff
+    val nTestCases = 64
+
+    for (psn <- Seq.fill(nTestCases)(Random.nextInt(maxPSN))) {
+      psnSetter.set(psn)
+
+      val endPsn = rxDrivers.indices
+        .foldLeft(psn)((startPsn, _) => {
+          val (psnList, startPsnNext) =
+            psnGen(startPsn, Random.nextInt(maxPacketsNum))
+          val rxDriver = rxDrivers(Random.nextInt(rxDrivers.length))
+          rxDriver.push(psnList)
+          startPsnNext
+        })
+
+      targetPsnWaiter.wait((psn until endPsn).toList)
+    }
+  }
+  test("SeqOut test case for PSN warp") {
     SimConfig.withWave
       .compile(new SeqOut(BusWidth.W512))
-      .doSim { dut => simSeqOut(dut) }
+      .doSim { dut => simPsnWarp(dut) }
+  }
+
+  test("SeqOut random test") {
+    SimConfig.withWave
+      .compile(new SeqOut(BusWidth.W512))
+      .doSim { dut => simSeqOutRandom(dut) }
   }
 }
