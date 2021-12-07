@@ -27,4 +27,6 @@ fi
 
 # Run build and simulation
 ./mill rocev2.runMain rdma.RoCEv2
-./mill rocev2.test
+# mill test is not compatible with SpinalHDL, use testOnly instead
+# ./mill rocev2.test
+./mill rocev2.test.testOnly rdma.SeqOutTest
