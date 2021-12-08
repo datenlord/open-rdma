@@ -367,7 +367,8 @@ class SeqOut(busWidth: BusWidth) extends Component {
   when(rxAllValid) {
     assert(
       assertion = txSel.valid,
-      message = "SeqOut stuck, because all rx are valid but no PSN is expected",
+      message =
+        L"SeqOut stuck, because all rx are valid but no one's PSNs is equal to oPSN=${opsnReg}",
       severity = ERROR
     )
   }

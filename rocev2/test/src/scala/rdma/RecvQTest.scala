@@ -30,7 +30,7 @@ class SeqOutTest extends AnyFunSuite {
       psnQueue.clear()
     }
 
-    val driver = fork {
+    fork {
       while (true) {
         if (psnQueue.nonEmpty) {
           rx.bth.psn #= psnQueue.dequeue()
@@ -119,20 +119,31 @@ class SeqOutTest extends AnyFunSuite {
       OpCode.RDMA_READ_RESPONSE_ONLY,
       rxReadRespFragmentsLen
     )
+    val rxErrDriver = new RxDriver(
+      dut.io.rxErrReqResp,
+      dut.clockDomain,
+      OpCode.ACKNOWLEDGE,
+      rxOtherRespFragmentsLen
+    )
+    val rxDupReqDriver = new RxDriver(
+      dut.io.rxDupReqResp,
+      dut.clockDomain,
+      OpCode.ACKNOWLEDGE,
+      rxOtherRespFragmentsLen
+    )
+    val rxSendDriver = new RxDriver(
+      dut.io.rxSendResp,
+      dut.clockDomain,
+      OpCode.ACKNOWLEDGE,
+      rxOtherRespFragmentsLen
+    )
+
     val rxDrivers = Seq(
       rxAtomicDriver,
-      rxReadDriver
-    ) ++ Seq(
-      dut.io.rxErrReqResp,
-      dut.io.rxDupReqResp,
-      dut.io.rxSendResp
-    ).map(
-      new RxDriver(
-        _,
-        dut.clockDomain,
-        OpCode.ACKNOWLEDGE,
-        rxOtherRespFragmentsLen
-      )
+      rxReadDriver,
+      rxErrDriver,
+      rxDupReqDriver,
+      rxSendDriver
     )
 
     val psnSetter = {
@@ -161,7 +172,7 @@ class SeqOutTest extends AnyFunSuite {
     dut.clockDomain.forkStimulus(2)
     val (rxDrivers, psnSetter, targetPsnWaiter) = setInputDrivers(dut)
     val maxPSN = (1 << PSN_WIDTH) - 1
-    val maxPacketsNum = 0xff
+    val maxPacketsNum = 256
     val nTestCases = 64
 
     for (psn <- Seq.fill(nTestCases)(Random.nextInt(maxPSN))) {
