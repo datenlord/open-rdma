@@ -50,17 +50,11 @@ class SeqOutTest extends AnyFunSuite {
     }
   }
 
-  class PsnSetter(
-      qpAttr: QpAttrData,
-      qpAttrUpdate: QpAttrUpdateNotifier,
-      clockDomain: ClockDomain
-  ) {
-    def set(psn: Int): Unit = {
-      qpAttr.epsn #= psn
-      qpAttrUpdate.pulseRqPsnReset #= true
-      clockDomain.waitRisingEdge()
-      qpAttrUpdate.pulseRqPsnReset #= false
-    }
+  def setPsn(dut: SeqOut, psn: Int): Unit = {
+    dut.io.qpAttr.epsn #= psn
+    dut.io.qpAttrUpdate.pulseRqPsnReset #= true
+    dut.clockDomain.waitRisingEdge()
+    dut.io.qpAttrUpdate.pulseRqPsnReset #= false
   }
 
   def psnGen(startPsn: Int, n: Int): (List[Int], Int) = {
@@ -103,7 +97,7 @@ class SeqOutTest extends AnyFunSuite {
 
   def setInputDrivers(
       dut: SeqOut
-  ): (Seq[RxDriver], PsnSetter, TargetPsnWaiter) = {
+  ): (Seq[RxDriver], TargetPsnWaiter) = {
     val rxReadRespFragmentsLen = 8
     val rxOtherRespFragmentsLen = 1
 
@@ -146,23 +140,20 @@ class SeqOutTest extends AnyFunSuite {
       rxSendDriver
     )
 
-    val psnSetter = {
-      new PsnSetter(dut.io.qpAttr, dut.io.qpAttrUpdate, dut.clockDomain)
-    }
     val targetPsnWaiter = new TargetPsnWaiter(dut)
-    (rxDrivers, psnSetter, targetPsnWaiter)
+    (rxDrivers, targetPsnWaiter)
   }
 
   def simPsnWarp(dut: SeqOut): Unit = {
     dut.clockDomain.forkStimulus(2)
-    val (rxDrivers, psnSetter, targetPsnWaiter) = setInputDrivers(dut)
+    val (rxDrivers, targetPsnWaiter) = setInputDrivers(dut)
     val maxPSN = (1 << PSN_WIDTH) - 1
     val nPackets = 10
     val startPsn = maxPSN - nPackets / 2
     val (psnList, _) = psnGen(startPsn, nPackets)
 
     rxDrivers.foreach(driver => {
-      psnSetter.set(startPsn)
+      setPsn(dut, startPsn)
       driver.push(psnList)
       targetPsnWaiter.wait(psnList)
     })
@@ -170,13 +161,13 @@ class SeqOutTest extends AnyFunSuite {
 
   def simSeqOutRandom(dut: SeqOut): Unit = {
     dut.clockDomain.forkStimulus(2)
-    val (rxDrivers, psnSetter, targetPsnWaiter) = setInputDrivers(dut)
+    val (rxDrivers, targetPsnWaiter) = setInputDrivers(dut)
     val maxPSN = (1 << PSN_WIDTH) - 1
     val maxPacketsNum = 256
     val nTestCases = 64
 
     for (psn <- Seq.fill(nTestCases)(Random.nextInt(maxPSN))) {
-      psnSetter.set(psn)
+      setPsn(dut, psn)
 
       val endPsn = rxDrivers.indices
         .foldLeft(psn)((startPsn, _) => {
@@ -190,6 +181,7 @@ class SeqOutTest extends AnyFunSuite {
       targetPsnWaiter.wait((psn until endPsn).toList)
     }
   }
+
   test("SeqOut test case for PSN warp") {
     SimConfig.withWave
       .compile(new SeqOut(BusWidth.W512))
