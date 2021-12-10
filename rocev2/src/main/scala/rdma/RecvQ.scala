@@ -298,6 +298,7 @@ class RecvQ(busWidth: BusWidth) extends Component {
 
   val seqOut = new SeqOut(busWidth)
   seqOut.io.qpAttr := io.qpAttr
+  seqOut.io.qpAttrUpdate := io.qpAttrUpdate
   seqOut.io.rxSendResp <-/< sendReqHandler.io.tx
   seqOut.io.rxWriteResp <-/< writeReqHandler.io.tx
   seqOut.io.rxReadResp <-/< readReqHandler.io.tx
@@ -324,21 +325,29 @@ class SeqOut(busWidth: BusWidth) extends Component {
     val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
   }
 
+  val opsnIncrease = Bool()
+
   val opsnReg = Reg(UInt(PSN_WIDTH bits)) // init (0)
   when(io.qpAttrUpdate.pulseRqPsnReset) {
     opsnReg := io.qpAttr.epsn
+  } elsewhen (opsnIncrease) {
+    opsnReg := opsnReg + 1
   }
 
-  // TODO: select output by PSN order
-  val txSel = StreamArbiterFactory.roundRobin.fragmentLock
-    .onArgs(
-      io.rxAtomicResp,
-      io.rxReadResp,
-      io.rxSendResp,
-      io.rxWriteResp,
-      io.rxDupReqResp,
-      io.rxErrReqResp
-    )
+  val rxSeq = Seq(
+    io.rxAtomicResp,
+    io.rxReadResp,
+    io.rxSendResp,
+    io.rxWriteResp,
+    io.rxDupReqResp,
+    io.rxErrReqResp
+  )
+  val rxFiltered = rxSeq.map(rx => rx.haltWhen(rx.bth.psn =/= opsnReg))
+  val txSel = StreamArbiterFactory.fragmentLock.on(rxFiltered)
+
+  opsnIncrease := txSel.fire && txSel.isLast
+  io.tx <-/< txSel
+
   when(txSel.valid) {
     assert(
       assertion = OpCode.isRespPkt(txSel.bth.opcode),
@@ -346,6 +355,21 @@ class SeqOut(busWidth: BusWidth) extends Component {
         L"SeqOut can only output response packet, but with invalid opcode=${txSel.bth.opcode}",
       severity = ERROR
     )
+
+    assert(
+      assertion = CountOne(rxFiltered.map(_.valid)) <= 1,
+      message = L"SeqOut has duplicate PSN input, oPSN=${opsnReg}",
+      severity = ERROR
+    )
   }
-  io.tx <-/< txSel
+
+  val rxAllValid = Vec(rxSeq.map(_.valid)).asBits.andR
+  when(rxAllValid) {
+    assert(
+      assertion = txSel.valid,
+      message =
+        L"SeqOut stuck, because all rx are valid but no one's PSNs is equal to oPSN=${opsnReg}",
+      severity = ERROR
+    )
+  }
 }
