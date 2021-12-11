@@ -2,7 +2,8 @@ import $ivy.`com.goyeau::mill-scalafix:0.2.5`
 import com.goyeau.mill.scalafix.ScalafixModule
 import mill._, scalalib._, scalafmt._
 
-val SpinalVersion = "1.6.0"
+val spinalVersion = "1.6.0"
+val scalaTestVersion = "3.2.10"
 
 trait CommonSpinalModule extends ScalaModule with ScalafmtModule with ScalafixModule {
   def scalaVersion = "2.13.6"
@@ -15,7 +16,7 @@ trait CommonSpinalModule extends ScalaModule with ScalafmtModule with ScalafixMo
     "-Xlint:adapted-args",
     "-Xlint:nullary-unit",
     "-Xlint:inaccessible",
-    // "-Xlint:nullary-override", not a valid chice for -Xlint
+    // "-Xlint:nullary-override", not a valid choice for -Xlint
     "-Xlint:infer-any",
     "-Xlint:missing-interpolator",
     "-Xlint:doc-detached",
@@ -49,14 +50,14 @@ trait CommonSpinalModule extends ScalaModule with ScalafmtModule with ScalafixMo
   )
 
   override def ivyDeps = Agg(
-    ivy"com.github.spinalhdl::spinalhdl-core:$SpinalVersion",
-    ivy"com.github.spinalhdl::spinalhdl-lib:$SpinalVersion",
-    ivy"com.github.spinalhdl::spinalhdl-sim:$SpinalVersion",
+    ivy"com.github.spinalhdl::spinalhdl-core:$spinalVersion",
+    ivy"com.github.spinalhdl::spinalhdl-lib:$spinalVersion",
+    ivy"com.github.spinalhdl::spinalhdl-sim:$spinalVersion",
     // ivy"org.scalameta:::semanticdb-scalac:4.4.30"
   )
   // val semanticdbScalac = ivy"org.scalameta:::semanticdb-scalac:4.4.30"
 
-  override def scalacPluginIvyDeps = Agg(ivy"com.github.spinalhdl::spinalhdl-idsl-plugin:$SpinalVersion")
+  override def scalacPluginIvyDeps = Agg(ivy"com.github.spinalhdl::spinalhdl-idsl-plugin:$spinalVersion")
   // override def scalafixIvyDeps = Agg(
   //   ivy"org.scala-lang.modules::scala-collection-migrations:2.2.0",
   //   ivy"com.github.liancheng::organize-imports:0.5.0"
@@ -65,7 +66,7 @@ trait CommonSpinalModule extends ScalaModule with ScalafmtModule with ScalafixMo
 
 object rocev2 extends CommonSpinalModule {
   object test extends Tests with TestModule.ScalaTest {
-    override def ivyDeps = Agg(ivy"org.scalatest::scalatest:3.2.10")
+    override def ivyDeps = Agg(ivy"org.scalatest::scalatest:$scalaTestVersion")
     // override def testFrameworks = Seq("org.scalatest.tools.Framework")
     override def testFramework = "org.scalatest.tools.Framework"
     def testOnly(args: String*) = T.command {

@@ -4,7 +4,8 @@ import spinal.core._
 import spinal.lib._
 
 import BusWidth.BusWidth
-import ConstantSettings._
+// import ConstantSettings._
+import StreamVec._
 
 // Table 40, pp. 296, spec 1.4
 // Silently drop illegal incoming packets
@@ -32,10 +33,8 @@ class HeadVerifier(numMaxQPs: Int, busWidth: BusWidth) extends Component {
       rdmaData.bth.opcode
     )
   val qpStateValid = io.qpAttrVec.map(qpAttr =>
-    qpAttr.sqpn === rdmaData.bth.dqpn && QpState.allowRecv(
-      rdmaData.bth.opcode,
-      qpAttr.state
-    )
+    qpAttr.sqpn === rdmaData.bth.dqpn && QpState
+      .allowRecv(rdmaData.bth.opcode, qpAttr.state)
   )
   val cond = !validHeader || !(qpStateValid.asBits().orR)
   when(io.rx.valid && cond) {
@@ -51,7 +50,7 @@ class QpCtrl(numMaxQPs: Int) extends Component {
     val qpAttrVec = out(Vec(QpAttrData(), numMaxQPs))
     val qpCreateOrModify = slave(Stream(QpAttrData()))
     val qpAttrUpdate = Vec(out(QpAttrUpdateNotifier()), numMaxQPs)
-    val qpStateChange = Vec(slave(Stream(Bits(QP_STATE_WIDTH bits))), numMaxQPs)
+    val qpStateChange = Vec(slave(Stream(QpStateChange())), numMaxQPs)
     val full = out(Bool())
   }
 
@@ -67,61 +66,42 @@ class QpCtrl(numMaxQPs: Int) extends Component {
     io.qpAttrUpdate(qpIdx).pulseSqPsnReset := False
 
     // Change QPS from RQ or SQ
-    io.qpStateChange(qpIdx).ready := False
+    io.qpStateChange(qpIdx).ready := True
     when(io.qpStateChange(qpIdx).valid) {
-      qpAttrVec(qpIdx).state := io.qpStateChange(qpIdx).payload
-      io.qpStateChange(qpIdx).ready := True
+      qpAttrVec(qpIdx).state := io.qpStateChange(qpIdx).changeToState
     }
   }
 
-  val qpVecAvailable = qpAttrVec.map(_.isValid() === False)
+  val qpVecAvailable = qpAttrVec.map(_.isValid === False)
   io.full := !(qpVecAvailable.asBits().orR)
 
-  // QP attribute change notification
-  case class QpSearchResult(numMaxQPs: Int) extends Bundle {
-    val qpCreation = Bool()
-    val rqPsnReset = Bool()
-    val sqPsnReset = Bool()
-    val qpSelIdx = UInt(log2Up(numMaxQPs) bits)
-  }
+  val findQpStageOut =
+    StreamPipeStage(input = io.qpCreateOrModify)((inputPayload, inputValid) => {
+      val qpCreation =
+        inputValid && inputPayload.modifyMask === QpAttrMask.QP_CREATE.id
+      val rqPsnReset =
+        inputValid && inputPayload.modifyMask === QpAttrMask.QP_RQ_PSN.id
+      val sqPsnReset =
+        inputValid && inputPayload.modifyMask === QpAttrMask.QP_SQ_PSN.id
+      val availableQpOH = OHMasking.first(qpVecAvailable)
+      val modifyQpOH =
+        Vec(qpAttrVec.map(_.sQPN === inputPayload.sqpn))
+      val qpSelIdx = OHToUInt(qpCreation ? availableQpOH | modifyQpOH)
 
-  val findQpStage = new Area {
-    val input = io.qpCreateOrModify
-    val output = input
-      .combStage()
-      .translateWith {
-        val qpCreation =
-          io.qpCreateOrModify.modifyMask === QpAttrMask.QP_CREATE.id
-        val rqPsnReset =
-          io.qpCreateOrModify.modifyMask === QpAttrMask.QP_RQ_PSN.id
-        val sqPsnReset =
-          io.qpCreateOrModify.modifyMask === QpAttrMask.QP_SQ_PSN.id
-        val availableQpOH = OHMasking.first(qpVecAvailable)
-        val modifyQpOH =
-          Vec(qpAttrVec.map(_.sQPN() === io.qpCreateOrModify.sqpn))
-        val qpSelIdx = OHToUInt(qpCreation ? availableQpOH | modifyQpOH)
+      val rslt = TupleBundle(qpCreation, rqPsnReset, sqPsnReset, qpSelIdx)
+      rslt
+    })
 
-        val rslt = QpSearchResult(numMaxQPs)
-        rslt.qpCreation := qpCreation
-        rslt.rqPsnReset := rqPsnReset
-        rslt.sqPsnReset := sqPsnReset
-        rslt.qpSelIdx := qpSelIdx
-        rslt
-      }
-  }
-
-  val notifyStage = new Area {
-    val input = findQpStage.output.pipelined(m2s = true)
-
-    StreamSink() << input.combStage().translateWith {
-      io.qpAttrUpdate(input.qpSelIdx)
-        .pulseRqPsnReset := input.valid && (input.qpCreation || input.rqPsnReset)
-      io.qpAttrUpdate(input.qpSelIdx)
-        .pulseSqPsnReset := input.valid && (input.qpCreation || input.sqPsnReset)
+  val notifyStage =
+    StreamPipeStageSink(input = findQpStageOut)((inputPayload, inputValid) => {
+      val (qpCreation, rqPsnReset, sqPsnReset, qpSelIdx) = asTuple(inputPayload)
+      io.qpAttrUpdate(qpSelIdx)
+        .pulseRqPsnReset := inputValid && (qpCreation || rqPsnReset)
+      io.qpAttrUpdate(qpSelIdx)
+        .pulseSqPsnReset := inputValid && (qpCreation || sqPsnReset)
 
       NoData
-    }
-  }
+    })(sink = StreamSink(NoData))
 }
 
 // TODO: RoCE should have QP1?
@@ -129,21 +109,19 @@ class AllQpModules(numMaxQPs: Int, busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpCreateOrModify = slave(Stream(QpAttrData()))
     val workReq = slave(Stream(WorkReq()))
+    val recvWorkReq = slave(Stream(RecvWorkReq()))
     val rx = slave(Stream(RdmaDataBus(busWidth)))
     val tx = master(Stream(RdmaDataBus(busWidth)))
-    val dmaReadReq = master(Stream(DmaReadReq()))
-    val dmaReadResp = slave(Stream(Fragment(DmaReadResp())))
-    val dmaWriteReq = master(Stream(Fragment(DmaWriteReq())))
-    val dmaWriteResp = slave(Stream(DmaWriteResp()))
+    val dma = master(DmaBus(busWidth))
   }
 
   val qpIdxVec = (0 until numMaxQPs)
   val qpCtrl = new QpCtrl(numMaxQPs)
-  qpCtrl.io.qpCreateOrModify <-/< io.qpCreateOrModify
+  qpCtrl.io.qpCreateOrModify << io.qpCreateOrModify
 
   val headVerifier = new HeadVerifier(numMaxQPs, busWidth)
   headVerifier.io.qpAttrVec := qpCtrl.io.qpAttrVec
-  headVerifier.io.rx <-/< io.rx
+  headVerifier.io.rx << io.rx
   val rdmaRx = headVerifier.io.tx
 
   val qpVec = qpIdxVec.map(qpIdx => {
@@ -154,40 +132,49 @@ class AllQpModules(numMaxQPs: Int, busWidth: BusWidth) extends Component {
     qp
   })
 
-  val sqSelOH = qpCtrl.io.qpAttrVec.map(_.sQPN() === io.workReq.sqpn)
+  val sqSelOH = qpCtrl.io.qpAttrVec.map(_.sQPN === io.workReq.sqpn)
   val sqSelIdx = OHToUInt(sqSelOH)
-  Vec(qpVec.map(_.io.workReq)) <> StreamDemux(io.workReq, sqSelIdx, numMaxQPs)
+  Vec(qpVec.map(_.io.workReq)) <-/< StreamDemux(io.workReq, sqSelIdx, numMaxQPs)
 
-  val rqSelOH = qpCtrl.io.qpAttrVec.map(_.sQPN() === rdmaRx.bth.dqpn)
+  val rqSelOH = qpCtrl.io.qpAttrVec.map(_.sQPN === rdmaRx.bth.dqpn)
   val rqSelIdx = OHToUInt(rqSelOH)
-  Vec(qpVec.map(_.io.rx)) <> StreamDemux(rdmaRx, rqSelIdx, numMaxQPs)
+  Vec(qpVec.map(_.io.rx)) <-/< StreamDemux(rdmaRx, rqSelIdx, numMaxQPs)
+
+  val rqRecvWorkReqSelOH =
+    qpCtrl.io.qpAttrVec.map(_.sQPN === io.recvWorkReq.sqpn)
+  val rqRecvWorkReqSelIdx = OHToUInt(rqRecvWorkReqSelOH)
+  Vec(qpVec.map(_.io.recvWorkReq)) <-/< StreamDemux(
+    io.recvWorkReq,
+    rqRecvWorkReqSelIdx,
+    numMaxQPs
+  )
 
   val txVec = qpVec.map(_.io.tx)
   val txSel = StreamArbiterFactory.roundRobin.on(txVec)
   io.tx <-/< txSel
 
-  val dmaWrReqVec = qpVec.map(_.io.dmaWriteReq)
+  val dmaWrReqVec = qpVec.map(_.io.dma.wr.req)
   val dmaWrReqSel = StreamArbiterFactory.roundRobin.fragmentLock.on(dmaWrReqVec)
-  io.dmaWriteReq <-/< dmaWrReqSel
+  io.dma.wr.req <-/< dmaWrReqSel
 
   val dmaWrRespOH =
-    qpCtrl.io.qpAttrVec.map(_.sQPN() === io.dmaWriteResp.qpn)
+    qpCtrl.io.qpAttrVec.map(_.sQPN === io.dma.wr.resp.qpn)
   val dmaWrRespIdx = OHToUInt(dmaWrRespOH)
-  Vec(qpVec.map(_.io.dmaWriteResp)) <> StreamDemux(
-    io.dmaWriteResp,
+  Vec(qpVec.map(_.io.dma.wr.resp)) <> StreamDemux(
+    io.dma.wr.resp,
     dmaWrRespIdx,
     numMaxQPs
   )
 
-  val dmaRdReqVec = qpVec.map(_.io.dmaReadReq)
+  val dmaRdReqVec = qpVec.map(_.io.dma.rd.req)
   val dmaRdReqSel = StreamArbiterFactory.roundRobin.on(dmaRdReqVec)
-  io.dmaReadReq <-/< dmaRdReqSel
+  io.dma.rd.req <-/< dmaRdReqSel
 
   val dmaRdRespOH =
-    qpCtrl.io.qpAttrVec.map(_.sQPN() === io.dmaReadResp.qpn)
+    qpCtrl.io.qpAttrVec.map(_.sQPN === io.dma.rd.resp.qpn)
   val dmaRdRespIdx = OHToUInt(dmaRdRespOH)
-  Vec(qpVec.map(_.io.dmaReadResp)) <> StreamDemux(
-    io.dmaReadResp,
+  Vec(qpVec.map(_.io.dma.rd.resp)) <-/< StreamDemux(
+    io.dma.rd.resp,
     dmaRdRespIdx,
     numMaxQPs
   )
@@ -197,21 +184,24 @@ class RoCEv2(numMaxQPs: Int, busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpCreateOrModify = slave(Stream(QpAttrData()))
     val workReq = slave(Stream(WorkReq()))
+    val recvWorkReq = slave(Stream(RecvWorkReq()))
     val rx = slave(Stream(RdmaDataBus(busWidth)))
     val tx = master(Stream(RdmaDataBus(busWidth)))
   }
 
   val allQpModules = new AllQpModules(numMaxQPs, busWidth)
-  allQpModules.io.qpCreateOrModify <-/< io.qpCreateOrModify
-  allQpModules.io.workReq <-/< io.workReq
-  allQpModules.io.rx <-/< io.rx
-  io.tx <-/< allQpModules.io.tx
+  allQpModules.io.qpCreateOrModify << io.qpCreateOrModify
+  allQpModules.io.workReq << io.workReq
+  allQpModules.io.recvWorkReq << io.recvWorkReq
+  allQpModules.io.rx << io.rx
 
-  val dma = new DmaHandler()
-  dma.io.dmaReadReq <-/< allQpModules.io.dmaReadReq
-  allQpModules.io.dmaReadResp <-/< dma.io.dmaReadResp
-  dma.io.dmaWriteReq <-/< allQpModules.io.dmaWriteReq
-  allQpModules.io.dmaWriteResp <-/< dma.io.dmaWriteResp
+  val dma = new DmaHandler(busWidth)
+  dma.io.dma.rd.req << allQpModules.io.dma.rd.req
+  allQpModules.io.dma.rd.resp << dma.io.dma.rd.resp
+  dma.io.dma.wr.req << allQpModules.io.dma.wr.req
+  allQpModules.io.dma.wr.resp << dma.io.dma.wr.resp
+
+  io.tx <-/< allQpModules.io.tx
 }
 
 object RoCEv2 {
