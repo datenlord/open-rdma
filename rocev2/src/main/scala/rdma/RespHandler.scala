@@ -5,7 +5,7 @@ import spinal.lib._
 
 import BusWidth.BusWidth
 import RdmaConstants._
-import ConstantSettings._
+// import ConstantSettings._
 
 // Discard all invalid responses:
 // - NAK with reserved code;
@@ -25,29 +25,27 @@ class RespVerifer(busWidth: BusWidth) extends Component {
 class RespHandler(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val npsn = in(UInt(PSN_WIDTH bits))
-    val rx = slave(Stream((RdmaDataBus(busWidth))))
-    val qpStateChange = master(Stream(Bits(QP_STATE_WIDTH bits)))
-    val cacheReq = master(Stream(CacheReq()))
-    val cacheResp = slave(Stream(CacheData()))
+    val rx = slave(Stream(RdmaDataBus(busWidth)))
+    val qpStateChange = master(Stream(QpStateChange()))
+    val reqCacheBus = master(ReqCacheBus())
     // Save read/atomic response data to main memory
-    val dmaWriteReq = master(Stream(Fragment(DmaWriteReq())))
-    val dmaWriteResp = slave(Stream(DmaWriteResp()))
+    val dmaWrite = master(DmaWriteReqBus(busWidth))
   }
 
   val respVerifier = new RespVerifer(busWidth)
-  respVerifier.io.rx <-/< io.rx
+  respVerifier.io.rx << io.rx
   val validRespRx = respVerifier.io.tx
 
+  io.qpStateChange.setDefaultVal()
   io.qpStateChange.valid := False
-  io.qpStateChange.payload := QpState.ERR.id
 
-  io.cacheReq <-/< validRespRx.translateWith {
+  io.reqCacheBus.req <-/< validRespRx.translateWith {
     CacheReq().setDefaultVal()
   }
-  io.cacheResp.ready := False
+  StreamSink(io.reqCacheBus.resp.payloadType) << io.reqCacheBus.resp
 
-  io.dmaWriteReq <-/< io.dmaWriteResp.translateWith {
-    val dmaWriteReq = Fragment(DmaWriteReq())
+  io.dmaWrite.req <-/< StreamSource().translateWith {
+    val dmaWriteReq = Fragment(DmaWriteReq(busWidth))
     dmaWriteReq.fragment.setDefaultVal()
     dmaWriteReq.last := False
     dmaWriteReq

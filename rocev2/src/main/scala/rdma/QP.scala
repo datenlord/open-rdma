@@ -4,7 +4,8 @@ import spinal.core._
 import spinal.lib._
 
 import BusWidth.BusWidth
-import ConstantSettings._
+// import ConstantSettings._
+import StreamVec._
 
 class ReqRespSplitter(busWidth: BusWidth) extends Component {
   val io = new Bundle {
@@ -29,7 +30,7 @@ class RetryRespSpliter(busWidth: BusWidth) extends Component {
   }
 
   val isNormalResp = True // TODO: check req or resp
-  Vec(io.normalTx, io.retryTx) <> StreamDemux(
+  Vec(io.normalTx, io.retryTx) <-/< StreamDemux(
     io.rx,
     select = isNormalResp.asUInt,
     portCount = 2
@@ -62,73 +63,70 @@ class QP(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val qpAttrUpdate = in(QpAttrUpdateNotifier())
-    val qpStateChange = master(Stream(Bits(QP_STATE_WIDTH bits)))
+    val qpStateChange = master(Stream(QpStateChange()))
     val workReq = slave(Stream(WorkReq()))
+    val recvWorkReq = slave(Stream(RecvWorkReq()))
     val rx = slave(Stream(RdmaDataBus(busWidth)))
     val tx = master(Stream(RdmaDataBus(busWidth)))
-    val dmaReadReq = master(Stream(DmaReadReq()))
-    val dmaReadResp = slave(Stream(Fragment(DmaReadResp())))
-    val dmaWriteReq = master(Stream(Fragment(DmaWriteReq())))
-    val dmaWriteResp = slave(Stream(DmaWriteResp()))
+    val dma = master(DmaBus(busWidth))
   }
 
-  // Seperate incoming requests and responses
+  // Separate incoming requests and responses
   val reqRespSplitter = new ReqRespSplitter(busWidth)
-  reqRespSplitter.io.rx <-/< io.rx
-  val reqRx = reqRespSplitter.io.reqTx
-  val respRx = reqRespSplitter.io.respTx
+  reqRespSplitter.io.rx << io.rx
+  // val reqRx = reqRespSplitter.io.reqTx
+  // val respRx = reqRespSplitter.io.respTx
 
   val sq = new SendQ(busWidth)
   sq.io.qpAttr := io.qpAttr
   sq.io.qpAttrUpdate := io.qpAttrUpdate
-  sq.io.workReq <-/< io.workReq
+  sq.io.workReq << io.workReq
 
   val rq = new RecvQ(busWidth)
   rq.io.qpAttr := io.qpAttr
   rq.io.qpAttrUpdate := io.qpAttrUpdate
-  rq.io.rx <-/< reqRx
+  rq.io.rx << reqRespSplitter.io.reqTx
+  rq.io.recvWorkReq << io.recvWorkReq
 
   // Separate normal and retry responses
-  val respSpliter = new RetryRespSpliter(busWidth)
-  respSpliter.io.rx <-/< respRx
-  val normalResp = respSpliter.io.normalTx
-  val retryResp = respSpliter.io.retryTx
+  val respSplitter = new RetryRespSpliter(busWidth)
+  respSplitter.io.rx << reqRespSplitter.io.respTx
 
   val respHandler = new RespHandler(busWidth)
   respHandler.io.npsn := sq.io.npsn
-  respHandler.io.rx <-/< normalResp
-  io.dmaWriteReq <-/< respHandler.io.dmaWriteReq
-  io.qpStateChange <-/< respHandler.io.qpStateChange
-  respHandler.io.dmaWriteResp <-/< io.dmaWriteResp
+  respHandler.io.rx << respSplitter.io.normalTx
+  io.dma.wr.req << respHandler.io.dmaWrite.req
+
+  val qpStageChangeSel = StreamArbiterFactory.roundRobin
+    .onArgs(rq.io.qpStateChange, respHandler.io.qpStateChange)
+  io.qpStateChange <-/< qpStageChangeSel
 
   val retryHandler = new RetryHandler(busWidth)
-  //retryHandler.io.qpAttr := io.qpAttr
-  retryHandler.io.rx <-/< retryResp
+  retryHandler.io.rx << respSplitter.io.retryTx
 
-  val dmaRdReqVec = Vec(sq.io.dmaReadReq, retryHandler.io.dmaReadReq)
+  val dmaRdReqVec = Vec(sq.io.dmaRead.req, retryHandler.io.dmaRead.req)
   val dmaRdReqSel = StreamArbiterFactory.roundRobin.on(dmaRdReqVec)
-  io.dmaReadReq <-/< dmaRdReqSel
+  io.dma.rd.req <-/< dmaRdReqSel
 
-  val dmaRdRespOH = dmaRdReqVec.map(_.psn === io.dmaReadResp.psn)
+  val dmaRdRespOH = dmaRdReqVec.map(_.psn === io.dma.rd.resp.psn)
   val dmaRdRespIdx = OHToUInt(dmaRdRespOH)
-  Vec(sq.io.dmaReadResp, retryHandler.io.dmaReadResp) <> StreamDemux(
-    io.dmaReadResp,
+  Vec(sq.io.dmaRead.resp, retryHandler.io.dmaRead.resp) <-/< StreamDemux(
+    io.dma.rd.resp,
     dmaRdRespIdx,
     portCount = 2
   )
 
   val reqCache = new ReqCache
-  reqCache.io.portW.writeReq <-/< sq.io.cacheWriteReq
-  reqCache.io.portRW.rwReq <-/< respHandler.io.cacheReq
-  respHandler.io.cacheResp <-/< reqCache.io.portRW.readResp
-  reqCache.io.portR.readReq <-/< retryHandler.io.cacheReadReq
-  retryHandler.io.cacheReadResp <-/< reqCache.io.portR.readResp
+  reqCache.io.portW << sq.io.reqCacheBus
+  reqCache.io.portRW << respHandler.io.reqCacheBus
+  reqCache.io.portR << retryHandler.io.reqCacheBus
 
   val flowCtrl = new FlowCtrl(busWidth)
+  flowCtrl.io.qpAttr := io.qpAttr
+  flowCtrl.io.resp := reqRespSplitter.io.respTx.asFlow
   val txVec = Vec(sq.io.tx, rq.io.tx, retryHandler.io.tx)
   val txSel = StreamArbiterFactory.roundRobin.fragmentLock.on(txVec)
-  flowCtrl.io.qpAttr := io.qpAttr
-  flowCtrl.io.resp := respRx.asFlow
   flowCtrl.io.rx <-/< txSel
-  io.tx << flowCtrl.io.tx
+
+  io.tx <-/< flowCtrl.io.tx
 }

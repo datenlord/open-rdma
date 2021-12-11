@@ -62,7 +62,7 @@ case class AETH() extends RdmaHeader {
   val rsvd = Bits(1 bit)
   val code = Bits(2 bits)
   val value = Bits(AETH_VALUE_WIDTH bits)
-  val msn = Bits(MSN_WIDTH bits)
+  val msn = UInt(MSN_WIDTH bits)
 
   def setDefaultVal(): this.type = {
     rsvd := 0
@@ -75,9 +75,9 @@ case class AETH() extends RdmaHeader {
 
 // 16 bytes
 case class RETH() extends RdmaHeader {
-  val va = Bits(LONG_WIDTH bits)
-  val rkey = Bits(INT_WIDTH bits)
-  val dlen = UInt(INT_WIDTH bits)
+  val va = UInt(MEM_ADDR_WIDTH bits)
+  val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
+  val dlen = UInt(RDMA_MAX_LEN_WIDTH bits)
 
   def setDefaultVal(): this.type = {
     va := 0
@@ -89,8 +89,8 @@ case class RETH() extends RdmaHeader {
 
 // 28 bytes
 case class AtomicETH() extends RdmaHeader {
-  val va = Bits(LONG_WIDTH bits)
-  val rkey = Bits(INT_WIDTH bits)
+  val va = UInt(MEM_ADDR_WIDTH bits)
+  val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
   val swap = Bits(LONG_WIDTH bits)
   val comp = Bits(LONG_WIDTH bits)
 
@@ -115,7 +115,7 @@ case class AtomicAckETH() extends RdmaHeader {
 
 // 4 bytes
 case class ImmDt() extends RdmaHeader {
-  val data = Bits(INT_WIDTH bits)
+  val data = Bits(LRKEY_IMM_DATA_WIDTH bits)
 
   def setDefaultVal(): this.type = {
     data := 0
@@ -125,7 +125,7 @@ case class ImmDt() extends RdmaHeader {
 
 // 4 bytes
 case class IETH() extends RdmaHeader {
-  val rkey = Bits(INT_WIDTH bits)
+  val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
 
   def setDefaultVal(): this.type = {
     rkey := 0
@@ -147,19 +147,26 @@ case class CNPPadding() extends RdmaHeader {
 
 //----------Combined packets----------//
 
-trait RdmaPacket extends Bundle {
+trait RdmaBasePacket extends Bundle {
   // this: Bundle => // RdmaDataPacket must be of Bundle class
   val bth = BTH()
   val eth = Bits(ETH_WIDTH bits)
-}
-
-abstract class RdmaDataPacket(busWidth: BusWidth) extends RdmaPacket {
-  val data = Bits(busWidth.id bits)
-  val mty = Bits(log2Up(busWidth.id / 8) bits)
 
   def setDefaultVal(): this.type = {
     bth.setDefaultVal()
     eth := 0
+    this
+  }
+}
+
+abstract class RdmaDataPacket(busWidth: BusWidth) extends RdmaBasePacket {
+  val data = Bits(busWidth.id bits)
+  val mty = Bits(log2Up(busWidth.id / 8) bits)
+
+  override def setDefaultVal(): this.type = {
+//    bth.setDefaultVal()
+//    eth := 0
+    super.setDefaultVal()
     data := 0
     mty := 0
     this
@@ -178,15 +185,15 @@ abstract class RdmaDataPacket(busWidth: BusWidth) extends RdmaPacket {
   }
 }
 
-trait ImmDtReq extends RdmaPacket {
+trait ImmDtReq extends RdmaBasePacket {
   def immdt = ImmDt().assign(eth(0, widthOf(ImmDt()) bits))
 }
 
-trait RdmaReq extends RdmaPacket {
+trait RdmaReq extends RdmaBasePacket {
   def reth = RETH().assign(eth(0, widthOf(RETH()) bits))
 }
 
-trait Response extends RdmaPacket {
+trait Response extends RdmaBasePacket {
   def aeth = AETH().assign(eth(0, widthOf(AETH()) bits))
 }
 
@@ -205,7 +212,7 @@ trait Acknowlege extends Response {
       ackType: Bits,
       psn: UInt,
       dqpn: UInt,
-      msn: Bits = 0,
+      msn: UInt = 0,
       creditCnt: Bits = 0,
       rnrTimeOut: Bits = MIN_RNR_TIMEOUT
   ): this.type = {
@@ -251,7 +258,7 @@ trait Acknowlege extends Response {
   }
 }
 
-trait AtomicReq extends RdmaPacket {
+trait AtomicReq extends RdmaBasePacket {
   def atomicETH = AtomicETH().assign(eth(0, widthOf(AtomicETH()) bits))
 }
 
@@ -260,6 +267,6 @@ trait AtomicResp extends Response {
     AtomicAckETH().assign(eth(widthOf(AETH()), widthOf(AtomicAckETH()) bits))
 }
 
-trait CNP extends RdmaPacket {
+trait CNP extends RdmaBasePacket {
   def padding = CNPPadding().assign(eth(0, widthOf(CNPPadding()) bits))
 }

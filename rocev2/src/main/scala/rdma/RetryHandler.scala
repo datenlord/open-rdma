@@ -9,21 +9,19 @@ class RetryHandler(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val rx = slave(Stream(RdmaDataBus(busWidth)))
     val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
-    val cacheReadReq = master(Stream(CacheReq()))
-    val cacheReadResp = slave(Stream(CacheData()))
-    val dmaReadReq = master(Stream(DmaReadReq()))
-    val dmaReadResp = slave(Stream(Fragment(DmaReadResp())))
+    val reqCacheBus = master(ReqCacheBus())
+    val dmaRead = master(DmaReadBus(busWidth))
   }
 
-  io.cacheReadReq <-/< io.rx.translateWith {
+  io.reqCacheBus.req <-/< io.rx.translateWith {
     CacheReq().setDefaultVal()
   }
 
   val retryLogic = new SqLogic(busWidth, retry = true)
-  retryLogic.io.workReqPSN <-/< io.cacheReadResp.translateWith {
-    io.cacheReadResp.workReqPSN
+  retryLogic.io.workReqCached <-/< io.reqCacheBus.resp.translateWith {
+    io.reqCacheBus.resp.workReqCached
   }
-  io.dmaReadReq <-/< retryLogic.io.dmaReadReq
-  retryLogic.io.dmaReadResp <-/< io.dmaReadResp
+  io.dmaRead.req <-/< retryLogic.io.dmaRead.req
+  retryLogic.io.dmaRead.resp <-/< io.dmaRead.resp
   io.tx <-/< retryLogic.io.tx
 }
