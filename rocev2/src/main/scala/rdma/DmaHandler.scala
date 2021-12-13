@@ -10,10 +10,9 @@ class DmaHandler(busWidth: BusWidth) extends Component {
   }
 
   // TODO: connect to XDMA
-
   io.dma.rd.resp <-/< io.dma.rd.req.translateWith {
     val dmaReadData = Fragment(DmaReadResp(busWidth))
-    dmaReadData.fragment.setDefaultVal()
+    dmaReadData.setDefaultVal()
     dmaReadData.last := False
     dmaReadData
   }
@@ -23,12 +22,27 @@ class DmaHandler(busWidth: BusWidth) extends Component {
   }
 }
 
-class WorkCompGen extends Component {
+// TODO: how to find out the order between receive WR and send WR?
+//
+// pp. 292 spec 1.4
+// Due to the ordering rule guarantees of requests and responses
+// for reliable services, the requester is allowed to write CQ
+// completion events upon response receipt.
+//
+// pp. 292 spec 1.4
+// The completion at the receiver is in the order sent (applies only to
+// SENDs and RDMA WRITE with Immediate) and does not imply previous
+// RDMA READs are complete unless fenced by the requester.
+class WorkCompOut extends Component {
   val io = new Bundle {
-    val dmaWriteResp = slave(Stream(DmaWriteResp()))
-    val workComp = master(Stream(WorkComp()))
+    val dmaWrite = slave(DmaWriteRespBus())
+    val rqSendWriteWorkComp = slave(Stream(WorkComp()))
+    val sqWorkComp = slave(Stream(WorkComp()))
+    val workCompTx = master(Stream(WorkComp()))
   }
 
   // TODO: output WC in PSN order
-  io.workComp <-/< io.dmaWriteResp.translateWith(WorkComp().setDefaultVal())
+  io.workCompTx <-/< io.sqWorkComp
+  StreamSink(io.rqSendWriteWorkComp.payloadType) << io.rqSendWriteWorkComp
+  StreamSink(io.dmaWrite.resp.payloadType) << io.dmaWrite.resp
 }
