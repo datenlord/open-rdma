@@ -1,14 +1,20 @@
 package rdma
 
 import spinal.core._
-
 import RdmaConstants._
 
 object ConstantSettings {
+  // Changeable settings
   val PENDING_REQ_NUM = 32
-  val PENDING_READ_ATOMIC_REQ_NUM = 16
-  val MIN_RNR_TIMEOUT = 1
+  val MAX_PENDING_READ_ATOMIC_REQ_NUM = 16
+  val MIN_RNR_TIMEOUT = 1 // 0.01ms = 10us
 
+  val MAX_WR_NUM_WIDTH = 8 // RDMA max in-flight packets 2^23
+
+  require(PENDING_REQ_NUM > MAX_PENDING_READ_ATOMIC_REQ_NUM)
+  require((2 << MAX_WR_NUM_WIDTH) >= PENDING_REQ_NUM)
+
+  // Non-changeable settings
   val IPV4_WIDTH = 32
   val IPV6_WIDTH = 128
 
@@ -25,17 +31,30 @@ object ConstantSettings {
 
   val RETRY_CNT_WIDTH = 3
 
-  val ETH_WIDTH = 28 * 8 // AtomicETH is the largest ETH
+  val ETH_WIDTH = 28 * 8 // AtomicEth is the largest ETH
 
-  val PMTU_WIDTH = 3
+  val PMTU_WIDTH = 4 // log2Up(log2Up(4096)) = log2Up(12) = 4
+  // val MAX_PKT_NUM_WIDTH = 24 // packet max length = 2^31, min PMUT size = 256 = 2^8, max packet number = 2^(31 - 8)
 
   val QP_STATE_WIDTH = 3
-
-  val MAX_WR_NUM_WIDTH = 8 // RDMA max in-flight packets 2^23
 
   val QP_ATTR_MASK_WIDTH = 32
 
   val ACCESS_TYPE_WIDTH = 20
+
+  val PKT_SEQ_TYPE_WIDTH = 3
+
+  val MAX_HEADER_LEN_WIDTH = log2Up(widthOf(BTH()) + widthOf(AtomicEth()))
+}
+
+object PktSeqType extends Enumeration {
+  type PktSeqType = Value
+
+  val NONE = Value(0)
+  val FIRST = Value(1)
+  val MIDDLE = Value(2)
+  val LAST = Value(3)
+  val ONLY = Value(4)
 }
 
 object PsnCompResult extends Enumeration {
@@ -62,6 +81,7 @@ object BusWidth extends Enumeration {
 
   // Internal bus width, must be larger than BTH width=48B
   val W512 = Value(512)
+  val W1024 = Value(1024)
 }
 
 //----------RDMA related constants----------//
@@ -81,9 +101,15 @@ object RdmaConstants {
   val PD_ID_WIDTH = 32
   val RDMA_MAX_LEN_WIDTH = 32 // RDMA max packet length 2GB=2^31
 
-  val RNR_TIMER_WIDTH = 5
+  val ACK_TIMEOUT_WIDTH = 5
+  val RETRY_COUNT_WIDTH = 3
   val MSN_WIDTH = 24
   val AETH_VALUE_WIDTH = 5
+  val RNR_TIMER_WIDTH = AETH_VALUE_WIDTH
+  val CREDIT_COUNT_WIDTH = AETH_VALUE_WIDTH
+
+  val ATOMIC_DATA_LEN = 8
+  val PMTU_FRAG_NUM_WIDTH = 13 // PMTU max 4096
 }
 
 object QpAttrMask extends Enumeration {
@@ -120,11 +146,12 @@ object QpAttrMask extends Enumeration {
 object PMTU extends Enumeration {
   type PMTU = Value
 
-  val U256 = Value(0)
-  val U512 = Value(1)
-  val U1024 = Value(2)
-  val U2048 = Value(3)
-  val U4096 = Value(4)
+  // The value means right shift amount of bits
+  val U256 = Value(log2Up(256)) // 8
+  val U512 = Value(log2Up(512)) // 9
+  val U1024 = Value(log2Up(1024)) // 10
+  val U2048 = Value(log2Up(2048)) // 11
+  val U4096 = Value(log2Up(4096)) // 12
 }
 
 object QpState extends Enumeration {
@@ -228,15 +255,24 @@ object OpCode extends Enumeration {
         opcode.asUInt <= SEND_ONLY_WITH_INVALIDATE.id // && opcode <= 0x1F
     }.rslt
 
-  def isSendLastReqPkt(opcode: Bits) =
+  def isFirstReqPkt(opcode: Bits) =
     new Composite(opcode) {
       val rslt = Bool()
       switch(opcode) {
-        is(
-          SEND_LAST.id,
-          SEND_LAST_WITH_IMMEDIATE.id,
-          SEND_LAST_WITH_INVALIDATE.id
-        ) {
+        is(SEND_FIRST.id, RDMA_WRITE_FIRST.id) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
+  def isMidReqPkt(opcode: Bits) =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(SEND_MIDDLE.id, RDMA_WRITE_MIDDLE.id) {
           rslt := True
         }
         default {
@@ -291,35 +327,19 @@ object OpCode extends Enumeration {
       val rslt = isLastReqPkt(opcode) || isOnlyReqPkt(opcode)
     }.rslt
 
-  def isFirstReqPkt(opcode: Bits) =
-    new Composite(opcode) {
-      val rslt = Bool()
-      switch(opcode) {
-        is(SEND_FIRST.id, RDMA_WRITE_FIRST.id) {
-          rslt := True
-        }
-        default {
-          rslt := False
-        }
-      }
-    }.rslt
-
   def isFirstOrOnlyReqPkt(opcode: Bits) =
     new Composite(opcode) {
       val rslt = isFirstReqPkt(opcode) || isOnlyReqPkt(opcode)
     }.rslt
 
-  def isMidReqPkt(opcode: Bits) =
+  def isFirstOrMidReqPkt(opcode: Bits) =
     new Composite(opcode) {
-      val rslt = Bool()
-      switch(opcode) {
-        is(SEND_MIDDLE.id, RDMA_WRITE_MIDDLE.id) {
-          rslt := True
-        }
-        default {
-          rslt := False
-        }
-      }
+      val rslt = isFirstReqPkt(opcode) || isMidReqPkt(opcode)
+    }.rslt
+
+  def isSendFirstReqPkt(opcode: Bits) =
+    new Composite(opcode) {
+      val rslt = opcode === SEND_FIRST.id
     }.rslt
 
   def isSendOnlyReqPkt(opcode: Bits) =
@@ -327,6 +347,83 @@ object OpCode extends Enumeration {
       val rslt = Bool()
       switch(opcode) {
         is(
+          SEND_ONLY.id,
+          SEND_ONLY_WITH_IMMEDIATE.id,
+          SEND_ONLY_WITH_INVALIDATE.id
+        ) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
+  def isSendLastReqPkt(opcode: Bits) =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(
+          SEND_LAST.id,
+          SEND_LAST_WITH_IMMEDIATE.id,
+          SEND_LAST_WITH_INVALIDATE.id
+        ) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
+  def isSendFirstOrOnlyReqPkt(opcode: Bits) =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(
+          SEND_FIRST.id,
+          SEND_ONLY.id,
+          SEND_ONLY_WITH_IMMEDIATE.id,
+          SEND_ONLY_WITH_INVALIDATE.id
+        ) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
+  def isSendLastOrOnlyReqPkt(opcode: Bits) =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(
+          SEND_LAST.id,
+          SEND_LAST_WITH_IMMEDIATE.id,
+          SEND_LAST_WITH_INVALIDATE.id,
+          SEND_ONLY.id,
+          SEND_ONLY_WITH_IMMEDIATE.id,
+          SEND_ONLY_WITH_INVALIDATE.id
+        ) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
+  def isSendReqPkt(opcode: Bits) =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(
+          SEND_FIRST.id,
+          SEND_MIDDLE.id,
+          SEND_LAST.id,
+          SEND_LAST_WITH_IMMEDIATE.id,
+          SEND_LAST_WITH_INVALIDATE.id,
           SEND_ONLY.id,
           SEND_ONLY_WITH_IMMEDIATE.id,
           SEND_ONLY_WITH_INVALIDATE.id
@@ -384,6 +481,19 @@ object OpCode extends Enumeration {
       }
     }.rslt
 
+  def isLastOrOnlyReadRespPkt(opcode: Bits) =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(RDMA_READ_RESPONSE_ONLY.id, RDMA_READ_RESPONSE_LAST.id) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
   def isMidReadRespPkt(opcode: Bits) =
     new Composite(opcode) {
       val rslt = opcode === RDMA_READ_RESPONSE_MIDDLE.id
@@ -413,19 +523,19 @@ object OpCode extends Enumeration {
       val rslt = isOnlyRespPkt(opcode) || isLastReadRespPkt(opcode)
     }.rslt
 
-  def isSendReqPkt(opcode: Bits) =
+  def isWriteFirstReqPkt(opcode: Bits) =
+    new Composite(opcode) {
+      val rslt = opcode === RDMA_WRITE_FIRST.id
+    }.rslt
+
+  def isWriteFirstOrOnlyReqPkt(opcode: Bits) =
     new Composite(opcode) {
       val rslt = Bool()
       switch(opcode) {
         is(
-          SEND_FIRST.id,
-          SEND_MIDDLE.id,
-          SEND_LAST.id,
-          SEND_LAST_WITH_IMMEDIATE.id,
-          SEND_LAST_WITH_INVALIDATE.id,
-          SEND_ONLY.id,
-          SEND_ONLY_WITH_IMMEDIATE.id,
-          SEND_ONLY_WITH_INVALIDATE.id
+          RDMA_WRITE_FIRST.id,
+          RDMA_WRITE_ONLY.id,
+          RDMA_WRITE_ONLY_WITH_IMMEDIATE.id
         ) {
           rslt := True
         }
@@ -461,6 +571,24 @@ object OpCode extends Enumeration {
       }
     }.rslt
 
+  def isWriteLastOrOnlyReqPkt(opcode: Bits) =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(
+          RDMA_WRITE_LAST.id,
+          RDMA_WRITE_LAST_WITH_IMMEDIATE.id,
+          RDMA_WRITE_ONLY.id,
+          RDMA_WRITE_ONLY_WITH_IMMEDIATE.id
+        ) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
   def isWriteReqPkt(opcode: Bits) =
     new Composite(opcode) {
       val rslt = Bool()
@@ -481,6 +609,22 @@ object OpCode extends Enumeration {
       }
     }.rslt
 
+  def isWriteWithImmReqPkt(opcode: Bits) =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(
+          RDMA_WRITE_LAST_WITH_IMMEDIATE.id,
+          RDMA_WRITE_ONLY_WITH_IMMEDIATE.id
+        ) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
   def hasImmDt(opcode: Bits) =
     new Composite(opcode) {
       val rslt = Bool()
@@ -491,6 +635,19 @@ object OpCode extends Enumeration {
           RDMA_WRITE_LAST_WITH_IMMEDIATE.id,
           RDMA_WRITE_ONLY_WITH_IMMEDIATE.id
         ) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
+  def hasIeth(opcode: Bits) =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(SEND_LAST_WITH_INVALIDATE.id, SEND_ONLY_WITH_INVALIDATE.id) {
           rslt := True
         }
         default {

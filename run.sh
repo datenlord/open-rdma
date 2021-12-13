@@ -16,6 +16,9 @@ fi
 # Generate IDEA config
 # ./mill mill.scalalib.GenIdea/idea
 
+# Run build and simulation
+./mill rocev2.runMain rdma.RoCEv2
+
 # Check format and lint
 if [ "$CI_ENV" = "true" ]; then
   ./mill rocev2.checkFormat
@@ -25,8 +28,6 @@ else
   ./mill rocev2.fix
 fi
 
-# Run build and simulation
-./mill rocev2.runMain rdma.RoCEv2
 # mill test is not compatible with SpinalHDL, use testOnly instead
-./mill rocev2.test.testOnly rdma.SeqOutTest
+#./mill rocev2.test.testOnly rdma.SeqOutTest
 ./mill rocev2.test.testOnly rdma.SetSuite

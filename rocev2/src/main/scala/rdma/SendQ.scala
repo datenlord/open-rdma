@@ -4,38 +4,46 @@ import spinal.core._
 import spinal.lib._
 
 import BusWidth.BusWidth
-import RdmaConstants._
+// import RdmaConstants._
 
 class ReqBuilder(busWidth: BusWidth) extends Component {
   val io = new Bundle {
-    val workReqCached = slave(Stream(WorkReqCached()))
+    val workReqCached = slave(Stream(CachedWorkReq()))
+    val addrCacheRead = master(AddrCacheReadBus())
     val dmaRead = master(DmaReadBus(busWidth))
-    val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
+    val tx = master(RdmaDataBus(busWidth))
+    // val psnInc = out(PsnIncNotifier())
   }
 
-  val npsnReg = Reg(UInt(PSN_WIDTH bits)) init (io.workReqCached.psnStart)
-  when(io.tx.fire && io.tx.last) {
-    npsnReg := npsnReg + 1
-  }
+//  val npsnReg = Reg(UInt(PSN_WIDTH bits)) init (io.workReqCached.psnStart)
+//  io.psnInc.npsnInc := io.tx.pktFrag.fire && io.tx.pktFrag.last
+//  // TODO: change nPSN increment accordingly
+//  io.psnInc.npsnIncVal := 1
 
   io.dmaRead.req <-/< io.dmaRead.resp.translateWith {
     DmaReadReq().setDefaultVal()
   }
 
   // TODO: implement SQ logic
-  io.tx <-/< io.workReqCached.translateWith {
-    val frag = Fragment(RdmaDataBus(busWidth))
-    frag.setDefaultVal()
+  io.tx.pktFrag <-/< io.workReqCached.translateWith {
+    val rslt = Fragment(RdmaDataPacket(busWidth))
+    rslt.setDefaultVal()
     // TODO: WR opcode to RC opcode
-    frag.bth.opcode := io.workReqCached.workReq.opcode.resize(OPCODE_WIDTH)
-    frag.last := False
-    frag
+    // frag.bth.opcode := io.workReqCached.workReq.opcode.resize(OPCODE_WIDTH)
+    rslt.last := False
+    rslt
   }
 }
 
-class SendReqBuilder(busWidth: BusWidth) extends ReqBuilder(busWidth) {}
+class SendReqBuilder(busWidth: BusWidth) extends ReqBuilder(busWidth) {
+  io.addrCacheRead.req <-/< io.addrCacheRead.resp
+    .translateWith(AddrCacheReadReq().setDefaultVal())
+}
 
-class WriteReqBuilder(busWidth: BusWidth) extends ReqBuilder(busWidth) {}
+class WriteReqBuilder(busWidth: BusWidth) extends ReqBuilder(busWidth) {
+  io.addrCacheRead.req <-/< io.addrCacheRead.resp
+    .translateWith(AddrCacheReadReq().setDefaultVal())
+}
 
 class ReadReqBuilder(busWidth: BusWidth) extends ReqBuilder(busWidth) {}
 
@@ -44,9 +52,11 @@ class AtomicReqBuilder(busWidth: BusWidth) extends ReqBuilder(busWidth) {}
 // Send a request
 class SqLogic(busWidth: BusWidth, retry: Boolean = false) extends Component {
   val io = new Bundle {
-    val workReqCached = slave(Stream(WorkReqCached()))
-    val dmaRead = master(DmaReadBus(busWidth))
-    val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
+    val workReqCached = slave(Stream(CachedWorkReq()))
+    val addrCacheRead = master(SqOrRetryAddrCacheReadBus())
+    val dma = master(SqDmaBus(busWidth))
+    val tx = master(RdmaDataBus(busWidth))
+    val nakNotifier = out(SqNakNotifier())
   }
 
   val sendReqBuilder = new SendReqBuilder(busWidth)
@@ -56,7 +66,6 @@ class SqLogic(busWidth: BusWidth, retry: Boolean = false) extends Component {
 
   val reqBuilders =
     List(sendReqBuilder, writeReqBuilder, readReqBuilder, atomicReqBuilder)
-  //reqBuilders.foreach(_.io.npsn := io.npsn)
   val reqTypeFuncs = List(
     WorkReqOpCode.isSendReq(_),
     WorkReqOpCode.isWriteReq(_),
@@ -80,60 +89,62 @@ class SqLogic(busWidth: BusWidth, retry: Boolean = false) extends Component {
     reqBuilders.size
   )
 
-  val txVec = Vec(reqBuilders.map(_.io.tx))
-  val txSel = StreamArbiterFactory.roundRobin.fragmentLock.on(txVec)
-  io.tx <-/< txSel
+  io.addrCacheRead.send << sendReqBuilder.io.addrCacheRead
+  io.addrCacheRead.write << writeReqBuilder.io.addrCacheRead
 
-  io.dmaRead.req <-/< io.dmaRead.resp.translateWith {
-    DmaReadReq().setDefaultVal()
-  }
+  val txVec = Vec(reqBuilders.map(_.io.tx.pktFrag))
+  val txSel = StreamArbiterFactory.roundRobin.fragmentLock.on(txVec)
+  io.tx.pktFrag <-/< txSel
+
+  io.nakNotifier.setDefaultVal()
+  io.dma.sendRd << sendReqBuilder.io.dmaRead
+  io.dma.writeRd << writeReqBuilder.io.dmaRead
 }
 
 class SendQ(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
-    val qpAttrUpdate = in(QpAttrUpdateNotifier())
-    val npsn = out(UInt(PSN_WIDTH bits))
+    val psnInc = out(SqPsnInc())
+    val nakNotifier = out(SqNakNotifier())
+    // val qpAttrUpdate = in(QpAttrUpdateNotifier())
+    // val npsn = out(UInt(PSN_WIDTH bits))
     val workReq = slave(Stream(WorkReq()))
-    val dmaRead = master(DmaReadBus(busWidth))
-    val reqCacheBus = master(ReqCacheBus())
-    val tx = master(Stream(Fragment(RdmaDataBus(busWidth))))
+    val addrCacheRead = master(SqOrRetryAddrCacheReadBus())
+    val workReqCachePush = master(Stream(CachedWorkReq()))
+    // val reqCacheBus = master(PktCacheBus())
+    val tx = master(RdmaDataBus(busWidth))
+    val dma = master(SqDmaBus(busWidth))
   }
+  val npsn = io.qpAttr.npsn
+  val pktNum = computePktNum(io.workReq.len, io.qpAttr.pmtu)
 
-  val npsnReg = Reg(UInt(PSN_WIDTH bits)) init (0)
-  io.npsn := npsnReg
+  val twoStreams = StreamSequentialFork(
+    io.workReq.translateWith {
+      val rslt = CachedWorkReq()
+      rslt.workReq := io.workReq.payload
+      rslt.psnStart := npsn
+      rslt.pktNum := pktNum
+      rslt
+    },
+    portCount = 2
+  )
+  val workReqCachePush = twoStreams(0)
+  val sqLogicInput = twoStreams(1)
 
-  when(io.qpAttrUpdate.pulseSqPsnReset) {
-    npsnReg := io.qpAttr.npsn
-  }
+  // TODO: verify timing, pipelining does not work here, since it requires
+  // TODO: to push WorkReq into cache first, then start to process it.
+  // io.workReqCachePush <-/< workReqCachePush // Not work
+  io.workReqCachePush << workReqCachePush
 
-  val (workReq0, workReq1) = StreamFork2(io.workReq, synchronous = false)
+  // Increment nPSN only when io.workReq fired
+  io.psnInc.npsn.inc := workReqCachePush.fire
+  io.psnInc.npsn.incVal := pktNum
 
   val sqLogic = new SqLogic(busWidth)
-  io.dmaRead << sqLogic.io.dmaRead
-  sqLogic.io.workReqCached << workReq0.translateWith {
-    val workReqCached = WorkReqCached()
-    workReqCached.workReq := workReq0.payload
-    workReqCached.psnStart := npsnReg
-    workReqCached
-  }
-  io.tx <-/< sqLogic.io.tx
-
-  // TODO: verify nPSN works
-  when(sqLogic.io.tx.fire && sqLogic.io.tx.last) {
-    assert(
-      assertion = npsnReg === sqLogic.io.tx.bth.psn,
-      message =
-        L"nPSN=${npsnReg} should match sqLogic.io.tx.bth.psn=${sqLogic.io.tx.bth.psn}",
-      severity = ERROR
-    )
-
-    npsnReg := sqLogic.io.tx.bth.psn + 1
-  }
-
-  // TODO: set PSN start/end
-  io.reqCacheBus.req <-/< workReq1.translateWith {
-    CacheReq().setDefaultVal()
-  }
-  StreamSink(io.reqCacheBus.resp.payloadType) << io.reqCacheBus.resp
+  io.nakNotifier := sqLogic.io.nakNotifier
+  io.addrCacheRead << sqLogic.io.addrCacheRead
+  io.dma << sqLogic.io.dma
+  // io.psnInc := sqLogic.io.psnInc
+  sqLogic.io.workReqCached <-/< sqLogicInput
+  io.tx << sqLogic.io.tx
 }

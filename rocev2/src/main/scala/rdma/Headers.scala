@@ -3,23 +3,23 @@ package rdma
 import spinal.core._
 // import spinal.lib._
 
-import BusWidth.BusWidth
-import RdmaConstants._
+//import BusWidth.BusWidth
 import ConstantSettings._
+import RdmaConstants._
 
 //----------RDMA defined headers----------//
-abstract class RdmaHeader() extends Bundle {
-  // TODO: refactor assign() to apply()
-  def assign(input: Bits): this.type = {
-    this.assignFromBits(input)
-    this
-  }
+sealed abstract class RdmaHeader() extends Bundle {
+//  // TODO: refactor assign() to apply()
+//  def assign(input: Bits): this.type = {
+//    this.assignFromBits(input)
+//    this
+//  }
 
   // TODO: to remove
   def setDefaultVal(): this.type
 }
 
-// 48 bytes
+// 12 bytes
 case class BTH() extends RdmaHeader {
   val opcodeFull = Bits(TRANSPORT_WIDTH + OPCODE_WIDTH bits)
   val solicited = Bool()
@@ -38,6 +38,46 @@ case class BTH() extends RdmaHeader {
   def transport = opcodeFull(OPCODE_WIDTH, TRANSPORT_WIDTH bits)
   def opcode = opcodeFull(0, OPCODE_WIDTH bits)
 
+  def set(opcode: Bits, dqpn: UInt, psn: UInt): this.type = {
+    val padCnt = U(0, PADCOUNT_WIDTH bits)
+    set(opcode = opcode, padcount = padCnt, dqpn = dqpn, psn = psn)
+  }
+
+  def set(opcode: Bits, padcount: UInt, dqpn: UInt, psn: UInt): this.type = {
+    set(
+      opcode = opcode,
+      padcount = padcount,
+      dqpn = dqpn,
+      ackReq = False,
+      psn = psn
+    )
+  }
+
+  def set(
+      opcode: Bits,
+      padcount: UInt,
+      dqpn: UInt,
+      ackReq: Bool,
+      psn: UInt
+  ): this.type = {
+    transport := Transports.RC.id
+    this.opcode := opcode
+    solicited := False
+    migreq := False
+    this.padcount := padcount
+    version := 0
+    pkey := 0xffff // Default PKEY
+    fecn := False
+    becn := False
+    resv6 := 0
+    this.dqpn := dqpn
+    this.ackreq := ackReq
+    resv7 := 0
+    this.psn := psn
+    this
+  }
+
+  // TODO: remove this
   def setDefaultVal(): this.type = {
     transport := Transports.RC.id
     opcode := 0
@@ -64,6 +104,81 @@ case class AETH() extends RdmaHeader {
   val value = Bits(AETH_VALUE_WIDTH bits)
   val msn = UInt(MSN_WIDTH bits)
 
+  def set(ackType: AckType.AckType): this.type = {
+    require(
+      ackType != AckType.NAK_RNR,
+      "RNR NAK type requires rnrTimeOut as input"
+    )
+
+    val rnrTimeOut = Bits(AETH_VALUE_WIDTH bits)
+    rnrTimeOut := 0
+    set(ackType, msn = 0, creditCnt = 0, rnrTimeOut = rnrTimeOut)
+  }
+
+  def set(
+      ackType: AckType.AckType,
+      msn: Int,
+      creditCnt: Int,
+      rnrTimeOut: Bits
+  ): this.type = {
+    val ackTypeBits = Bits(ACK_TYPE_WIDTH bits)
+    ackTypeBits := ackType.id
+    val msnBits = UInt(MSN_WIDTH bits)
+    msnBits := msn
+    val creditCntBits = Bits(AETH_VALUE_WIDTH bits)
+    creditCntBits := creditCnt
+
+    setHelper(ackTypeBits, msnBits, creditCntBits, rnrTimeOut)
+  }
+
+  def setHelper(
+      ackType: Bits,
+      msn: UInt,
+      creditCnt: Bits,
+      rnrTimeOut: Bits
+  ): this.type = {
+    rsvd := 0
+    this.msn := msn
+
+    switch(ackType) {
+      is(AckType.NORMAL.id) {
+        code := AethCode.ACK.id
+        value := creditCnt
+      }
+      is(AckType.NAK_SEQ.id) {
+        code := AethCode.NAK.id
+        value := NakCode.SEQ.id
+      }
+      is(AckType.NAK_INV.id) {
+        code := AethCode.NAK.id
+        value := NakCode.INV.id
+      }
+      is(AckType.NAK_RMT_ACC.id) {
+        code := AethCode.NAK.id
+        value := NakCode.RMT_ACC.id
+      }
+      is(AckType.NAK_RMT_OP.id) {
+        code := AethCode.NAK.id
+        value := NakCode.RMT_OP.id
+      }
+      is(AckType.NAK_RNR.id) {
+        code := AethCode.RNR.id
+        value := rnrTimeOut
+      }
+      default {
+        code := AethCode.RSVD.id
+        value := 0
+        assert(
+          assertion = False,
+          message = L"invalid AckType=$ackType",
+          severity = FAILURE
+        )
+      }
+    }
+    this
+  }
+
+  // TODO: remove this
   def setDefaultVal(): this.type = {
     rsvd := 0
     code := 0
@@ -79,6 +194,7 @@ case class RETH() extends RdmaHeader {
   val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
   val dlen = UInt(RDMA_MAX_LEN_WIDTH bits)
 
+  // TODO: remove this
   def setDefaultVal(): this.type = {
     va := 0
     rkey := 0
@@ -88,7 +204,7 @@ case class RETH() extends RdmaHeader {
 }
 
 // 28 bytes
-case class AtomicETH() extends RdmaHeader {
+case class AtomicEth() extends RdmaHeader {
   val va = UInt(MEM_ADDR_WIDTH bits)
   val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
   val swap = Bits(LONG_WIDTH bits)
@@ -143,130 +259,4 @@ case class CNPPadding() extends RdmaHeader {
     rsvd2 := 0
     this
   }
-}
-
-//----------Combined packets----------//
-
-trait RdmaBasePacket extends Bundle {
-  // this: Bundle => // RdmaDataPacket must be of Bundle class
-  val bth = BTH()
-  val eth = Bits(ETH_WIDTH bits)
-
-  def setDefaultVal(): this.type = {
-    bth.setDefaultVal()
-    eth := 0
-    this
-  }
-}
-
-abstract class RdmaDataPacket(busWidth: BusWidth) extends RdmaBasePacket {
-  val data = Bits(busWidth.id bits)
-  val mty = Bits(log2Up(busWidth.id / 8) bits)
-
-  override def setDefaultVal(): this.type = {
-//    bth.setDefaultVal()
-//    eth := 0
-    super.setDefaultVal()
-    data := 0
-    mty := 0
-    this
-  }
-
-  def mtuWidth(pmtuEnum: Bits): Bits = {
-    val pmtuBytes = Bits(log2Up(busWidth.id) bits)
-    switch(pmtuEnum) {
-      is(PMTU.U256.id) { pmtuBytes := 256 / 8 } // 32B
-      is(PMTU.U512.id) { pmtuBytes := 512 / 8 } // 64B
-      is(PMTU.U1024.id) { pmtuBytes := 1024 / 8 } // 128B
-      is(PMTU.U2048.id) { pmtuBytes := 2048 / 8 } // 256B
-      is(PMTU.U4096.id) { pmtuBytes := 4096 / 8 } // 512B
-    }
-    pmtuBytes
-  }
-}
-
-trait ImmDtReq extends RdmaBasePacket {
-  def immdt = ImmDt().assign(eth(0, widthOf(ImmDt()) bits))
-}
-
-trait RdmaReq extends RdmaBasePacket {
-  def reth = RETH().assign(eth(0, widthOf(RETH()) bits))
-}
-
-trait Response extends RdmaBasePacket {
-  def aeth = AETH().assign(eth(0, widthOf(AETH()) bits))
-}
-
-trait SendReq extends ImmDtReq {
-  def ieth = IETH().assign(eth(0, widthOf(IETH()) bits))
-}
-
-trait WriteReq extends RdmaReq with ImmDtReq {}
-
-trait ReadReq extends RdmaReq {}
-
-trait ReadResp extends Response {}
-
-trait Acknowlege extends Response {
-  def setAck(
-      ackType: Bits,
-      psn: UInt,
-      dqpn: UInt,
-      msn: UInt = 0,
-      creditCnt: Bits = 0,
-      rnrTimeOut: Bits = MIN_RNR_TIMEOUT
-  ): this.type = {
-    bth.dqpn := dqpn
-    bth.opcode := OpCode.ACKNOWLEDGE.id
-    bth.psn := psn
-    aeth.msn := msn
-
-    switch(ackType) {
-      is(AckType.NORMAL.id) {
-        aeth.code := AethCode.ACK.id
-        aeth.value := creditCnt
-      }
-      is(AckType.NAK_SEQ.id) {
-        aeth.code := AethCode.NAK.id
-        aeth.value := NakCode.SEQ.id
-      }
-      is(AckType.NAK_INV.id) {
-        aeth.code := AethCode.NAK.id
-        aeth.value := NakCode.INV.id
-      }
-      is(AckType.NAK_RMT_ACC.id) {
-        aeth.code := AethCode.NAK.id
-        aeth.value := NakCode.RMT_ACC.id
-      }
-      is(AckType.NAK_RMT_OP.id) {
-        aeth.code := AethCode.NAK.id
-        aeth.value := NakCode.RMT_OP.id
-      }
-      is(AckType.NAK_RNR.id) {
-        aeth.code := AethCode.RNR.id
-        aeth.value := rnrTimeOut
-      }
-      default {
-        assert(
-          assertion = False,
-          message = L"invalid AckType=$ackType",
-          severity = ERROR
-        )
-      }
-    }
-    this
-  }
-}
-
-trait AtomicReq extends RdmaBasePacket {
-  def atomicETH = AtomicETH().assign(eth(0, widthOf(AtomicETH()) bits))
-}
-
-trait AtomicResp extends Response {
-  def atomicAckETH =
-    AtomicAckETH().assign(eth(widthOf(AETH()), widthOf(AtomicAckETH()) bits))
-}
-
-trait CNP extends RdmaBasePacket {
-  def padding = CNPPadding().assign(eth(0, widthOf(CNPPadding()) bits))
 }
