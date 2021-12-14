@@ -21,7 +21,8 @@ abstract class RdmaHeader() extends Bundle {
 
 // 48 bytes
 case class BTH() extends RdmaHeader {
-  val opcodeFull = Bits(TRANSPORT_WIDTH + OPCODE_WIDTH bits)
+  val transport = Bits(TRANSPORT_WIDTH bits)
+  val opcode = Bits(OPCODE_WIDTH bits)
   val solicited = Bool()
   val migreq = Bool()
   val padcount = UInt(PADCOUNT_WIDTH bits)
@@ -35,8 +36,7 @@ case class BTH() extends RdmaHeader {
   val resv7 = Bits(7 bits)
   val psn = UInt(PSN_WIDTH bits)
 
-  def transport = opcodeFull(OPCODE_WIDTH, TRANSPORT_WIDTH bits)
-  def opcode = opcodeFull(0, OPCODE_WIDTH bits)
+  def opcodeFull = transport ## opcode
 
   def setDefaultVal(): this.type = {
     transport := Transports.RC.id

@@ -518,12 +518,11 @@ case class RdmaNonReadRespBus()
     with CNP {
 
   def toRdmaDataBus(busWidth: BusWidth): RdmaDataBus = {
-//    val rslt = RdmaDataBus(busWidth)
-//    rslt.bth := this.bth
-//    rslt.eth := this.eth
-//    rslt.data := 0
-//    rslt.mty := 0
-//    rslt
-    RdmaDataBus(busWidth).setDefaultVal()
+    val rslt = RdmaDataBus(busWidth)
+    rslt.bth := this.bth
+    rslt.eth := this.eth
+    rslt.data := 0
+    rslt.mty := 0
+    rslt
   }
 }

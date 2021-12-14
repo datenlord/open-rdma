@@ -395,13 +395,13 @@ class SeqOut(busWidth: BusWidth) extends Component {
       assertion = OpCode.isRespPkt(txSel.bth.opcode),
       message =
         L"SeqOut can only output response packet, but with invalid opcode=${txSel.bth.opcode}",
-      severity = ERROR
+      severity = FAILURE
     )
 
     assert(
       assertion = CountOne(rxFiltered.map(_.valid)) <= 1,
       message = L"SeqOut has duplicate PSN input, oPSN=${opsnReg}",
-      severity = ERROR
+      severity = FAILURE
     )
   }
 
@@ -411,7 +411,7 @@ class SeqOut(busWidth: BusWidth) extends Component {
       assertion = txSel.valid,
       message =
         L"SeqOut stuck, because all rx are valid but no one's PSNs is equal to oPSN=${opsnReg}",
-      severity = ERROR
+      severity = FAILURE
     )
   }
 }
