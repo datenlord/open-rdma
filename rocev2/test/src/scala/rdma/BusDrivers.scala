@@ -8,17 +8,8 @@ import spinal.lib.sim._
 
 import scala.collection.mutable
 
-abstract class RdmaPacketDriver[T <: Data, P <: RdmaBasePacket](
-    bus: Stream[T],
-    payload: P,
-    clockDomain: ClockDomain
-) {
-  val cmdQueue = mutable.Queue[P => Unit]()
-  def waitPacketSendOver(): Unit
-
-  def setOpcode(opCode: OpCode.OpCode): Unit = {
-    payload.bth.opcode #= opCode.id
-  }
+abstract class RdmaBasePacketDriver[T <: RdmaBasePacket](payload: T) {
+  val cmdQueue = mutable.Queue[T => Unit]()
 
   def injectPacketsByPsn(startPsn: Int, endPsn: Int): List[Int] = {
     val maxPsn = (1 << PSN_WIDTH) - 1
@@ -36,7 +27,10 @@ abstract class RdmaPacketDriver[T <: Data, P <: RdmaBasePacket](
     psnList
   }
 
-  bus.valid #= false
+  def setOpcode(opCode: OpCode.OpCode): Unit = {
+    payload.bth.opcode #= opCode.id
+  }
+
   payload.bth.transport #= Transports.RC.id
   payload.bth.opcode #= 0
   payload.bth.solicited #= false
@@ -52,25 +46,19 @@ abstract class RdmaPacketDriver[T <: Data, P <: RdmaBasePacket](
   payload.bth.resv7 #= 0
   payload.bth.psn #= 0
   payload.eth #= 0
+}
 
-  fork {
-    while (true) {
-      if (cmdQueue.nonEmpty) {
-        cmdQueue.dequeue().apply(payload)
-        bus.valid #= true
-        waitPacketSendOver()
-      } else {
-        bus.valid #= false
-        clockDomain.waitRisingEdge()
-      }
-    }
-  }
+abstract class RdmaDataPacketDriver[T <: RdmaDataPacket](payload: T)
+    extends RdmaBasePacketDriver(payload) {
+  payload.data #= 0
+  payload.mty #= 0
 }
 
 class RdmaDataBusDriver(
     bus: Stream[Fragment[RdmaDataBus]],
     clockDomain: ClockDomain
-) extends RdmaPacketDriver(bus, bus.fragment, clockDomain) {
+) extends RdmaDataPacketDriver(bus.fragment) {
+
   bus.last #= false
 
   def waitPacketSendOver() = {
@@ -83,14 +71,37 @@ class RdmaDataBusDriver(
       bus.last #= false
     }
   }
+
+  fork {
+    while (true) {
+      if (cmdQueue.nonEmpty) {
+        cmdQueue.dequeue()(bus.payload)
+        bus.valid #= true
+        waitPacketSendOver()
+      } else {
+        bus.valid #= false
+        clockDomain.waitRisingEdge()
+      }
+    }
+  }
 }
 
 class RdmaNonReadRespBusDriver(
     bus: Stream[RdmaNonReadRespBus],
     clockDomain: ClockDomain
-) extends RdmaPacketDriver(bus, bus.payload, clockDomain) {
-  def waitPacketSendOver() = {
-    clockDomain.waitSamplingWhere(bus.ready.toBoolean)
+) extends RdmaBasePacketDriver(bus.payload) {
+
+  fork {
+    while (true) {
+      if (cmdQueue.nonEmpty) {
+        cmdQueue.dequeue()(bus.payload)
+        bus.valid #= true
+        clockDomain.waitSamplingWhere(bus.ready.toBoolean)
+      } else {
+        bus.valid #= false
+        clockDomain.waitRisingEdge()
+      }
+    }
   }
 }
 

@@ -5,14 +5,11 @@ import rdma.RdmaConstants.PSN_WIDTH
 import spinal.core.sim._
 
 import scala.util.Random
+import scala.language.reflectiveCalls
 
 class SeqOutTest extends AnyFunSuite {
 
-  def bindDrivers(dut: SeqOut): (
-      Seq[RdmaNonReadRespBusDriver],
-      Seq[RdmaDataBusDriver],
-      RdmaDataBusMonitor
-  ) = {
+  class SeqOutAgents(dut: SeqOut) {
     val rxAtomicDriver =
       new RdmaNonReadRespBusDriver(dut.io.rxAtomicResp, dut.clockDomain)
     val rxSendDriver =
@@ -25,20 +22,22 @@ class SeqOutTest extends AnyFunSuite {
       new RdmaNonReadRespBusDriver(dut.io.rxSendWriteErrResp, dut.clockDomain)
     val rxReadAtomicErrDriver =
       new RdmaNonReadRespBusDriver(dut.io.rxReadAtomicErrResp, dut.clockDomain)
+    val rxReadDriver = new RdmaDataBusDriver(dut.io.rxReadResp, dut.clockDomain)
+    val rxDupReqDriver =
+      new RdmaDataBusDriver(dut.io.rxDupReqResp, dut.clockDomain)
+    // set default opcode
     rxAtomicDriver.setOpcode(OpCode.ATOMIC_ACKNOWLEDGE)
     rxSendDriver.setOpcode(OpCode.ACKNOWLEDGE)
     rxWriteDriver.setOpcode(OpCode.ACKNOWLEDGE)
     rxPreCheckErrDriver.setOpcode(OpCode.ACKNOWLEDGE)
     rxSendWriteErrDriver.setOpcode(OpCode.ACKNOWLEDGE)
     rxReadAtomicErrDriver.setOpcode(OpCode.ACKNOWLEDGE)
-
-    val rxReadDriver = new RdmaDataBusDriver(dut.io.rxReadResp, dut.clockDomain)
-    val rxDupReqDriver =
-      new RdmaDataBusDriver(dut.io.rxDupReqResp, dut.clockDomain)
     rxReadDriver.setOpcode(OpCode.RDMA_READ_RESPONSE_ONLY)
     rxDupReqDriver.setOpcode(OpCode.RDMA_READ_RESPONSE_ONLY)
 
-    val rxNonReadRespDrivers = Seq(
+    val txMonitor = new RdmaDataBusMonitor(dut.io.tx, dut.clockDomain)
+
+    def rxNonReadDrivers = Seq(
       rxAtomicDriver,
       rxSendDriver,
       rxWriteDriver,
@@ -46,84 +45,97 @@ class SeqOutTest extends AnyFunSuite {
       rxSendWriteErrDriver,
       rxReadAtomicErrDriver
     )
-    val rxReadRespDrivers = Seq(
+
+    def rxReadRespDrivers = Seq(
       rxReadDriver,
       rxDupReqDriver
     )
 
-    val txMonitor = new RdmaDataBusMonitor(dut.io.tx, dut.clockDomain)
-    (rxNonReadRespDrivers, rxReadRespDrivers, txMonitor)
-  }
+    def setPsn(psn: Int): Unit = {
+      dut.io.qpAttr.epsn #= psn
+      dut.io.qpAttrUpdate.pulseRqPsnReset #= true
+      dut.clockDomain.waitRisingEdge()
+      dut.io.qpAttrUpdate.pulseRqPsnReset #= false
+    }
 
-  def setPsn(dut: SeqOut, psn: Int): Unit = {
-    dut.io.qpAttr.epsn #= psn
-    dut.io.qpAttrUpdate.pulseRqPsnReset #= true
-    dut.clockDomain.waitRisingEdge()
-    dut.io.qpAttrUpdate.pulseRqPsnReset #= false
+    def drivers = rxNonReadDrivers ++ rxReadRespDrivers
   }
 
   def simPsnWarp(dut: SeqOut): Unit = {
     SimTimeout(10000)
     dut.clockDomain.forkStimulus(2)
-    val (nonReadRespDrivers, readRespDrivers, txMonitor) = bindDrivers(dut)
+    val agents = new SeqOutAgents(dut)
     val maxPsn = (1 << PSN_WIDTH) - 1
     val startPsn = maxPsn - 10
-    for (driver <- nonReadRespDrivers) {
-      setPsn(dut, startPsn)
-      val injectedPsnList = driver.injectPacketsByPsn(startPsn, 10)
-      txMonitor.addTargetPsn(injectedPsnList)
-      waitUntil(txMonitor.allPsnReceived)
-    }
-    for (driver <- readRespDrivers) {
-      setPsn(dut, startPsn)
-      val injectedPsnList = driver.injectPacketsByPsn(startPsn, 10)
-      txMonitor.addTargetPsn(injectedPsnList)
-      waitUntil(txMonitor.allPsnReceived)
+
+    for (rxDriver <- agents.drivers) {
+      agents.setPsn(startPsn)
+      val injectedPsnList = rxDriver.injectPacketsByPsn(startPsn, 10)
+      agents.txMonitor.addTargetPsn(injectedPsnList)
+      waitUntil(agents.txMonitor.allPsnReceived)
     }
   }
 
   def simDuplicatePsn(dut: SeqOut): Unit = {
     SimTimeout(100)
     dut.clockDomain.forkStimulus(2)
+    val agents = new SeqOutAgents(dut)
     val psn = 1024
-    setPsn(dut, psn)
-    val (nonReadRespDrivers, _, txMonitor) = bindDrivers(dut)
+    agents.setPsn(psn)
+
     // select any two rx to trigger the assertion
-    nonReadRespDrivers(1).injectPacketsByPsn(psn, psn)
-    nonReadRespDrivers(2).injectPacketsByPsn(psn, psn)
-    txMonitor.addTargetPsn(List(psn))
-    waitUntil(txMonitor.allPsnReceived)
+    agents.rxNonReadDrivers(1).injectPacketsByPsn(psn, psn)
+    agents.rxNonReadDrivers(2).injectPacketsByPsn(psn, psn)
+    agents.txMonitor.addTargetPsn(List(psn))
+    waitUntil(agents.txMonitor.allPsnReceived)
   }
 
   def simStuckByPsn(dut: SeqOut): Unit = {
     SimTimeout(100)
     dut.clockDomain.forkStimulus(2)
-    val (nonReadRespDrivers, readRespDrivers, txMonitor) = bindDrivers(dut)
+    val agents = new SeqOutAgents(dut)
     val targetPsn = 2021
-    setPsn(dut, targetPsn)
+    agents.setPsn(targetPsn)
     // assign any psn except targetPsn to all rxs
     // this case, input psn is selected start from targetPsn + 1
-    val psnBase1 = targetPsn + 1
-    for ((driver, id) <- nonReadRespDrivers.zipWithIndex) {
-      val psn = psnBase1 + id
+    val psnBase = targetPsn + 1
+    for ((driver, id) <- agents.drivers.zipWithIndex) {
+      val psn = psnBase + id
       driver.injectPacketsByPsn(psn, psn)
     }
-    val psnBase2 = psnBase1 + nonReadRespDrivers.length
-    for ((driver, id) <- readRespDrivers.zipWithIndex) {
-      val psn = psnBase2 + id
-      driver.injectPacketsByPsn(psn, psn)
-    }
-    txMonitor.addTargetPsn(List(targetPsn))
-    waitUntil(txMonitor.allPsnReceived)
+    agents.txMonitor.addTargetPsn(List(targetPsn))
+    waitUntil(agents.txMonitor.allPsnReceived)
   }
 
   def simSeqOutRandom(dut: SeqOut): Unit = {
+    SimTimeout(1000000)
     dut.clockDomain.forkStimulus(2)
-    val (nonReadRespDrivers, readRespDrivers, txMonitor) = bindDrivers(dut)
-    val maxPSN = (1 << PSN_WIDTH) - 1
-    val maxPacketsNum = 1024
+    val agents = new SeqOutAgents(dut)
+    val maxPsn = (1 << PSN_WIDTH) - 1
+    val maxPacketsPerSegment = 128
+    val nSegments = 16
     val nTestCases = 64
-    // TODO: random test
+
+    for (startPsn <- Seq.fill(nTestCases)(Random.nextInt(maxPsn))) {
+      agents.setPsn(startPsn)
+      // divide a continuous psn sequence into many segments
+      // each segment is pushed into a randomly selected rx
+      val nPacketsPerSegment =
+        Seq.fill(nSegments)(Random.nextInt(maxPacketsPerSegment))
+
+      nPacketsPerSegment.foldLeft(startPsn)({ (currentPsn, nPackets) =>
+        val endPsn = (currentPsn + nPackets) % maxPsn
+        val selectedDriver = agents.drivers(
+          Random.nextInt(agents.drivers.length)
+        )
+        val injectedPsnList =
+          selectedDriver.injectPacketsByPsn(currentPsn, endPsn)
+        agents.txMonitor.addTargetPsn(injectedPsnList)
+        (endPsn + 1) % maxPsn
+      })
+
+      waitUntil(agents.txMonitor.allPsnReceived)
+    }
   }
 
   test("SeqOut test case for PSN warp") {
