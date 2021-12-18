@@ -64,60 +64,60 @@ class SeqOutTest extends AnyFunSuite {
   def simPsnWarp(dut: SeqOut): Unit = {
     SimTimeout(10000)
     dut.clockDomain.forkStimulus(2)
-    val agents = new SeqOutAgents(dut)
+    val agent = new SeqOutAgents(dut)
     val maxPsn = (1 << PSN_WIDTH) - 1
     val startPsn = maxPsn - 10
 
-    for (rxDriver <- agents.drivers) {
-      agents.setPsn(startPsn)
+    for (rxDriver <- agent.drivers) {
+      agent.setPsn(startPsn)
       val injectedPsnList = rxDriver.injectPacketsByPsn(startPsn, 10)
-      agents.txMonitor.addTargetPsn(injectedPsnList)
-      waitUntil(agents.txMonitor.allPsnReceived)
+      agent.txMonitor.addTargetPsn(injectedPsnList)
+      waitUntil(agent.txMonitor.allPsnReceived)
     }
   }
 
   def simDuplicatePsn(dut: SeqOut): Unit = {
     SimTimeout(100)
     dut.clockDomain.forkStimulus(2)
-    val agents = new SeqOutAgents(dut)
+    val agent = new SeqOutAgents(dut)
     val psn = 1024
-    agents.setPsn(psn)
+    agent.setPsn(psn)
 
     // select any two rx to trigger the assertion
-    agents.rxNonReadDrivers(1).injectPacketsByPsn(psn, psn)
-    agents.rxNonReadDrivers(2).injectPacketsByPsn(psn, psn)
-    agents.txMonitor.addTargetPsn(List(psn))
-    waitUntil(agents.txMonitor.allPsnReceived)
+    agent.rxNonReadDrivers(1).injectPacketsByPsn(psn, psn)
+    agent.rxNonReadDrivers(2).injectPacketsByPsn(psn, psn)
+    agent.txMonitor.addTargetPsn(List(psn))
+    waitUntil(agent.txMonitor.allPsnReceived)
   }
 
   def simStuckByPsn(dut: SeqOut): Unit = {
     SimTimeout(100)
     dut.clockDomain.forkStimulus(2)
-    val agents = new SeqOutAgents(dut)
+    val agent = new SeqOutAgents(dut)
     val targetPsn = 2021
-    agents.setPsn(targetPsn)
+    agent.setPsn(targetPsn)
     // assign any psn except targetPsn to all rxs
     // this case, input psn is selected start from targetPsn + 1
     val psnBase = targetPsn + 1
-    for ((driver, id) <- agents.drivers.zipWithIndex) {
+    for ((driver, id) <- agent.drivers.zipWithIndex) {
       val psn = psnBase + id
       driver.injectPacketsByPsn(psn, psn)
     }
-    agents.txMonitor.addTargetPsn(List(targetPsn))
-    waitUntil(agents.txMonitor.allPsnReceived)
+    agent.txMonitor.addTargetPsn(List(targetPsn))
+    waitUntil(agent.txMonitor.allPsnReceived)
   }
 
   def simSeqOutRandom(dut: SeqOut): Unit = {
     SimTimeout(1000000)
     dut.clockDomain.forkStimulus(2)
-    val agents = new SeqOutAgents(dut)
+    val agent = new SeqOutAgents(dut)
     val maxPsn = (1 << PSN_WIDTH) - 1
     val maxPacketsPerSegment = 128
     val nSegments = 16
     val nTestCases = 64
 
     for (startPsn <- Seq.fill(nTestCases)(Random.nextInt(maxPsn))) {
-      agents.setPsn(startPsn)
+      agent.setPsn(startPsn)
       // divide a continuous psn sequence into many segments
       // each segment is pushed into a randomly selected rx
       val nPacketsPerSegment =
@@ -125,16 +125,16 @@ class SeqOutTest extends AnyFunSuite {
 
       nPacketsPerSegment.foldLeft(startPsn)({ (currentPsn, nPackets) =>
         val endPsn = (currentPsn + nPackets) % maxPsn
-        val selectedDriver = agents.drivers(
-          Random.nextInt(agents.drivers.length)
+        val selectedDriver = agent.drivers(
+          Random.nextInt(agent.drivers.length)
         )
         val injectedPsnList =
           selectedDriver.injectPacketsByPsn(currentPsn, endPsn)
-        agents.txMonitor.addTargetPsn(injectedPsnList)
+        agent.txMonitor.addTargetPsn(injectedPsnList)
         (endPsn + 1) % maxPsn
       })
 
-      waitUntil(agents.txMonitor.allPsnReceived)
+      waitUntil(agent.txMonitor.allPsnReceived)
     }
   }
 
