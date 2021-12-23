@@ -27,7 +27,7 @@ class ReqBuilder(busWidth: BusWidth) extends Component {
     val frag = Fragment(RdmaDataBus(busWidth))
     frag.setDefaultVal()
     // TODO: WR opcode to RC opcode
-    frag.bth.opcode := io.workReqCached.workReq.opcode.resize(OPCODE_WIDTH)
+    // frag.bth.opcode := io.workReqCached.workReq.opcode.resize(OPCODE_WIDTH)
     frag.last := False
     frag
   }

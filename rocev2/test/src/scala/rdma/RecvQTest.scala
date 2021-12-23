@@ -1,7 +1,7 @@
 package rdma
 
 import org.scalatest.funsuite.AnyFunSuite
-import rdma.RdmaConstants.PSN_WIDTH
+import rdma.RdmaConstants._
 import spinal.core.sim._
 
 import scala.util.Random
