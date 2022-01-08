@@ -3,7 +3,7 @@ package rdma
 import spinal.core._
 import spinal.lib._
 // import ConstantSettings._
-import RdmaConstants._
+// import RdmaConstants._
 
 case class QueryCacheResp[Tk <: Data, Tv <: Data](
     keyType: HardType[Tk],
@@ -191,7 +191,7 @@ class ReadAtomicResultCache(depth: Int) extends Component {
   io.queryPort4DmaRead.resp << cache.io.queryBusVec(0).resp.translateWith {
     val rslt = ReadAtomicResultCacheQueryResp()
     rslt.cachedData := cache.io.queryBusVec(0).resp.value
-    rslt.queryPsn := cache.io.queryBusVec(0).resp.key.psn
+    rslt.query := cache.io.queryBusVec(0).resp.key
     rslt.found := cache.io.queryBusVec(0).resp.found
     rslt
   }
@@ -199,7 +199,7 @@ class ReadAtomicResultCache(depth: Int) extends Component {
   io.queryPort4DupReq.resp << cache.io.queryBusVec(1).resp.translateWith {
     val rslt = ReadAtomicResultCacheQueryResp()
     rslt.cachedData := cache.io.queryBusVec(1).resp.value
-    rslt.queryPsn := cache.io.queryBusVec(1).resp.key.psn
+    rslt.query := cache.io.queryBusVec(1).resp.key
     rslt.found := cache.io.queryBusVec(1).resp.found
     rslt
   }
@@ -263,10 +263,10 @@ class WorkReqCache(depth: Int) extends Component {
   }
 
   val cache = new QueryCache(
-    UInt(PSN_WIDTH bits),
+    WorkReqCacheQueryReq(),
     CachedWorkReq(),
-    queryFunc = (k: UInt, v: CachedWorkReq) =>
-      v.psnStart <= k && k < (v.psnStart + v.pktNum),
+    queryFunc = (k: WorkReqCacheQueryReq, v: CachedWorkReq) =>
+      v.psnStart <= k.psn && k.psn < (v.psnStart + v.pktNum),
     initialValue = CachedWorkReq().setDefaultVal(),
     depth = depth,
     portCount = 1
@@ -277,8 +277,8 @@ class WorkReqCache(depth: Int) extends Component {
   cache.io.queryBusVec(0).req << io.queryBus.req
   io.queryBus.resp << cache.io.queryBusVec(0).resp.translateWith {
     val rslt = WorkReqCacheQueryResp()
-    rslt.wrCached := cache.io.queryBusVec(0).resp.value
-    rslt.queryPsn := cache.io.queryBusVec(0).resp.key
+    rslt.cachedWorkReq := cache.io.queryBusVec(0).resp.value
+    rslt.query := cache.io.queryBusVec(0).resp.key
     rslt.found := cache.io.queryBusVec(0).resp.found
     rslt
   }
@@ -317,15 +317,15 @@ class WorkReqCache(depth: Int) extends Component {
 // TODO: handle zero DMA length key check
 class AddrCache extends Component {
   val io = new Bundle {
-    val sqCacheRead = slave(SqOrRetryAddrCacheReadBus())
-    val rqCacheRead = slave(RqAddrCacheReadBus())
+    val sqCacheRead = slave(AddrCacheReadBus())
+    val rqCacheRead = slave(AddrCacheReadBus())
     val respCacheRead = slave(AddrCacheReadBus())
-    val retryCacheRead = slave(SqOrRetryAddrCacheReadBus())
+    // val retryCacheRead = slave(AddrCacheReadBus())
     // TODO: AddrCache content input
   }
 
   // TODO: implementation
-  io.rqCacheRead.bus.resp <-/< io.rqCacheRead.bus.req
+  io.rqCacheRead.resp <-/< io.rqCacheRead.req
     .translateWith {
       AddrCacheReadResp().setDefaultVal()
     }
@@ -343,23 +343,29 @@ class AddrCache extends Component {
 //    AddrCacheReadResp().setDefaultVal()
 //  }
 
-  io.sqCacheRead.send.resp <-/< io.sqCacheRead.send.req.translateWith {
-    AddrCacheReadResp().setDefaultVal()
-  }
-  io.sqCacheRead.write.resp <-/< io.sqCacheRead.write.req.translateWith {
-    AddrCacheReadResp().setDefaultVal()
-  }
+//  io.sqCacheRead.resp <-/< io.sqCacheRead.req.translateWith {
+//    AddrCacheReadResp().setDefaultVal()
+//  }
+//  io.sqCacheRead.send.resp <-/< io.sqCacheRead.send.req.translateWith {
+//    AddrCacheReadResp().setDefaultVal()
+//  }
+//  io.sqCacheRead.write.resp <-/< io.sqCacheRead.write.req.translateWith {
+//    AddrCacheReadResp().setDefaultVal()
+//  }
 
   io.respCacheRead.resp <-/< io.respCacheRead.req.translateWith {
     AddrCacheReadResp().setDefaultVal()
   }
 
-  io.retryCacheRead.send.resp <-/< io.retryCacheRead.send.req.translateWith {
-    AddrCacheReadResp().setDefaultVal()
-  }
-  io.retryCacheRead.write.resp <-/< io.retryCacheRead.write.req.translateWith {
-    AddrCacheReadResp().setDefaultVal()
-  }
+//  io.retryCacheRead.resp <-/< io.retryCacheRead.req.translateWith {
+//    AddrCacheReadResp().setDefaultVal()
+//  }
+//  io.retryCacheRead.send.resp <-/< io.retryCacheRead.send.req.translateWith {
+//    AddrCacheReadResp().setDefaultVal()
+//  }
+//  io.retryCacheRead.write.resp <-/< io.retryCacheRead.write.req.translateWith {
+//    AddrCacheReadResp().setDefaultVal()
+//  }
 
   // TODO: check MR size and permission
   //
@@ -370,4 +376,45 @@ class AddrCache extends Component {
   // the length of the data being referenced does not cross the associated
   // memory start and end addresses). Any violation must result in the packet
   // being discarded and for reliable services, the generation of a NAK.
+}
+
+class SqPktCache(depth: Int) extends Component {
+  val io = new Bundle {
+    val push = slave(Stream(SqPktCacheData()))
+    val pop = master(Stream(SqPktCacheData()))
+    val occupancy = out(UInt(log2Up(depth + 1) bits))
+    val flush = in(Bool())
+    val queryPort4Resp = slave(SqPktCacheQueryBus())
+    val queryPort4Retry = slave(SqPktCacheQueryBus())
+  }
+
+  val cache = new QueryCache(
+    SqPktCacheQueryReq(),
+    SqPktCacheData(),
+    queryFunc = (k: SqPktCacheQueryReq, v: SqPktCacheData) => v.psn === k.psn,
+    initialValue = SqPktCacheData().setDefaultVal(),
+    depth = depth,
+    portCount = 2
+  )
+  cache.io.push << io.push
+  io.pop << cache.io.pop
+  io.occupancy := cache.io.occupancy
+  cache.io.flush := io.flush
+  cache.io.queryBusVec(0).req << io.queryPort4Resp.req
+  io.queryPort4Resp.resp << cache.io.queryBusVec(0).resp.translateWith {
+    val rslt = SqPktCacheQueryResp()
+    rslt.cachedPkt := cache.io.queryBusVec(0).resp.value
+    rslt.query := cache.io.queryBusVec(0).resp.key
+    rslt.found := cache.io.queryBusVec(0).resp.found
+    rslt
+  }
+
+  cache.io.queryBusVec(1).req << io.queryPort4Retry.req
+  io.queryPort4Retry.resp << cache.io.queryBusVec(1).resp.translateWith {
+    val rslt = SqPktCacheQueryResp()
+    rslt.cachedPkt := cache.io.queryBusVec(1).resp.value
+    rslt.query := cache.io.queryBusVec(1).resp.key
+    rslt.found := cache.io.queryBusVec(1).resp.found
+    rslt
+  }
 }
