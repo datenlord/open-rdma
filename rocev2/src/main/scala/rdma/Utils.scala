@@ -468,6 +468,35 @@ object computePktNum {
     }.rslt
 }
 
+object computeEPsnInc {
+  def apply(pktFrag: RdmaDataPacket, pmtu: Bits, busWidth: BusWidth): UInt =
+    new Composite(pktFrag) {
+      val rslt = UInt(PSN_WIDTH bits)
+      val isReadReq = OpCode.isReadReqPkt(pktFrag.bth.opcode)
+      when(isReadReq) {
+        // BTH is included in inputPktFrag.data
+        // TODO: verify inputPktFrag.data is big endian
+        val rethBits = pktFrag.data(
+          (busWidth.id - widthOf(BTH()) - widthOf(RETH())) until
+            (busWidth.id - widthOf(BTH()))
+        )
+        val reth = RETH()
+        reth.assignFromBits(rethBits)
+
+        rslt := computePktNum(reth.dlen, pmtu)
+      } otherwise {
+        rslt := 1
+
+        assert(
+          assertion = OpCode.isReqPkt(pktFrag.bth.opcode),
+          message =
+            L"computeEPsnInc() expects requests, but opcode=${pktFrag.bth.opcode}",
+          severity = FAILURE
+        )
+      }
+    }.rslt
+}
+
 object bufSizeCheck {
   def apply(
       targetPhysicalAddr: UInt,
@@ -962,7 +991,7 @@ class StreamVec[T <: Data](val strmVec: Vec[Stream[T]]) {
 //  }
 }
 
-object ComponentExtensions {
+object ComponentEnrichment {
   implicit class ComponentExt[T <: Component](val that: T) {
     def stub(): T = that.rework {
       // step1: First remove all we don't want

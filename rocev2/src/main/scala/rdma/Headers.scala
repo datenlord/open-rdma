@@ -178,6 +178,16 @@ case class AETH() extends RdmaHeader {
     this
   }
 
+  def isRetryAck(): Bool =
+    new Composite(this) {
+      val rslt = False
+      when(code === AethCode.RNR.id) {
+        rslt := True
+      } elsewhen (code === AethCode.NAK.id && value === NakCode.SEQ.id) {
+        rslt := True
+      }
+    }.rslt
+
   // TODO: remove this
   def setDefaultVal(): this.type = {
     rsvd := 0
@@ -210,6 +220,7 @@ case class AtomicEth() extends RdmaHeader {
   val swap = Bits(LONG_WIDTH bits)
   val comp = Bits(LONG_WIDTH bits)
 
+  // TODO: remove this
   def setDefaultVal(): this.type = {
     va := 0
     rkey := 0
@@ -223,6 +234,7 @@ case class AtomicEth() extends RdmaHeader {
 case class AtomicAckETH() extends RdmaHeader {
   val orig = Bits(LONG_WIDTH bits)
 
+  // TODO: remove this
   def setDefaultVal(): this.type = {
     orig := 0
     this
@@ -233,6 +245,7 @@ case class AtomicAckETH() extends RdmaHeader {
 case class ImmDt() extends RdmaHeader {
   val data = Bits(LRKEY_IMM_DATA_WIDTH bits)
 
+  // TODO: remove this
   def setDefaultVal(): this.type = {
     data := 0
     this
@@ -243,6 +256,7 @@ case class ImmDt() extends RdmaHeader {
 case class IETH() extends RdmaHeader {
   val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
 
+  // TODO: remove this
   def setDefaultVal(): this.type = {
     rkey := 0
     this
@@ -254,6 +268,7 @@ case class CNPPadding() extends RdmaHeader {
   val rsvd1 = Bits(LONG_WIDTH bits)
   val rsvd2 = Bits(LONG_WIDTH bits)
 
+  // TODO: remove this
   def setDefaultVal(): this.type = {
     rsvd1 := 0
     rsvd2 := 0

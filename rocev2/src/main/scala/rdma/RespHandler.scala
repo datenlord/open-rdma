@@ -27,57 +27,53 @@ class RespHandler(busWidth: BusWidth) extends Component {
     val qpAttr = in(QpAttrData())
     val rx = slave(RdmaDataBus(busWidth))
     val qpStateChange = master(Stream(QpStateChange()))
-    val workReqPopped = slave(Stream(CachedWorkReq()))
+    val cachedWorkReqPop = slave(Stream(CachedWorkReq()))
     val workComp = master(Stream(WorkComp()))
-    // val reqCacheBus = master(PktCacheBus())
+    val txRetryResp = master(Stream(Acknowlege()))
     val addrCacheRead = master(AddrCacheReadBus())
     // Save read/atomic response data to main memory
     val dmaWrite = master(DmaWriteReqBus(busWidth))
   }
 
+  val inputPktFrag = io.rx.pktFrag
+
   val respVerifier = new RespVerifer(busWidth)
   respVerifier.io.rx << io.rx
-  val (validRespRx1, validRespRx2) = StreamFork2(respVerifier.io.tx.pktFrag)
+
+  // TODO: use StreamDemux instead of StreamFork
+  val (
+    validResp2WorkComp,
+    validRespRx2PopCachedWorkReq,
+    validRespRx2RetryLogic
+  ) = StreamFork3(respVerifier.io.tx.pktFrag)
+
+  // TODO: implement retry response detection logic
+  io.txRetryResp <-/< validRespRx2RetryLogic.translateWith(
+    Acknowlege()
+      .setAck(AckType.NAK_SEQ, inputPktFrag.bth.psn, io.qpAttr.sqpn)
+  )
+
+  io.workComp <-/< validResp2WorkComp.translateWith(WorkComp().setDefaultVal())
 
   io.qpStateChange.setDefaultVal()
   io.qpStateChange.valid := False
 
-  val bothValid = io.workReqPopped.valid && validRespRx2.valid
-  val wrPsnEnd = io.workReqPopped.psnStart + io.workReqPopped.pktNum
-  when(validRespRx2.bth.psn > wrPsnEnd) {
-    io.workReqPopped.ready := io.workReqPopped.valid
-    validRespRx2.ready := False
-  } elsewhen (validRespRx2.bth.psn === wrPsnEnd) {
-    io.workReqPopped.ready := bothValid
-    validRespRx2.ready := bothValid
+  // TODO: verify the way to pop WR by responses
+  val bothValid =
+    io.cachedWorkReqPop.valid && validRespRx2PopCachedWorkReq.valid
+  val wrPsnEnd = io.cachedWorkReqPop.psnStart + io.cachedWorkReqPop.pktNum
+  when(validRespRx2PopCachedWorkReq.bth.psn > wrPsnEnd) {
+    io.cachedWorkReqPop.ready := io.cachedWorkReqPop.valid
+    validRespRx2PopCachedWorkReq.ready := False
+  } elsewhen (validRespRx2PopCachedWorkReq.bth.psn === wrPsnEnd) {
+    io.cachedWorkReqPop.ready := bothValid
+    validRespRx2PopCachedWorkReq.ready := bothValid
   } otherwise {
-    io.workReqPopped.ready := False
-    validRespRx2.ready := validRespRx2.valid
+    io.cachedWorkReqPop.ready := False
+    validRespRx2PopCachedWorkReq.ready := validRespRx2PopCachedWorkReq.valid
   }
 
-//  StreamSink(NoData) << StreamMerge(
-//    io.workReqPopped,
-//    validRespRx2,
-//    mergeFunc = (fire: Bool) => {
-//      val rslt = False
-//      val wrPsnEnd = io.workReqPopped.psnStart + io.workReqPopped.pktNum
-//      when(validRespRx2.bth.psn > wrPsnEnd) {
-//        io.workReqPopped.ready := io.workReqPopped.valid
-//        validRespRx2.ready := False
-//      } elsewhen (validRespRx2.bth.psn === wrPsnEnd) {
-//        io.workReqPopped.ready := fire
-//        validRespRx2.ready := fire
-//        rslt := True
-//      } otherwise {
-//        io.workReqPopped.ready := False
-//        validRespRx2.ready := validRespRx2.valid
-//      }
-//      rslt
-//    }
-//  ).translateWith(NoData)
-
-  // TODO: implementation
-  io.workComp <-/< validRespRx1.translateWith(WorkComp().setDefaultVal())
+  // TODO: pop SqPktCache by responses
 
   io.dmaWrite.req <-/< StreamSource().translateWith {
     val dmaWriteReq = Fragment(DmaWriteReq(busWidth))
@@ -88,4 +84,6 @@ class RespHandler(busWidth: BusWidth) extends Component {
 
   io.addrCacheRead.req <-/< io.addrCacheRead.resp
     .translateWith(AddrCacheReadReq().setDefaultVal())
+
+  // TODO: generate WC
 }

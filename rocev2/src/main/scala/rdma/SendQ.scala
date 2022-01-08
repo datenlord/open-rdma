@@ -53,7 +53,7 @@ class AtomicReqBuilder(busWidth: BusWidth) extends ReqBuilder(busWidth) {}
 class SqLogic(busWidth: BusWidth, retry: Boolean = false) extends Component {
   val io = new Bundle {
     val workReqCached = slave(Stream(CachedWorkReq()))
-    val addrCacheRead = master(SqOrRetryAddrCacheReadBus())
+    val addrCacheRead = master(AddrCacheReadBus())
     val dma = master(SqDmaBus(busWidth))
     val tx = master(RdmaDataBus(busWidth))
     val nakNotifier = out(SqNakNotifier())
@@ -89,8 +89,12 @@ class SqLogic(busWidth: BusWidth, retry: Boolean = false) extends Component {
     reqBuilders.size
   )
 
-  io.addrCacheRead.send << sendReqBuilder.io.addrCacheRead
-  io.addrCacheRead.write << writeReqBuilder.io.addrCacheRead
+  // TODO: merge send and write AddrCacheReadBus
+  io.addrCacheRead << sendReqBuilder.io.addrCacheRead
+  writeReqBuilder.io.addrCacheRead.resp <-/< writeReqBuilder.io.addrCacheRead.req
+    .translateWith(AddrCacheReadResp().setDefaultVal())
+//  io.addrCacheRead.send << sendReqBuilder.io.addrCacheRead
+//  io.addrCacheRead.write << writeReqBuilder.io.addrCacheRead
 
   val txVec = Vec(reqBuilders.map(_.io.tx.pktFrag))
   val txSel = StreamArbiterFactory.roundRobin.fragmentLock.on(txVec)
@@ -101,6 +105,7 @@ class SqLogic(busWidth: BusWidth, retry: Boolean = false) extends Component {
   io.dma.writeRd << writeReqBuilder.io.dmaRead
 }
 
+// TODO: if retrying, SQ should wait until retry go-back-to-N finished?
 class SendQ(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
@@ -109,7 +114,7 @@ class SendQ(busWidth: BusWidth) extends Component {
     // val qpAttrUpdate = in(QpAttrUpdateNotifier())
     // val npsn = out(UInt(PSN_WIDTH bits))
     val workReq = slave(Stream(WorkReq()))
-    val addrCacheRead = master(SqOrRetryAddrCacheReadBus())
+    val addrCacheRead = master(AddrCacheReadBus())
     val workReqCachePush = master(Stream(CachedWorkReq()))
     // val reqCacheBus = master(PktCacheBus())
     val tx = master(RdmaDataBus(busWidth))
