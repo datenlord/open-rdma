@@ -35,14 +35,18 @@ class DmaHandler(busWidth: BusWidth) extends Component {
 // RDMA READs are complete unless fenced by the requester.
 class WorkCompOut extends Component {
   val io = new Bundle {
-    val dmaWrite = slave(DmaWriteRespBus())
+//    val dmaWrite = slave(DmaWriteRespBus())
     val rqSendWriteWorkComp = slave(Stream(WorkComp()))
     val sqWorkComp = slave(Stream(WorkComp()))
-    val workCompTx = master(Stream(WorkComp()))
+    val sqWorkCompErr = slave(Stream(WorkComp()))
+    val workCompPush = master(Stream(WorkComp()))
   }
 
+  // TODO: flush WorkReqCache when error
+  //      status := WorkCompStatus.WR_FLUSH_ERR.id
   // TODO: output WC in PSN order
-  io.workCompTx <-/< io.sqWorkComp
+  io.workCompPush <-/< io.sqWorkComp
   StreamSink(io.rqSendWriteWorkComp.payloadType) << io.rqSendWriteWorkComp
-  StreamSink(io.dmaWrite.resp.payloadType) << io.dmaWrite.resp
+  StreamSink(io.sqWorkCompErr.payloadType) << io.sqWorkCompErr
+//  StreamSink(io.dmaWrite.resp.payloadType) << io.dmaWrite.resp
 }
