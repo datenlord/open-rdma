@@ -3,6 +3,69 @@ package rdma
 import spinal.core._
 import RdmaConstants._
 
+/** ibv_device_attr fields definition:
+  * https://www.mellanox.com/related-docs/prod_software/RDMA_Aware_Programming_user_manual.pdf
+  *
+  * fw_ver                    Firmware version
+  * node_guid                 Node global unique identifier (GUID)
+  * sys_image_guid            System image GUID
+  * max_mr_size               Largest contiguous block that can be registered
+  * page_size_cap             Supported page sizes
+  * vendor_id                 Vendor ID, per IEEE
+  * vendor_part_id            Vendor supplied part ID
+  * hw_ver                    Hardware version
+  * max_qp                    Maximum number of Queue Pairs (QP)
+  * max_qp_wr                 Maximum outstanding work requests (WR) on any queue
+  * device_cap_flags
+  *         IBV_DEVICE_RESIZE_MAX_WR
+  *         IBV_DEVICE_BAD_PKEY_CNTR
+  *         IBV_DEVICE_BAD_QKEY_CNTR
+  *         IBV_DEVICE_RAW_MULTI
+  *         IBV_DEVICE_AUTO_PATH_MIG
+  *         IBV_DEVICE_CHANGE_PHY_PORT
+  *         IBV_DEVICE_UD_AV_PORT_ENFORCE
+  *         IBV_DEVICE_CURR_QP_STATE_MOD
+  *         IBV_DEVICE_SHUTDOWN_PORT
+  *         IBV_DEVICE_INIT_TYPE
+  *         IBV_DEVICE_PORT_ACTIVE_EVENT
+  *         IBV_DEVICE_SYS_IMAGE_GUID
+  *         IBV_DEVICE_RC_RNR_NAK_GEN
+  *         IBV_DEVICE_SRQ_RESIZE
+  *         IBV_DEVICE_N_NOTIFY_CQ
+  *         IBV_DEVICE_XRC
+  * max_sge                    Maximum scatter/gather entries (SGE) per WR for non-RD QPs
+  * max_sge_rd                 Maximum SGEs per WR for RD QPs
+  * max_cq                     Maximum supported completion queues (CQ)
+  * max_cqe                    Maximum completion queue entries (CQE) per CQ
+  * max_mr                     Maximum supported memory regions (MR)
+  * max_pd                     Maximum supported protection domains (PD)
+  * max_qp_rd_atom             Maximum outstanding RDMA read and atomic operations per QP
+  * max_ee_rd_atom             Maximum outstanding RDMA read and atomic operations per End to End (EE) context (RD connections)
+  * max_res_rd_atom            Maximum resources used for incoming RDMA read and atomic operations
+  * max_qp_init_rd_atom        Maximum RDMA read and atomic operations that may be initiated per QP
+  * max_ee_init_atom           Maximum RDMA read and atomic operations that may be initiated per EE
+  * atomic_cap
+  *         IBV_ATOMIC_NONE    - no atomic guarantees
+  *         IBV_ATOMIC_HCA     - atomic guarantees within this device
+  *         IBV_ATOMIC_GLOB    - global atomic guarantees
+  * max_ee                     Maximum supported EE contexts
+  * max_rdd                    Maximum supported RD domains
+  * max_mw                     Maximum supported memory windows (MW)
+  * max_raw_ipv6_qp            Maximum supported raw IPv6 datagram QPs
+  * max_raw_ethy_qp            Maximum supported ethertype datagram QPs
+  * max_mcast_grp              Maximum supported multicast groups
+  * max_mcast_qp_attach        Maximum QPs per multicast group that can be attached
+  * max_total_mcast_qp_attach  Maximum total QPs that can be attached to multicast groups
+  * max_ah                     Maximum supported address handles (AH)
+  * max_fmr                    Maximum supported fast memory regions (FMR)
+  * max_map_per_fmr            Maximum number of remaps per FMR before an unmap operation is required
+  * max_srq                    Maximum supported shared receive queues (SRCQ)
+  * max_srq_wr                 Maximum work requests (WR) per SRQ
+  * max_srq_sge                Maximum SGEs per SRQ
+  * max_pkeys                  Maximum number of partitions
+  * local_ca_ack_delay         Local CA ack delay
+  * phys_port_cnt              Number of physical ports
+  */
 object ConstantSettings {
   // Device changeable settings
   val PENDING_REQ_NUM = 32
@@ -16,22 +79,32 @@ object ConstantSettings {
   require(PENDING_REQ_NUM > MAX_PENDING_READ_ATOMIC_REQ_NUM)
   require((2 << MAX_WR_NUM_WIDTH) >= PENDING_REQ_NUM)
 
+  val WORK_REQ_CACHE_QUERY_DELAY_CYCLE = 4
+  val ADDR_CACHE_QUERY_DELAY_CYCLE = 8
+  val READ_ATOMIC_RESULT_CACHE_QUERY_DELAY_CYCLE = 2
+  val DMA_WRITE_DELAY_CYCLE = 128
+
+  val MAX_COALESCE_ACK_NUM = 8
   // Non-changeable settings
+  val BYTE_WIDTH = 8
+
   val IPV4_WIDTH = 32
   val IPV6_WIDTH = 128
 
-  val MAX_PSN = (1 << PSN_WIDTH) - 1
+  val TOTAL_PSN = (1 << PSN_WIDTH)
   val HALF_MAX_PSN = 1 << (PSN_WIDTH - 1)
   val PSN_MASK = (1 << PSN_WIDTH) - 1
   val PSN_COMP_RESULT_WIDTH = 2
 
   val ACK_TYPE_WIDTH = 3
 
-  val WR_OPCODE_WIDTH = 4
-  val WC_OPCODE_WIDTH = 8
-  val WC_FLAG_WIDTH = 6
+  val WR_OPCODE_WIDTH = log2Up(11) // 11 is the max WR opcode
+  val WR_FLAG_WIDTH = log2Up(16) + 1 // 16 is the max WR flag
+  val WC_OPCODE_WIDTH = log2Up(135) // 135 is the max WC opcode
+  val WC_FLAG_WIDTH = log2Up(64) + 1 // 64 is the max WC flag
+  val WC_STATUS_WIDTH = log2Up(23) // 23 is the max WC status
 
-  val ETH_WIDTH = 28 * 8 // AtomicEth is the largest ETH
+//  val ETH_WIDTH = 28 * 8 // AtomicEth is the largest ETH
 
   val PMTU_WIDTH = 4 // log2Up(log2Up(4096)) = log2Up(12) = 4
   // val MAX_PKT_NUM_WIDTH = 24 // packet max length = 2^31, min PMUT size = 256 = 2^8, max packet number = 2^(31 - 8)
@@ -47,6 +120,28 @@ object ConstantSettings {
   val MAX_HEADER_LEN_WIDTH = log2Up(widthOf(BTH()) + widthOf(AtomicEth()))
 
   val INVALID_SG_NEXT_ADDR = 0x0
+
+  val RETRY_REASON_WIDTH = 2
+
+  val DMA_INITIATOR_WIDTH = 4
+}
+
+object DmaInitiator extends Enumeration {
+  type DmaInitiator = Value
+
+  val RQ_RD = Value(0)
+  val RQ_WR = Value(1)
+  val RQ_DUP = Value(2)
+  val RQ_ATOMIC_RD = Value(3)
+  val RQ_ATOMIC_WR = Value(4)
+  val SQ_RD = Value(5)
+  val SQ_WR = Value(6)
+  val SQ_ATOMIC_WR = Value(7)
+  val SQ_DUP = Value(8)
+}
+
+object RetryReason extends SpinalEnum(binarySequential) {
+  val RETRY_ACK, IMPLICIT_ACK, RESP_TIMEOUT = newElement()
 }
 
 object PktSeqType extends Enumeration {
@@ -96,24 +191,28 @@ object RdmaConstants {
   val QPN_WIDTH = 24
   val PSN_WIDTH = 24
   val LRKEY_IMM_DATA_WIDTH = 32
+
   val LONG_WIDTH = 64
   val MEM_ADDR_WIDTH = 64
+  val PADCOUNT_FULL = 4
 
   val WR_ID_WIDTH = 64
   val PD_ID_WIDTH = 32
   val RDMA_MAX_LEN_WIDTH = 32 // RDMA max packet length 2GB=2^31
 
-  val ACK_TIMEOUT_WIDTH = 5
+  val RESP_TIMEOUT_WIDTH = 5
   val RETRY_COUNT_WIDTH = 3
   val MSN_WIDTH = 24
   val AETH_VALUE_WIDTH = 5
-  val RNR_TIMER_WIDTH = AETH_VALUE_WIDTH
+  val RNR_TIMEOUT_WIDTH = AETH_VALUE_WIDTH
   val CREDIT_COUNT_WIDTH = AETH_VALUE_WIDTH
 
   val RETRY_CNT_WIDTH = 3
 
   val ATOMIC_DATA_LEN = 8
   val PMTU_FRAG_NUM_WIDTH = 13 // PMTU max 4096
+
+  val MAX_RESP_TIMEOUT = 8800 sec
 }
 
 object QpAttrMask extends Enumeration {
@@ -485,6 +584,37 @@ object OpCode extends Enumeration {
       }
     }.rslt
 
+  def isFirstReadRespPkt(opcode: Bits): Bool =
+    new Composite(opcode) {
+      val rslt = opcode === RDMA_READ_RESPONSE_FIRST.id
+    }.rslt
+
+  def isFirstOrOnlyReadRespPkt(opcode: Bits): Bool =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(RDMA_READ_RESPONSE_FIRST.id, RDMA_READ_RESPONSE_ONLY.id) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
+  def isFirstOrMidReadRespPkt(opcode: Bits): Bool =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(RDMA_READ_RESPONSE_FIRST.id, RDMA_READ_RESPONSE_MIDDLE.id) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
   def isLastOrOnlyReadRespPkt(opcode: Bits): Bool =
     new Composite(opcode) {
       val rslt = Bool()
@@ -506,6 +636,11 @@ object OpCode extends Enumeration {
   def isLastReadRespPkt(opcode: Bits): Bool =
     new Composite(opcode) {
       val rslt = opcode === RDMA_READ_RESPONSE_LAST.id
+    }.rslt
+
+  def isOnlyReadRespPkt(opcode: Bits): Bool =
+    new Composite(opcode) {
+      val rslt = opcode === RDMA_READ_RESPONSE_ONLY.id
     }.rslt
 
   // CNP not considered
@@ -530,6 +665,19 @@ object OpCode extends Enumeration {
   def isWriteFirstReqPkt(opcode: Bits): Bool =
     new Composite(opcode) {
       val rslt = opcode === RDMA_WRITE_FIRST.id
+    }.rslt
+
+  def isWriteFirstOrMidReqPkt(opcode: Bits): Bool =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(RDMA_WRITE_FIRST.id, RDMA_WRITE_MIDDLE.id) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
     }.rslt
 
   def isWriteFirstOrOnlyReqPkt(opcode: Bits): Bool =
@@ -701,14 +849,9 @@ object OpCode extends Enumeration {
       val rslt = (opcode === ATOMIC_ACKNOWLEDGE.id)
     }.rslt
 
-  def isSendOrWriteRespPkt(opcode: Bits): Bool =
+  def isNonReadAtomicRespPkt(opcode: Bits): Bool =
     new Composite(opcode) {
       val rslt = (opcode === ACKNOWLEDGE.id)
-    }.rslt
-
-  def isFirstReadRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
-      val rslt = opcode === RDMA_READ_RESPONSE_FIRST.id
     }.rslt
 
   def isReqPkt(opcode: Bits): Bool =
@@ -724,12 +867,41 @@ object OpCode extends Enumeration {
   // CNP is not considered
   def isRespPkt(opcode: Bits): Bool =
     new Composite(opcode) {
-      val rslt =
-        isSendOrWriteRespPkt(opcode) || isReadRespPkt(
-          opcode
-        ) || isAtomicRespPkt(
-          opcode
-        )
+      val rslt = Bool()
+      switch(opcode) {
+        is(
+          ACKNOWLEDGE.id,
+          ATOMIC_ACKNOWLEDGE.id,
+          RDMA_READ_RESPONSE_FIRST.id,
+          RDMA_READ_RESPONSE_MIDDLE.id,
+          RDMA_READ_RESPONSE_LAST.id,
+          RDMA_READ_RESPONSE_ONLY.id
+        ) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
+  def respPktHasAeth(opcode: Bits): Bool =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(
+          ACKNOWLEDGE.id,
+          ATOMIC_ACKNOWLEDGE.id,
+          RDMA_READ_RESPONSE_FIRST.id,
+          RDMA_READ_RESPONSE_LAST.id,
+          RDMA_READ_RESPONSE_ONLY.id
+        ) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
     }.rslt
 
   def isCnpPkt(transport: Bits, opcode: Bits): Bool =
@@ -758,10 +930,15 @@ object NakCode extends Enumeration {
   val RMT_OP = Value(3)
   val INV_RD = Value(4)
   val RSVD = Value(5) // 5 - 31 reserved
+
+  def isReserved(nakCode: Bits): Bool =
+    new Composite(nakCode) {
+      val rslt = nakCode.asUInt >= RSVD.id
+    }.rslt
 }
 
-object SendFlags extends Enumeration {
-  type SendFlags = Value
+object WorkReqSendFlags extends Enumeration {
+  type WorkReqSendFlags = Value
 
   val FENCE = Value(1)
   val SIGNALED = Value(2)
@@ -786,7 +963,24 @@ object WorkReqOpCode extends Enumeration {
   val TSO = Value(10)
   val DRIVER1 = Value(11)
 
-  def isSendReq(opcode: Bits) =
+  def hasImmDt(opcode: Bits): Bool =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(SEND_WITH_IMM.id, RDMA_WRITE_WITH_IMM.id) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
+  def hasIeth(opcode: Bits): Bool = {
+    opcode === SEND_WITH_INV.id
+  }
+
+  def isSendReq(opcode: Bits): Bool =
     new Composite(opcode) {
       val rslt = Bool()
       switch(opcode) {
@@ -799,7 +993,7 @@ object WorkReqOpCode extends Enumeration {
       }
     }.rslt
 
-  def isWriteReq(opcode: Bits) =
+  def isWriteReq(opcode: Bits): Bool =
     new Composite(opcode) {
       val rslt = Bool()
       switch(opcode) {
@@ -812,7 +1006,7 @@ object WorkReqOpCode extends Enumeration {
       }
     }.rslt
 
-  def isAtomicReq(opcode: Bits) =
+  def isAtomicReq(opcode: Bits): Bool =
     new Composite(opcode) {
       val rslt = Bool()
       switch(opcode) {
@@ -825,7 +1019,7 @@ object WorkReqOpCode extends Enumeration {
       }
     }.rslt
 
-  def isReadReq(opcode: Bits) =
+  def isReadReq(opcode: Bits): Bool =
     new Composite(opcode) {
       val rslt = (opcode === RDMA_READ.id)
     }.rslt
@@ -834,6 +1028,7 @@ object WorkReqOpCode extends Enumeration {
 object WorkCompFlags extends Enumeration {
   type WorkCompFlags = Value
 
+  val NO_FLAGS = Value(0) // Not defined in spec.
   val GRH = Value(1)
   val WITH_IMM = Value(2)
   val IP_CSUM_OK = Value(4)
@@ -862,6 +1057,34 @@ object WorkCompOpCode extends Enumeration {
   val TM_RECV = Value(133)
   val TM_NO_TAG = Value(134)
   val DRIVER1 = Value(135)
+
+  def isSendComp(opcode: Bits): Bool =
+    new Composite(opcode) {
+      val rslt = opcode === SEND.id
+    }.rslt
+
+  def isWriteComp(opcode: Bits): Bool =
+    new Composite(opcode) {
+      val rslt = opcode === RDMA_WRITE.id
+    }.rslt
+
+  def isAtomicComp(opcode: Bits): Bool =
+    new Composite(opcode) {
+      val rslt = Bool()
+      switch(opcode) {
+        is(COMP_SWAP.id, FETCH_ADD.id) {
+          rslt := True
+        }
+        default {
+          rslt := False
+        }
+      }
+    }.rslt
+
+  def isReadComp(opcode: Bits): Bool =
+    new Composite(opcode) {
+      val rslt = (opcode === RDMA_READ.id)
+    }.rslt
 }
 
 object WorkCompStatus extends Enumeration {
@@ -896,6 +1119,7 @@ object WorkCompStatus extends Enumeration {
 object AccessType extends Enumeration {
   type AccessType = Value
 
+  val LOCAL_READ = Value(0) // Not defined in spec.
   val LOCAL_WRITE = Value(1)
   val REMOTE_WRITE = Value(2)
   val REMOTE_READ = Value(4)

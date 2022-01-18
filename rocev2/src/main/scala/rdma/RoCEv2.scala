@@ -29,17 +29,20 @@ class HeadVerifier(numMaxQPs: Int, busWidth: BusWidth) extends Component {
   val rdmaData = io.rx.pktFrag
 
   val validHeader =
-    Transports.isSupportedType(rdmaData.bth.transport) && OpCode.isValidCode(
-      rdmaData.bth.opcode
-    )
-  val qpStateValid = io.qpAttrVec.map(qpAttr =>
-    qpAttr.sqpn === rdmaData.bth.dqpn && QpState
-      .allowRecv(rdmaData.bth.opcode, qpAttr.state)
+    Transports.isSupportedType(rdmaData.bth.transport) &&
+      OpCode.isValidCode(rdmaData.bth.opcode)
+  val dqpStateValid = io.qpAttrVec.map(qpAttr =>
+    qpAttr.sqpn === rdmaData.bth.dqpn &&
+      QpState.allowRecv(rdmaData.bth.opcode, qpAttr.state)
   )
-  val cond = !validHeader || !(qpStateValid.asBits().orR)
+  val cond = !validHeader || !dqpStateValid.asBits().orR
   when(io.rx.pktFrag.valid && cond) {
+    val dqpIdxOH =
+      io.qpAttrVec.map(qpAttr => qpAttr.sqpn === rdmaData.bth.dqpn).asBits()
+    val dqpAttr = io.qpAttrVec.oneHotAccess(dqpIdxOH)
+    val dqpState = dqpAttr.state
     report(
-      L"HeadVerifier dropped one packet, psn=${rdmaData.bth.psn}, opcode=${rdmaData.bth.opcode}, dqpn=${rdmaData.bth.dqpn}"
+      L"HeadVerifier dropped one packet, psn=${rdmaData.bth.psn}, opcode=${rdmaData.bth.opcode}, dqpn=${rdmaData.bth.dqpn}, dqpIdxOH=${dqpIdxOH}, dqpState=${dqpState}"
     )
   }
   io.tx.pktFrag <-/< io.rx.pktFrag.throwWhen(cond).translateWith(rdmaData)

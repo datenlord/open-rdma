@@ -23,12 +23,18 @@ import ConstantSettings._
 // There is no alignment requirement for the source or
 // destination buffers of an RDMA READ message.
 
+// RQ executes Send, Write, Atomic in order;
+// RQ can delay Read execution;
+// Completion of Send and Write at RQ is in PSN order,
+// but not imply previous Read is complete unless fenced;
+// RQ saves Atomic (Req & Result) and Read (Req only) in
+// Queue Context, size as # pending Read/Atomic;
+// TODO: RQ should send explicit ACK to SQ if it received many un-signaled requests
 class RecvQ(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val psnInc = out(RqPsnInc())
-    val nakNotifier = out(RqNakNotifier())
-    val rnrNakSeqClearNotifier = out(RnrNakSeqClear())
+    val notifier = out(RqNotifier())
     val recvQCtrl = in(RecvQCtrl())
     val recvWorkReq = slave(Stream(RecvWorkReq()))
     val addrCacheRead = master(AddrCacheReadBus())
@@ -38,18 +44,16 @@ class RecvQ(busWidth: BusWidth) extends Component {
     val sendWriteWorkComp = master(Stream(WorkComp()))
   }
 
-  val readAtomicResultCache = new ReadAtomicResultCache(
-    MAX_PENDING_READ_ATOMIC_REQ_NUM
-  )
-  readAtomicResultCache.io.flush := io.recvQCtrl.flush
+  val readAtomicResultCache =
+    new ReadAtomicResultCache(MAX_PENDING_READ_ATOMIC_REQ_NUM)
+  readAtomicResultCache.io.flush := io.recvQCtrl.stateErrFlush
 
   val reqCommCheck = new ReqCommCheck(busWidth)
   reqCommCheck.io.qpAttr := io.qpAttr
   reqCommCheck.io.recvQCtrl := io.recvQCtrl
   reqCommCheck.io.rx << io.rx
   io.psnInc.epsn := reqCommCheck.io.epsnInc
-  io.rnrNakSeqClearNotifier := reqCommCheck.io.rnrNakSeqClearNotifier
-  io.nakNotifier.reqCheck := reqCommCheck.io.nakNotify
+  io.notifier.clearRnrOrNakSeq := reqCommCheck.io.clearRnrOrNakSeq
 
   val dupReqLogic = new Area {
     val dupSendWriteReqHandlerAndDupResultAtomicResultCacheQueryBuilder =
@@ -59,21 +63,29 @@ class RecvQ(busWidth: BusWidth) extends Component {
     dupSendWriteReqHandlerAndDupResultAtomicResultCacheQueryBuilder.io.qpAttr := io.qpAttr
     dupSendWriteReqHandlerAndDupResultAtomicResultCacheQueryBuilder.io.recvQCtrl := io.recvQCtrl
     dupSendWriteReqHandlerAndDupResultAtomicResultCacheQueryBuilder.io.rx << reqCommCheck.io.txDupReq
-    readAtomicResultCache.io.queryPort4DupReq.req << dupSendWriteReqHandlerAndDupResultAtomicResultCacheQueryBuilder.io.readAtomicResultCacheQueryReq.req
+    readAtomicResultCache.io.queryPort4DupReq.req << dupSendWriteReqHandlerAndDupResultAtomicResultCacheQueryBuilder.io.readAtomicResultCacheReq.req
 
     val dupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator =
       new DupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator
     dupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator.io.qpAttr := io.qpAttr
     dupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator.io.recvQCtrl := io.recvQCtrl
-    dupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator.io.readAtomicResultCacheQueryResp.resp << readAtomicResultCache.io.queryPort4DupReq.resp
-    io.dma.dupRead.req << dupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator.io.txDmaReadReq.req
+    dupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator.io.readAtomicResultCacheResp.resp << readAtomicResultCache.io.queryPort4DupReq.resp
+    io.dma.dupRead.req << dupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator.io.dmaReadReq.req
+
+    val dupRqDmaReadRespHandler = new RqDmaReadRespHandler(busWidth)
+    dupRqDmaReadRespHandler.io.qpAttr := io.qpAttr
+    dupRqDmaReadRespHandler.io.recvQCtrl := io.recvQCtrl
+    dupRqDmaReadRespHandler.io.dmaReadResp.resp << io.dma.dupRead.resp
+    readAtomicResultCache.io.queryPort4DupReqDmaRead << dupRqDmaReadRespHandler.io.readAtomicResultCacheQuery
 
     val dupReadRespGenerator = new ReadRespGenerator(busWidth)
     dupReadRespGenerator.io.qpAttr := io.qpAttr
     dupReadRespGenerator.io.recvQCtrl := io.recvQCtrl
-    dupReadRespGenerator.io.dmaReadResp.resp << io.dma.dupRead.resp
+    dupReadRespGenerator.io.readAtomicResultCacheRespAndDmaReadResp << dupRqDmaReadRespHandler.io.readAtomicResultCacheRespAndDmaReadResp
   }
 
+  // TODO: make sure that when retry occurred, it only needs to flush reqValidateLogic
+  // TODO: make sure that when error occurred, it needs to flush both reqCommCheck and reqValidateLogic
   val reqValidateLogic = new Area {
     val reqRnrCheck = new ReqRnrCheck(busWidth)
     reqRnrCheck.io.qpAttr := io.qpAttr
@@ -81,41 +93,35 @@ class RecvQ(busWidth: BusWidth) extends Component {
     reqRnrCheck.io.recvWorkReq << io.recvWorkReq
     reqRnrCheck.io.rx << reqCommCheck.io.tx
     reqRnrCheck.io.occupancy := readAtomicResultCache.io.occupancy
-    io.nakNotifier.rnr := reqRnrCheck.io.rnrNotify
+    io.notifier.rnr := reqRnrCheck.io.rnrNotify
 
     val reqDmaCommHeaderExtractor = new ReqDmaCommHeaderExtractor(busWidth)
     reqDmaCommHeaderExtractor.io.recvQCtrl := io.recvQCtrl
     reqDmaCommHeaderExtractor.io.rx << reqRnrCheck.io.tx
 
-    val reqAddrCacheQueryBuilder = new ReqAddrCacheQueryBuilder(busWidth)
-    reqAddrCacheQueryBuilder.io.qpAttr := io.qpAttr
-    reqAddrCacheQueryBuilder.io.recvQCtrl := io.recvQCtrl
-    reqAddrCacheQueryBuilder.io.rx <<
+    val reqAddrValidator = new ReqAddrValidator(busWidth)
+    reqAddrValidator.io.qpAttr := io.qpAttr
+    reqAddrValidator.io.recvQCtrl := io.recvQCtrl
+    reqAddrValidator.io.rx <<
       reqDmaCommHeaderExtractor.io.txWithRecvBufAndDmaCommHeader
-    io.addrCacheRead.req << reqAddrCacheQueryBuilder.io.addrCacheReadReq.req
+    io.addrCacheRead << reqAddrValidator.io.addrCacheRead
 
     val pktLenCheck = new PktLenCheck(busWidth)
     pktLenCheck.io.qpAttr := io.qpAttr
     pktLenCheck.io.recvQCtrl := io.recvQCtrl
-    pktLenCheck.io.rx << reqAddrCacheQueryBuilder.io.tx
-    io.nakNotifier.pktLen := pktLenCheck.io.nakNotify
-
-    val reqAddrValidator = new ReqAddrValidator(busWidth)
-    reqAddrValidator.io.recvQCtrl := io.recvQCtrl
-    reqAddrValidator.io.rx << pktLenCheck.io.tx
-    reqAddrValidator.io.addrCacheReadResp.resp << io.addrCacheRead.resp
-    io.nakNotifier.addr := reqAddrValidator.io.nakNotify
+    pktLenCheck.io.rx << reqAddrValidator.io.tx
   }
 
   val dmaReqLogic = new Area {
-    val dmaReqInitiator = new DmaReqInitiator(busWidth)
+    val dmaReqInitiator = new RqDmaReqInitiator(busWidth)
     dmaReqInitiator.io.qpAttr := io.qpAttr
     dmaReqInitiator.io.recvQCtrl := io.recvQCtrl
-    dmaReqInitiator.io.rx << reqValidateLogic.reqAddrValidator.io.tx
-    io.dma.read.req << dmaReqInitiator.io.txDmaReadReq.req
-    io.dma.sendWrite.req << dmaReqInitiator.io.txDmaWriteReq.req
+    dmaReqInitiator.io.rx << reqValidateLogic.pktLenCheck.io.tx
+    io.dma.read.req << dmaReqInitiator.io.dma.rd.req
+    io.dma.sendWrite.req << dmaReqInitiator.io.dma.wr.req
 
     val readAtomicReqExtractor = new ReadAtomicReqExtractor(busWidth)
+    readAtomicReqExtractor.io.qpAttr := io.qpAttr
     readAtomicReqExtractor.io.recvQCtrl := io.recvQCtrl
     readAtomicReqExtractor.io.rx << dmaReqInitiator.io.txReadAtomic
     readAtomicResultCache.io.push << readAtomicReqExtractor.io.txSaveToCacheReq
@@ -126,10 +132,16 @@ class RecvQ(busWidth: BusWidth) extends Component {
     sendWriteRespGenerator.io.recvQCtrl := io.recvQCtrl
     sendWriteRespGenerator.io.rx << dmaReqLogic.dmaReqInitiator.io.txSendWrite
 
+    val rqDmaReadRespHandler = new RqDmaReadRespHandler(busWidth)
+    rqDmaReadRespHandler.io.qpAttr := io.qpAttr
+    rqDmaReadRespHandler.io.recvQCtrl := io.recvQCtrl
+    rqDmaReadRespHandler.io.dmaReadResp.resp << io.dma.read.resp
+    readAtomicResultCache.io.queryPort4DmaReadResp << rqDmaReadRespHandler.io.readAtomicResultCacheQuery
+
     val readRespGenerator = new ReadRespGenerator(busWidth)
     readRespGenerator.io.qpAttr := io.qpAttr
     readRespGenerator.io.recvQCtrl := io.recvQCtrl
-    readRespGenerator.io.dmaReadResp.resp << io.dma.read.resp
+    readRespGenerator.io.readAtomicResultCacheRespAndDmaReadResp << rqDmaReadRespHandler.io.readAtomicResultCacheRespAndDmaReadResp
 
     val atomicRespGenerator = new AtomicRespGenerator(busWidth)
     atomicRespGenerator.io.qpAttr := io.qpAttr
@@ -141,35 +153,54 @@ class RecvQ(busWidth: BusWidth) extends Component {
     io.sendWriteWorkComp << rqSendWriteWorkCompGenerator.io.sendWriteWorkComp
   }
 
-  val seqOut = new SeqOut(busWidth)
-  seqOut.io.qpAttr := io.qpAttr
-  seqOut.io.psnRangePush << reqValidateLogic.reqDmaCommHeaderExtractor.io.seqOutPsnRangeFifoPush
-  seqOut.io.rxSendWriteResp << respGenLogic.sendWriteRespGenerator.io.tx
-  seqOut.io.rxReadResp << respGenLogic.readRespGenerator.io.tx
-  seqOut.io.rxAtomicResp << respGenLogic.atomicRespGenerator.io.tx
-  seqOut.io.rxRnrResp << reqValidateLogic.reqRnrCheck.io.txRnrResp
-  seqOut.io.rxDupSendWriteResp << dupReqLogic.dupSendWriteReqHandlerAndDupResultAtomicResultCacheQueryBuilder.io.txDupSendWriteResp
-  seqOut.io.rxDupReadResp << dupReqLogic.dupReadRespGenerator.io.tx
-  seqOut.io.rxDupAtomicResp << dupReqLogic.dupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator.io.txDupAtomicResp
-  seqOut.io.rxCommCheckErrResp << reqCommCheck.io.txErrResp
-  seqOut.io.rxPktLenCheckErrResp << reqValidateLogic.pktLenCheck.io.txErrResp
-  seqOut.io.rxAddrValidatorErrResp << reqValidateLogic.reqAddrValidator.io.txErrResp
-  seqOut.io.readAtomicResultCachePop << readAtomicResultCache.io.pop
-  io.psnInc.opsn := seqOut.io.opsnInc
-  io.tx << seqOut.io.tx
+  val rqOut = new RqOut(busWidth)
+  rqOut.io.qpAttr := io.qpAttr
+  rqOut.io.psnRangePush << reqValidateLogic.reqDmaCommHeaderExtractor.io.rqOutPsnRangeFifoPush
+  rqOut.io.rxSendWriteResp << respGenLogic.sendWriteRespGenerator.io.tx
+  rqOut.io.rxReadResp << respGenLogic.readRespGenerator.io.txReadResp
+  rqOut.io.rxAtomicResp << respGenLogic.atomicRespGenerator.io.tx
+  rqOut.io.rxRnrResp << reqValidateLogic.reqRnrCheck.io.txRnrResp
+  rqOut.io.rxDupSendWriteResp << dupReqLogic.dupSendWriteReqHandlerAndDupResultAtomicResultCacheQueryBuilder.io.txDupSendWriteResp
+  rqOut.io.rxDupReadResp << dupReqLogic.dupReadRespGenerator.io.txReadResp
+  rqOut.io.rxDupAtomicResp << dupReqLogic.dupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator.io.txDupAtomicResp
+  rqOut.io.rxCommCheckErrResp << reqCommCheck.io.txErrResp
+  rqOut.io.rxPktLenCheckErrResp << reqValidateLogic.pktLenCheck.io.txErrResp
+  rqOut.io.rxAddrValidatorErrResp << reqValidateLogic.reqAddrValidator.io.txErrResp
+  rqOut.io.readAtomicResultCachePop << readAtomicResultCache.io.pop
+  io.psnInc.opsn := rqOut.io.opsnInc
+  io.tx << rqOut.io.tx
+
+  io.notifier.nak := reqCommCheck.io.nakNotify || reqValidateLogic.reqAddrValidator.io.nakNotify || reqValidateLogic.pktLenCheck.io.nakNotify
 }
 
+// PSN == ePSN, otherwise NAK-Seq;
+// OpCode sequence, otherwise NAK-Inv Req;
+// OpCode functionality is supported, otherwise NAK-Inv Req;
+// First/Middle packets have padcount == 0, otherwise NAK-Inv Req;
+// Queue Context has resource for Read/Atomic, otherwise NAK-Inv Req;
+// RKey, virtual address, DMA length (or packet size) match MR range and access type, otherwise NAK-Rmt Acc:
+// - for Write, the length check is per packet basis, based on LRH:PktLen field;
+// - for Read, the length check is based on RETH:DMA Length field;
+// - no RKey check for 0-sized Write/Read;
+// Length check, otherwise NAK-Inv Req:
+// - for Send, the length check is based on LRH:PktLen field;
+// - First/Middle packet length == PMTU;
+// - Only packet length 0 <= len <= PMTU;
+// - Last packet length 1 <= len <= PMTU;
+// - for Write, check received data size == DMALen at last packet;
+// - for Write/Read, check 0 <= DMALen <= 2^31;
+// RQ local error detected, NAK-Rmt Op;
 class ReqCommCheck(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val epsnInc = out(EPsnInc())
-    val nakNotify = out(NakErr())
-    val rnrNakSeqClearNotifier = out(RnrNakSeqClear())
+    val nakNotify = out(NakNotifier())
+    val clearRnrOrNakSeq = out(RnrNakSeqClear())
     val recvQCtrl = in(RecvQCtrl())
     val rx = slave(RdmaDataBus(busWidth))
     val tx = master(RdmaDataBus(busWidth))
     val txDupReq = master(RdmaDataBus(busWidth))
-    val txErrResp = master(Stream(Acknowlege()))
+    val txErrResp = master(Stream(Acknowledge()))
   }
 
   val checkStage = new Area {
@@ -180,7 +211,7 @@ class ReqCommCheck(busWidth: BusWidth) extends Component {
     // PSN sequence check
     val psnCheckRslt = Bool()
     val isDupReq = Bool()
-    val cmpRslt = psnComp(
+    val cmpRslt = PsnUtil.cmp(
       psnA = inputPktFrag.bth.psn,
       psnB = io.qpAttr.epsn,
       curPsn = io.qpAttr.epsn
@@ -220,29 +251,14 @@ class ReqCommCheck(busWidth: BusWidth) extends Component {
       isLastFrag,
       busWidth
     )
-    // NAK notification
-    io.nakNotify.setNoErr()
-    io.rnrNakSeqClearNotifier.pulse := False
-    val isInvReq = opSeqCheckRslt || isSupportedOpCode || padCntCheckRslt
-    when(inputValid) {
-      when(!psnCheckRslt) {
-        io.nakNotify.setSeqErr()
-      } elsewhen (isInvReq) {
-        io.nakNotify.setInvReq()
-      } otherwise {
-        // Clear RNR or NAK SEQ if any
-        io.rnrNakSeqClearNotifier.pulse := (io.recvQCtrl.rnrFlush || io.recvQCtrl.nakSeqTrigger) && psnCheckRslt
-      }
-    }
 
-    // val throwCond = io.recvQCtrl.flush // TODO: check why it does not work
     val throwCond =
       io.recvQCtrl.stateErrFlush || io.recvQCtrl.rnrFlush || io.recvQCtrl.nakSeqTrigger
-    // when(isExpectedPkt && io.recvQCtrl.rnrFlush && io.recvQCtrl.rnrTimeOut) {
-    when(isExpectedPkt) {
-      // RNR is cleared, do not throw due to RNR
-      throwCond := io.recvQCtrl.stateErrFlush
-    }
+//    when(isExpectedPkt) {
+//      // RNR or NAK SEQ retry is cleared, do not throw due to retry
+//      throwCond := io.recvQCtrl.stateErrFlush
+//    }
+    val isInvReq = opSeqCheckRslt || isSupportedOpCode || padCntCheckRslt
     val output = io.rx.pktFrag.throwWhen(throwCond).translateWith {
       val rslt = Fragment(RqReqCheckOutput(busWidth))
       rslt.pktFrag := io.rx.pktFrag
@@ -252,6 +268,19 @@ class ReqCommCheck(busWidth: BusWidth) extends Component {
       rslt.checkRslt.epsn := io.qpAttr.epsn
       rslt.last := io.rx.pktFrag.last
       rslt
+    }
+
+    // Clear RNR or NAK SEQ if any
+    io.clearRnrOrNakSeq.pulse := (io.recvQCtrl.rnrFlush || io.recvQCtrl.nakSeqTrigger) && isExpectedPkt
+
+    // NAK notification
+    io.nakNotify.setNoErr()
+    when(output.fire) {
+      when(!psnCheckRslt) {
+        io.nakNotify.setSeqErr()
+      } elsewhen isInvReq {
+        io.nakNotify.setInvReq()
+      }
     }
   }
 
@@ -265,32 +294,33 @@ class ReqCommCheck(busWidth: BusWidth) extends Component {
     val epsn = input.checkRslt.epsn
 
     val rdmaAck =
-      Acknowlege().setAck(AckType.NORMAL, epsn, io.qpAttr.dqpn)
+      Acknowledge().setAck(AckType.NORMAL, epsn, io.qpAttr.dqpn)
     val txSel = UInt(2 bits)
+    val (nakIdx, dupIdx, normalIdx) = (0, 1, 2)
     when(!psnCheckRslt) {
-      txSel := 0
+      txSel := nakIdx
       rdmaAck.setAck(AckType.NAK_SEQ, epsn, io.qpAttr.dqpn)
-    } elsewhen (isInvReq) {
-      txSel := 0
+    } elsewhen isInvReq {
+      txSel := nakIdx
       rdmaAck.setAck(AckType.NAK_INV, epsn, io.qpAttr.dqpn)
-    } elsewhen (isDupReq) {
-      txSel := 1
+    } elsewhen isDupReq {
+      txSel := dupIdx
     } otherwise {
-      txSel := 2
+      txSel := normalIdx
     }
 
-    val multiStreams = StreamDemux(
-      input.throwWhen(io.recvQCtrl.flush),
+    val threeStreams = StreamDemux(
+      input.throwWhen(io.recvQCtrl.stateErrFlush || io.recvQCtrl.rnrFlush),
       select = txSel,
       portCount = 3
     )
-    io.txErrResp <-/< multiStreams(0).translateWith(rdmaAck)
+    io.txErrResp <-/< threeStreams(nakIdx).translateWith(rdmaAck)
 
-    val rslt = Fragment(RdmaDataPacket(busWidth))
+    val rslt = cloneOf(io.tx.pktFrag.payloadType)
     rslt.fragment := input.pktFrag
     rslt.last := input.last
-    io.txDupReq.pktFrag <-/< multiStreams(1).translateWith(rslt)
-    io.tx.pktFrag <-/< multiStreams(2).translateWith(rslt)
+    io.txDupReq.pktFrag <-/< threeStreams(dupIdx).translateWith(rslt)
+    io.tx.pktFrag <-/< threeStreams(normalIdx).translateWith(rslt)
   }
 }
 
@@ -298,13 +328,13 @@ class ReqRnrCheck(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     //val epsnInc = out(EPsnInc())
-    //val nakNotify = out(NakErr())
+    //val nakNotify = out(NakNotifier())
     val rnrNotify = out(RnrNak())
     val recvQCtrl = in(RecvQCtrl())
     val recvWorkReq = slave(Stream(RecvWorkReq()))
     val rx = slave(RdmaDataBus(busWidth))
     val tx = master(RqReqWithRecvBufBus(busWidth))
-    val txRnrResp = master(Stream(Acknowlege()))
+    val txRnrResp = master(Stream(Acknowledge()))
     val occupancy = in(UInt(log2Up(MAX_PENDING_READ_ATOMIC_REQ_NUM + 1) bits))
   }
 
@@ -330,31 +360,39 @@ class ReqRnrCheck(busWidth: BusWidth) extends Component {
     io.occupancy >= io.qpAttr.maxPendingReadAtomicReqNum && isReadOrAtomicReq
   val rnrErr =
     (needRecvBuffer && !io.recvWorkReq.valid) || readAtomicResultCacheFull
+  val txSel = UInt(1 bit)
+  val (errIdx, normalIdx) = (0, 1)
+  when(rnrErr) {
+    txSel := errIdx
+  } otherwise {
+    txSel := normalIdx
+  }
 
-  val rnrNak = Acknowlege().setAck(
+  val rnrNak = Acknowledge().setAck(
     AckType.NAK_RNR,
     inputPktFrag.bth.psn,
     io.qpAttr.dqpn,
-    io.qpAttr.minRnrTimer
+    io.qpAttr.rnrTimeOut
   )
 
   val twoStreams = StreamDemux(
-    io.rx.pktFrag.throwWhen(io.recvQCtrl.flush),
-    select = rnrErr.asUInt,
+    io.rx.pktFrag
+      .throwWhen(io.recvQCtrl.stateErrFlush || io.recvQCtrl.rnrFlush),
+    select = txSel,
     portCount = 2
   )
-  io.txRnrResp <-/< twoStreams(1).translateWith(rnrNak)
+  io.txRnrResp <-/< twoStreams(errIdx).translateWith(rnrNak)
   // RNR notification
   io.rnrNotify.preOpCode := io.rnrNotify.findRnrPreOpCode(
     inputPktFrag.bth.opcode
   )
   io.rnrNotify.psn := inputPktFrag.bth.psn
-  // TODO: verify the case that rnrErr is true but twoStreams(1) not fired
-  io.rnrNotify.pulse := rnrErr && twoStreams(1).fire
+  // TODO: verify the case that rnrErr is true but twoStreams(errIdx) not fired
+  io.rnrNotify.pulse := rnrErr && twoStreams(errIdx).fire
 
-  val txNormal = twoStreams(0)
+  val txNormal = twoStreams(normalIdx)
   io.tx.reqWithRecvBuf <-/< txNormal.translateWith {
-    val rslt = cloneOf(io.tx.reqWithRecvBuf.payload)
+    val rslt = cloneOf(io.tx.reqWithRecvBuf.payloadType)
     rslt.pktFrag := txNormal.fragment
     rslt.recvBufValid := recvBufValid
     rslt.recvBuffer := recvBuffer
@@ -363,153 +401,190 @@ class ReqRnrCheck(busWidth: BusWidth) extends Component {
   }
 }
 
+// If multiple duplicate requests received, also ACK in PSN order;
+// RQ will return ACK with the latest PSN for duplicate Send/Write, but this will NAK the following duplicate Read/Atomic???
+// No NAK for duplicate requests if error detected;
+// Duplicate Read is not valid if not with its original PSN and DMA range;
+// Duplicate request with earlier PSN might interrupt processing of new request or duplicate request with later PSN;
+// RQ does not re-execute the interrupted request, SQ will retry it;
+// Discard duplicate Atomic if not match original PSN (should not happen);
 class DupSendWriteReqHandlerAndDupReadAtomicResultCacheQueryBuilder(
     busWidth: BusWidth
 ) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val recvQCtrl = in(RecvQCtrl())
-    val readAtomicResultCacheQueryReq = master(
-      ReadAtomicResultCacheQueryReqBus()
-    )
+    val readAtomicResultCacheReq = master(ReadAtomicResultCacheReqBus())
     val rx = slave(RdmaDataBus(busWidth))
-    val txDupSendWriteResp = master(Stream(Acknowlege()))
+    val txDupSendWriteResp = master(Stream(Acknowledge()))
     val txDupAtomicResp = master(Stream(AtomicResp()))
-    val txDmaReadReq = master(DmaReadReqBus())
+    val dmaReadReq = master(DmaReadReqBus())
+//    val txDupAtomicResp = master(Stream(AtomicResp()))
+//    val txDmaReadReq = master(DmaReadReqBus())
   }
 
   val dupSendWriteRespHandlerAndReadAtomicResultCacheQueryBuilder = new Area {
     val inputPktFrag = io.rx.pktFrag.fragment
 
-    val rdmaAck = Acknowlege()
+    val rdmaAck = Acknowledge()
       .setAck(
         AckType.NORMAL,
         io.qpAttr.epsn, // TODO: verify the ePSN is confirmed, will not retry later
         io.qpAttr.dqpn
       )
 
-    val txSel = Bool()
+    val (sendWriteReqIdx, readAtomicReqIdx, otherReqIdx) = (0, 1, 2)
+    val txSel = UInt(2 bits)
     when(
       OpCode.isSendReqPkt(inputPktFrag.bth.opcode) ||
         OpCode.isWriteReqPkt(inputPktFrag.bth.opcode)
     ) {
-      txSel := True
+      txSel := sendWriteReqIdx
     } elsewhen (OpCode.isReadReqPkt(inputPktFrag.bth.opcode) ||
       OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode)) {
-      txSel := False
+      txSel := readAtomicReqIdx
     } otherwise {
-      txSel := False
-      assert(
-        assertion = False,
+      txSel := otherReqIdx
+      report(
         message =
           L"invalid opcode=${inputPktFrag.bth.opcode}, should be send/write/read/atomic requests",
         severity = FAILURE
       )
     }
-    val twoStreams = StreamDemux(
-      io.rx.pktFrag.throwWhen(io.recvQCtrl.flush),
-      select = txSel.asUInt,
-      portCount = 2
+    val threeStreams = StreamDemux(
+      io.rx.pktFrag.throwWhen(io.recvQCtrl.stateErrFlush),
+      select = txSel,
+      portCount = 3
     )
-
-    io.txDupSendWriteResp <-/< twoStreams(1).translateWith(rdmaAck)
-    io.readAtomicResultCacheQueryReq.req <-/< twoStreams(0).translateWith {
-      val rslt = ReadAtomicResultCacheQueryReq()
-      rslt.psn := inputPktFrag.bth.psn
-      rslt
-    }
+    // Just discard non-send/write/read/atomic requests
+    StreamSink(NoData) << threeStreams(otherReqIdx).translateWith(NoData)
+    io.txDupSendWriteResp <-/< threeStreams(sendWriteReqIdx).translateWith(
+      rdmaAck
+    )
+    io.readAtomicResultCacheReq.req <-/< threeStreams(readAtomicReqIdx)
+      .translateWith {
+        val rslt = ReadAtomicResultCacheReq()
+        rslt.psn := inputPktFrag.bth.psn
+        rslt
+      }
   }
 }
 
-// TODO: handle retried read from middle PSN not from the original PSN
 class DupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator
     extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val recvQCtrl = in(RecvQCtrl())
-    val readAtomicResultCacheQueryResp = slave(
-      ReadAtomicResultCacheQueryRespBus()
-    )
+    val readAtomicResultCacheResp = slave(ReadAtomicResultCacheRespBus())
     val txDupAtomicResp = master(Stream(AtomicResp()))
-    val txDmaReadReq = master(DmaReadReqBus())
+    val dmaReadReq = master(DmaReadReqBus())
   }
-  val readAtomicResultCacheQueryRespHandler = new Area {
-    val readAtomicResultCacheQueryRespValid =
-      io.readAtomicResultCacheQueryResp.resp.valid
-    val readAtomicResultCacheQueryRespData =
-      io.readAtomicResultCacheQueryResp.resp.cachedData
-    val readAtomicResultCacheQueryRespFound =
-      io.readAtomicResultCacheQueryResp.resp.found
 
-    val txSel = Bool()
-    when(OpCode.isReadReqPkt(readAtomicResultCacheQueryRespData.opcode)) {
-      txSel := True
-    } elsewhen (OpCode
-      .isAtomicReqPkt(readAtomicResultCacheQueryRespData.opcode)) {
-      txSel := False
-    } otherwise {
-      txSel := False
-      assert(
-        assertion = False,
-        message =
-          L"invalid opcode=${readAtomicResultCacheQueryRespData.opcode}, should be read/atomic requests",
-        severity = FAILURE
+  val readAtomicResultCacheRespValid =
+    io.readAtomicResultCacheResp.resp.valid
+  val readAtomicResultCacheRespData =
+    io.readAtomicResultCacheResp.resp.cachedData
+  val readAtomicResultCacheRespFound =
+    io.readAtomicResultCacheResp.resp.found
+
+  val (readReqResultCacheIdx, atomicReqResultCacheIdx, otherReqResultCacheIdx) =
+    (0, 1, 2)
+  val txSel = UInt(2 bits)
+  when(OpCode.isReadReqPkt(readAtomicResultCacheRespData.opcode)) {
+    txSel := readReqResultCacheIdx
+  } elsewhen (OpCode
+    .isAtomicReqPkt(readAtomicResultCacheRespData.opcode)) {
+    txSel := atomicReqResultCacheIdx
+  } otherwise {
+    txSel := otherReqResultCacheIdx
+    report(
+      message =
+        L"invalid opcode=${readAtomicResultCacheRespData.opcode}, should be read/atomic requests",
+      severity = FAILURE
+    )
+  }
+  val threeStreams = StreamDemux(
+    io.readAtomicResultCacheResp.resp.throwWhen(io.recvQCtrl.stateErrFlush),
+    select = txSel,
+    portCount = 3
+  )
+  // TODO: to remove this extra logic
+  StreamSink(NoData) << threeStreams(otherReqResultCacheIdx).translateWith(
+    NoData
+  )
+
+  val readAtomicResultNotFound =
+    readAtomicResultCacheRespValid && !readAtomicResultCacheRespFound
+  val readAtomicRequestNotDone =
+    readAtomicResultCacheRespValid && readAtomicResultCacheRespValid && !readAtomicResultCacheRespData.done
+  val atomicResultThrowCond =
+    readAtomicResultNotFound || readAtomicRequestNotDone
+  io.txDupAtomicResp <-/< threeStreams(atomicReqResultCacheIdx)
+    .throwWhen(io.recvQCtrl.stateErrFlush || atomicResultThrowCond)
+    .translateWith {
+      val rslt = AtomicResp()
+      rslt.set(
+        dqpn = io.qpAttr.dqpn,
+        psn = readAtomicResultCacheRespData.psnStart,
+        orig = readAtomicResultCacheRespData.atomicRslt
+      )
+      rslt
+    }
+  when(readAtomicResultCacheRespValid) {
+    assert(
+      assertion = readAtomicResultCacheRespFound,
+      message =
+        L"duplicated atomic request with PSN=${io.readAtomicResultCacheResp.resp.query.psn} not found, readAtomicResultCacheRespValid=${readAtomicResultCacheRespValid}, but readAtomicResultCacheRespFound=${readAtomicResultCacheRespFound}",
+      severity = FAILURE
+    )
+    assert(
+      assertion = readAtomicRequestNotDone,
+      message =
+        L"duplicated atomic request with PSN=${io.readAtomicResultCacheResp.resp.query.psn} not done yet, readAtomicResultCacheRespValid=${readAtomicResultCacheRespValid}, readAtomicResultCacheRespFound=${readAtomicResultCacheRespFound}, but readAtomicResultCacheRespData=${readAtomicResultCacheRespData.done}",
+      severity = FAILURE
+    )
+  }
+
+  val retryFromFirstReadResp =
+    io.readAtomicResultCacheResp.resp.query.psn === readAtomicResultCacheRespData.psnStart
+  // For partial read retry, compute the partial read DMA length
+  val psnDiff =
+    io.readAtomicResultCacheResp.resp.query.psn - readAtomicResultCacheRespData.psnStart
+  // psnDiff << io.qpAttr.pmtu.asUInt === psnDiff * pmtuPktLenBytes(io.qpAttr.pmtu)
+  val dmaReadLenBytes =
+    readAtomicResultCacheRespData.dlen - (psnDiff << io.qpAttr.pmtu.asUInt)
+  when(!retryFromFirstReadResp) {
+    assert(
+      assertion =
+        io.readAtomicResultCacheResp.resp.query.psn > readAtomicResultCacheRespData.psnStart,
+      message =
+        L"io.readAtomicResultCacheResp.resp.query.psn=${io.readAtomicResultCacheResp.resp.query.psn} should > readAtomicResultCacheRespData.psnStart=${readAtomicResultCacheRespData.psnStart}",
+      severity = FAILURE
+    )
+
+    assert(
+      assertion = psnDiff < computePktNum(
+        readAtomicResultCacheRespData.dlen,
+        io.qpAttr.pmtu
+      ),
+      message =
+        L"psnDiff=${psnDiff} should < packet num=${computePktNum(readAtomicResultCacheRespData.dlen, io.qpAttr.pmtu)}",
+      severity = FAILURE
+    )
+  }
+
+  io.dmaReadReq.req <-/< threeStreams(readReqResultCacheIdx)
+    .throwWhen(io.recvQCtrl.stateErrFlush)
+    .translateWith {
+      val rslt = cloneOf(io.dmaReadReq.req.payloadType)
+      rslt.set(
+        initiator = DmaInitiator.RQ_DUP,
+        sqpn = io.qpAttr.sqpn,
+        psnStart = io.readAtomicResultCacheResp.resp.query.psn,
+        addr = readAtomicResultCacheRespData.pa,
+        lenBytes = dmaReadLenBytes.resize(RDMA_MAX_LEN_WIDTH)
       )
     }
-    val twoStreams = StreamDemux(
-      io.readAtomicResultCacheQueryResp.resp.throwWhen(io.recvQCtrl.flush),
-      select = txSel.asUInt,
-      portCount = 2
-    )
-
-    val atomicResultNotFound =
-      readAtomicResultCacheQueryRespValid && !readAtomicResultCacheQueryRespFound
-    val atomicRequestNotDone =
-      readAtomicResultCacheQueryRespValid && readAtomicResultCacheQueryRespValid && !readAtomicResultCacheQueryRespData.done
-    val atomicResultThrowCond = atomicResultNotFound || atomicRequestNotDone
-    io.txDupAtomicResp <-/< twoStreams(0)
-      .throwWhen(io.recvQCtrl.flush || atomicResultThrowCond)
-      .translateWith {
-        val rslt = AtomicResp()
-        rslt.set(
-          dqpn = io.qpAttr.dqpn,
-          psn = readAtomicResultCacheQueryRespData.psn,
-          orig = readAtomicResultCacheQueryRespData.atomicRslt
-        )
-        rslt
-      }
-    assert(
-      assertion = atomicResultNotFound,
-      message =
-        L"""duplicated atomic request with PSN=${io.readAtomicResultCacheQueryResp.resp.query.psn} not found,
-           readAtomicResultCacheQueryRespValid=${readAtomicResultCacheQueryRespValid},
-           but readAtomicResultCacheQueryRespFound=${readAtomicResultCacheQueryRespFound}""",
-      severity = FAILURE
-    )
-    assert(
-      assertion = atomicRequestNotDone,
-      message =
-        L"""duplicated atomic request with PSN=${io.readAtomicResultCacheQueryResp.resp.query.psn} not done yet,
-           readAtomicResultCacheQueryRespValid=${readAtomicResultCacheQueryRespValid},
-           readAtomicResultCacheQueryRespFound=${readAtomicResultCacheQueryRespFound},
-           but readAtomicResultCacheQueryRespData=${readAtomicResultCacheQueryRespData.done}
-           """,
-      severity = FAILURE
-    )
-
-    // TODO: send out read DMA request
-    io.txDmaReadReq.req <-/< twoStreams(1)
-      .throwWhen(io.recvQCtrl.flush)
-      .translateWith {
-        val rslt = cloneOf(io.txDmaReadReq.req.payload)
-        rslt.opcode := readAtomicResultCacheQueryRespData.opcode
-        rslt.sqpn := io.qpAttr.sqpn
-        rslt.psn := readAtomicResultCacheQueryRespData.psn
-        rslt.addr := readAtomicResultCacheQueryRespData.pa
-        rslt.len := readAtomicResultCacheQueryRespData.dlen
-        rslt
-      }
-  }
 }
 
 class ReqDmaCommHeaderExtractor(busWidth: BusWidth) extends Component {
@@ -521,7 +596,7 @@ class ReqDmaCommHeaderExtractor(busWidth: BusWidth) extends Component {
     val txWithRecvBufAndDmaCommHeader = master(
       RqReqWithRecvBufAndDmaCommHeaderBus(busWidth)
     )
-    val seqOutPsnRangeFifoPush = master(Stream(RespPsnRange()))
+    val rqOutPsnRangeFifoPush = master(Stream(RespPsnRange()))
   }
 
   val inputValid = io.rx.reqWithRecvBuf.valid
@@ -575,13 +650,13 @@ class ReqDmaCommHeaderExtractor(busWidth: BusWidth) extends Component {
   val numPkt =
     divideByPmtuUp(dmaCommHeader.dlen, io.qpAttr.pmtu).resize(PSN_WIDTH)
 
-  val (txNormal, seqOutPsnRangeFifoPush) = StreamFork2(
-    io.rx.reqWithRecvBuf.throwWhen(io.recvQCtrl.flush)
+  val (txNormal, rqOutPsnRangeFifoPush) = StreamFork2(
+    io.rx.reqWithRecvBuf.throwWhen(io.recvQCtrl.stateErrFlush)
   )
   io.txWithRecvBufAndDmaCommHeader.reqWithRecvBufAndDmaCommHeader <-/< txNormal
     .translateWith {
       val rslt = cloneOf(
-        io.txWithRecvBufAndDmaCommHeader.reqWithRecvBufAndDmaCommHeader.payload
+        io.txWithRecvBufAndDmaCommHeader.reqWithRecvBufAndDmaCommHeader.payloadType
       )
       rslt.pktFrag := txNormal.pktFrag
       rslt.recvBufValid := txNormal.recvBufValid
@@ -596,7 +671,7 @@ class ReqDmaCommHeaderExtractor(busWidth: BusWidth) extends Component {
     OpCode.isSendFirstOrOnlyReqPkt(inputPktFrag.pktFrag.bth.opcode) ||
       OpCode.isWriteWithImmReqPkt(inputPktFrag.pktFrag.bth.opcode)
 
-  io.seqOutPsnRangeFifoPush <-/< seqOutPsnRangeFifoPush
+  io.rqOutPsnRangeFifoPush <-/< rqOutPsnRangeFifoPush
     .throwWhen(isSendOrWriteReq && !inputPktFrag.pktFrag.bth.ackreq)
     .translateWith {
       val rslt = RespPsnRange()
@@ -610,73 +685,160 @@ class ReqDmaCommHeaderExtractor(busWidth: BusWidth) extends Component {
     }
 }
 
-class ReqAddrCacheQueryBuilder(busWidth: BusWidth) extends Component {
+class ReqAddrValidator(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val recvQCtrl = in(RecvQCtrl())
-    val addrCacheReadReq = master(AddrCacheReadReqBus())
+    val nakNotify = out(NakNotifier())
+    val addrCacheRead = master(AddrCacheReadBus())
+    val txErrResp = master(Stream(Acknowledge()))
     val rx = slave(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
     val tx = master(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
   }
 
-  val inputValid = io.rx.reqWithRecvBufAndDmaCommHeader.valid
-  val inputPktFrag = io.rx.reqWithRecvBufAndDmaCommHeader.pktFrag
-  val isLastFrag = io.rx.reqWithRecvBufAndDmaCommHeader.last
-  val inputHeader = io.rx.reqWithRecvBufAndDmaCommHeader.dmaCommHeader
+  val addrCacheReadReqBuilder = new Area {
+    val inputValid = io.rx.reqWithRecvBufAndDmaCommHeader.valid
+    val inputPktFrag = io.rx.reqWithRecvBufAndDmaCommHeader.pktFrag
+    val isFirstFrag = io.rx.reqWithRecvBufAndDmaCommHeader.isFirst
+    val inputHeader = io.rx.reqWithRecvBufAndDmaCommHeader.dmaCommHeader
 
-  val accessKey = inputHeader.lrkey
-  val va = inputHeader.va
+    val accessKey = inputHeader.lrkey
+    val va = inputHeader.va
 
-  val accessType = Bits(ACCESS_TYPE_WIDTH bits)
-  val pd = io.qpAttr.pd
-  val remoteOrLocalKey = True // True: remote, False: local
-  val dataLenBytes = inputHeader.dlen
-  // Only send
-  val invalidAddrCacheQuery =
-    !io.rx.reqWithRecvBufAndDmaCommHeader.dmaHeaderValid
-  when(OpCode.isSendReqPkt(inputPktFrag.bth.opcode)) {
-    accessType := AccessType.LOCAL_WRITE.id
-  } elsewhen (OpCode.isWriteReqPkt(inputPktFrag.bth.opcode)) {
-    accessType := AccessType.REMOTE_WRITE.id
-  } elsewhen (OpCode.isReadReqPkt(inputPktFrag.bth.opcode)) {
-    accessType := AccessType.REMOTE_READ.id
-  } elsewhen (OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode)) {
-    accessType := AccessType.REMOTE_ATOMIC.id
-  } otherwise {
-    invalidAddrCacheQuery := True
-    accessType := 0 // 0 is invalid AccessType
-    assert(
-      assertion = False,
-      message =
-        L"invalid opcode=${inputPktFrag.bth.opcode}, should be send/write/read/atomic",
-      severity = FAILURE
-    )
+    val accessType = Bits(ACCESS_TYPE_WIDTH bits)
+    val pd = io.qpAttr.pd
+    val remoteOrLocalKey = True // True: remote, False: local
+    val dataLenBytes = inputHeader.dlen
+    // Only send
+    val invalidAddrCacheQuery =
+      !io.rx.reqWithRecvBufAndDmaCommHeader.dmaHeaderValid
+    when(OpCode.isSendReqPkt(inputPktFrag.bth.opcode)) {
+      accessType := AccessType.LOCAL_WRITE.id
+    } elsewhen (OpCode.isWriteReqPkt(inputPktFrag.bth.opcode)) {
+      accessType := AccessType.REMOTE_WRITE.id
+    } elsewhen (OpCode.isReadReqPkt(inputPktFrag.bth.opcode)) {
+      accessType := AccessType.REMOTE_READ.id
+    } elsewhen (OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode)) {
+      accessType := AccessType.REMOTE_ATOMIC.id
+    } otherwise {
+      invalidAddrCacheQuery := True
+      accessType := 0 // 0 is invalid AccessType
+      report(
+        message =
+          L"invalid opcode=${inputPktFrag.bth.opcode}, should be send/write/read/atomic",
+        severity = FAILURE
+      )
+    }
+    // TODO: verify SignalEdgeDrivenStream triggers one AddrCacheRead query
+    io.addrCacheRead.req <-/< SignalEdgeDrivenStream(
+      io.rx.reqWithRecvBufAndDmaCommHeader.dmaHeaderValid && isFirstFrag
+    ).throwWhen(io.recvQCtrl.stateErrFlush)
+      .translateWith {
+        val addrCacheReadReq = AddrCacheReadReq()
+        addrCacheReadReq.sqpn := io.qpAttr.sqpn
+        addrCacheReadReq.psn := inputPktFrag.bth.psn
+        addrCacheReadReq.key := accessKey
+        addrCacheReadReq.pd := pd
+        addrCacheReadReq.setKeyTypeRemoteOrLocal(isRemoteKey = remoteOrLocalKey)
+        addrCacheReadReq.accessType := accessType
+        addrCacheReadReq.va := va
+        addrCacheReadReq.dataLenBytes := dataLenBytes
+        addrCacheReadReq
+      }
+
+    // To query AddCache, it needs several cycle delay.
+    // In order to not block pipeline, use a FIFO to cache incoming data.
+    val inputReqQueue = io.rx.reqWithRecvBufAndDmaCommHeader
+      .throwWhen(io.recvQCtrl.stateErrFlush)
+      .queueLowLatency(ADDR_CACHE_QUERY_DELAY_CYCLE)
+    when(inputValid && isFirstFrag) {
+      assert(
+        assertion = inputReqQueue.ready,
+        message =
+          L"when receive first request, inputReqQueue must have space to accept the first request, try increase ADDR_CACHE_QUERY_DELAY_CYCLE",
+        severity = FAILURE
+      )
+    }
   }
 
-  io.addrCacheReadReq.req <-/< StreamSource()
-    .throwWhen(invalidAddrCacheQuery || io.recvQCtrl.flush)
-    .translateWith {
-      val addrCacheReadReq = AddrCacheReadReq()
-      addrCacheReadReq.key := accessKey
-      addrCacheReadReq.pd := pd
-      addrCacheReadReq.setKeyTypeRemoteOrLocal(isRemoteKey = remoteOrLocalKey)
-      addrCacheReadReq.accessType := accessType
-      addrCacheReadReq.va := va
-      addrCacheReadReq.dataLenBytes := dataLenBytes
-      addrCacheReadReq
+  val reqAddrValidator = new Area {
+    val inputValid = addrCacheReadReqBuilder.inputReqQueue.valid
+    val inputPktFrag = addrCacheReadReqBuilder.inputReqQueue.pktFrag
+    val dmaHeaderValid = addrCacheReadReqBuilder.inputReqQueue.dmaHeaderValid
+
+    val addrCacheRespValid = io.addrCacheRead.resp.valid
+    val sizeValid = io.addrCacheRead.resp.sizeValid
+    val keyValid = io.addrCacheRead.resp.keyValid
+    when(addrCacheRespValid && inputValid) {
+      assert(
+        assertion = inputPktFrag.bth.psn === io.addrCacheRead.resp.psn,
+        message =
+          L"addrCacheReadResp.resp has PSN=${io.addrCacheRead.resp.psn} not match input PSN=${inputPktFrag.bth.psn}",
+        severity = FAILURE
+      )
     }
-  io.tx.reqWithRecvBufAndDmaCommHeader <-/< io.rx.reqWithRecvBufAndDmaCommHeader
-    .throwWhen(io.recvQCtrl.flush)
+
+    val bufLenErr =
+      inputValid && dmaHeaderValid && addrCacheRespValid && !sizeValid
+    val keyErr =
+      inputValid && dmaHeaderValid && addrCacheRespValid && !keyValid
+    val checkPass =
+      inputValid && dmaHeaderValid && addrCacheRespValid && !keyErr && !bufLenErr
+
+    val rdmaNak = Acknowledge().setDefaultVal()
+    when(bufLenErr) {
+      rdmaNak
+        .setAck(AckType.NAK_INV, inputPktFrag.bth.psn, io.qpAttr.dqpn)
+    } elsewhen (keyErr) {
+      rdmaNak
+        .setAck(AckType.NAK_RMT_ACC, inputPktFrag.bth.psn, io.qpAttr.dqpn)
+    }
+
+    val joinStream =
+      FragmentStreamJoinStream(
+        addrCacheReadReqBuilder.inputReqQueue,
+        io.addrCacheRead.resp
+      )
+    val txSel = UInt(1 bit)
+    val (errIdx, succIdx) = (0, 1)
+    when(checkPass) {
+      txSel := succIdx
+    } otherwise {
+      txSel := errIdx
+    }
+    val twoStreams = StreamDemux(joinStream, select = txSel, portCount = 2)
+
+    io.txErrResp <-/< twoStreams(errIdx)
+      .throwWhen(io.recvQCtrl.stateErrFlush)
+      .continueWhen(!checkPass)
+      .translateWith(rdmaNak)
+    io.nakNotify.setNoErr()
+    when(twoStreams(errIdx).fire) {
+      io.nakNotify.setInvReq()
+    }
+
+    io.tx.reqWithRecvBufAndDmaCommHeader <-/< twoStreams(succIdx)
+      .throwWhen(io.recvQCtrl.stateErrFlush)
+      .translateWith {
+        val rslt = cloneOf(io.tx.reqWithRecvBufAndDmaCommHeader.payloadType)
+        rslt.fragment := twoStreams(succIdx)._1
+        rslt.dmaCommHeader.pa.removeAssignments()
+        rslt.dmaCommHeader.pa := twoStreams(succIdx)._2.pa
+        rslt.last := twoStreams(succIdx).isLast
+        rslt
+      }
+
+  }
 }
 
 class PktLenCheck(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val recvQCtrl = in(RecvQCtrl())
-    val nakNotify = out(NakErr())
+    val nakNotify = out(NakNotifier())
     val rx = slave(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
     val tx = master(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
-    val txErrResp = master(Stream(Acknowlege()))
+    val txErrResp = master(Stream(Acknowledge()))
   }
 
   val inputValid = io.rx.reqWithRecvBufAndDmaCommHeader.valid
@@ -686,10 +848,10 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
 
   val pktFragLenBytes =
     CountOne(inputPktFrag.pktFrag.mty).resize(RDMA_MAX_LEN_WIDTH)
-  val bthLenBytes = widthOf(BTH()) / 8
-  val rethLenBytes = widthOf(RETH()) / 8
-  val immDtLenBytes = widthOf(ImmDt()) / 8
-  val iethLenBytes = widthOf(IETH()) / 8
+  val bthLenBytes = widthOf(BTH()) / BYTE_WIDTH
+  val rethLenBytes = widthOf(RETH()) / BYTE_WIDTH
+  val immDtLenBytes = widthOf(ImmDt()) / BYTE_WIDTH
+  val iethLenBytes = widthOf(IETH()) / BYTE_WIDTH
 
   // recvBufValid and dmaHeaderValid is only valid for the first fragment of first or only request packet
   val dmaTargetLenBytesReg = Reg(UInt(RDMA_MAX_LEN_WIDTH bits))
@@ -712,12 +874,14 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
       severity = FAILURE
     )
   }
-  assert(
-    assertion = inputPktFrag.dmaHeaderValid === inputPktFrag.recvBufValid,
-    message =
-      L"dmaHeaderValid=${inputPktFrag.dmaHeaderValid} should equal recvBufValid=${inputPktFrag.recvBufValid}",
-    severity = FAILURE
-  )
+  when(inputValid) {
+    assert(
+      assertion = inputPktFrag.dmaHeaderValid === inputPktFrag.recvBufValid,
+      message =
+        L"dmaHeaderValid=${inputPktFrag.dmaHeaderValid} should equal recvBufValid=${inputPktFrag.recvBufValid}",
+      severity = FAILURE
+    )
+  }
 
   val rethLenAdjust = U(0, log2Up(rethLenBytes) + 1 bits)
   when(
@@ -793,13 +957,13 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
     }
   }
 
-  val rdmaNak = Acknowlege()
+  val rdmaNak = Acknowledge()
     .setAck(AckType.NAK_RMT_ACC, inputPktFrag.pktFrag.bth.psn, io.qpAttr.dqpn)
   io.txErrResp <-/< StreamSource()
     .continueWhen(pktLenCheckErr)
     .translateWith(rdmaNak)
   io.tx.reqWithRecvBufAndDmaCommHeader <-/< io.rx.reqWithRecvBufAndDmaCommHeader
-    .throwWhen(pktLenCheckErr || io.recvQCtrl.flush)
+    .throwWhen(pktLenCheckErr || io.recvQCtrl.stateErrFlush)
 
   io.nakNotify.setNoErr()
   when(inputValid && pktLenCheckErr) {
@@ -807,91 +971,14 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
   }
 }
 
-class ReqAddrValidator(busWidth: BusWidth) extends Component {
-  val io = new Bundle {
-    val qpAttr = in(QpAttrData())
-    val recvQCtrl = in(RecvQCtrl())
-    val nakNotify = out(NakErr())
-    val addrCacheReadResp = slave(AddrCacheReadRespBus())
-    val rx = slave(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
-    val tx = master(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
-    val txErrResp = master(Stream(Acknowlege()))
-  }
-
-  val inputValid = io.rx.reqWithRecvBufAndDmaCommHeader.valid
-  val inputPktFrag = io.rx.reqWithRecvBufAndDmaCommHeader.pktFrag
-  val isFirstFrag = io.rx.reqWithRecvBufAndDmaCommHeader.isFirst
-  val isLastFrag = io.rx.reqWithRecvBufAndDmaCommHeader.isLast
-  val inputHeader = io.rx.reqWithRecvBufAndDmaCommHeader.dmaCommHeader
-
-  val accessKey = inputHeader.lrkey
-  val va = inputHeader.va
-
-  val sizeValid = io.addrCacheReadResp.resp.sizeValid
-  val keyValid = io.addrCacheReadResp.resp.keyValid
-  when(io.addrCacheReadResp.resp.fire) {
-    assert(
-      assertion = va === io.addrCacheReadResp.resp.va,
-      message =
-        L"addrCacheReadResp.resp has VA=${io.addrCacheReadResp.resp.va} not match input VA=${va}",
-      severity = FAILURE
-    )
-  }
-
-  val bufLenErr =
-    inputValid && io.rx.reqWithRecvBufAndDmaCommHeader.dmaHeaderValid && io.addrCacheReadResp.resp.valid && !sizeValid
-  val keyErr =
-    inputValid && io.rx.reqWithRecvBufAndDmaCommHeader.dmaHeaderValid && io.addrCacheReadResp.resp.valid && !keyValid
-  val checkPass =
-    inputValid && io.rx.reqWithRecvBufAndDmaCommHeader.dmaHeaderValid && io.addrCacheReadResp.resp.valid && !keyErr && !bufLenErr
-
-  val rdmaNak = Acknowlege().setDefaultVal()
-  when(bufLenErr) {
-    rdmaNak
-      .setAck(AckType.NAK_INV, inputPktFrag.bth.psn, io.qpAttr.dqpn)
-  } elsewhen (keyErr) {
-    rdmaNak
-      .setAck(AckType.NAK_RMT_ACC, inputPktFrag.bth.psn, io.qpAttr.dqpn)
-  }
-
-  // TODO: verify io.addrCacheReadResp.resp fire within
-  // TODO: the first fragment of io.rx if io.rx.dmaHeaderValid
-  io.addrCacheReadResp.resp.ready := inputValid && io.rx.reqWithRecvBufAndDmaCommHeader.dmaHeaderValid
-  io.txErrResp <-/< StreamSource()
-    .throwWhen(io.recvQCtrl.flush)
-    .continueWhen(!checkPass)
-    .translateWith(rdmaNak)
-
-  // If io.rx.dmaHeaderValid is true, wait for checkPass
-  val continueCond =
-    io.rx.reqWithRecvBufAndDmaCommHeader.dmaHeaderValid ? checkPass | True
-  io.tx.reqWithRecvBufAndDmaCommHeader <-/< io.rx.reqWithRecvBufAndDmaCommHeader
-    .throwWhen(io.recvQCtrl.flush)
-    .continueWhen(continueCond)
-    .translateWith {
-      val rslt = cloneOf(io.rx.reqWithRecvBufAndDmaCommHeader.payload)
-      rslt := io.rx.reqWithRecvBufAndDmaCommHeader
-      when(inputValid && isFirstFrag) {
-        rslt.dmaCommHeader.pa := io.addrCacheReadResp.resp.pa
-      }
-      rslt
-    }
-
-  io.nakNotify.setNoErr()
-  when(inputValid && !checkPass) {
-    io.nakNotify.setInvReq()
-  }
-}
-
-class DmaReqInitiator(busWidth: BusWidth) extends Component {
+class RqDmaReqInitiator(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val recvQCtrl = in(RecvQCtrl())
     val rx = slave(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
     val txReadAtomic = master(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
     val txSendWrite = master(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
-    val txDmaReadReq = master(DmaReadReqBus())
-    val txDmaWriteReq = master(DmaWriteReqBus(busWidth))
+    val dma = master(DmaBus(busWidth))
   }
 
   val inputValid = io.rx.reqWithRecvBufAndDmaCommHeader.valid
@@ -899,19 +986,18 @@ class DmaReqInitiator(busWidth: BusWidth) extends Component {
   val isLastFrag = io.rx.reqWithRecvBufAndDmaCommHeader.last
   val inputDmaHeader = io.rx.reqWithRecvBufAndDmaCommHeader.dmaCommHeader
 
+  val isSendReq = OpCode.isSendReqPkt(inputPktFrag.bth.opcode)
+  val isWriteReq = OpCode.isWriteReqPkt(inputPktFrag.bth.opcode)
+  val isReadReq = OpCode.isReadReqPkt(inputPktFrag.bth.opcode)
+  val isAtomicReq = OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode)
   val txSel = Bool()
-  when(
-    OpCode.isSendReqPkt(inputPktFrag.bth.opcode) ||
-      OpCode.isWriteReqPkt(inputPktFrag.bth.opcode)
-  ) {
+  when(isSendReq || isWriteReq) {
     txSel := True
-  } elsewhen (OpCode.isReadReqPkt(inputPktFrag.bth.opcode) ||
-    OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode)) {
+  } elsewhen (isReadReq || isAtomicReq) {
     txSel := False
   } otherwise {
     txSel := False
-    assert(
-      assertion = False,
+    report(
       message =
         L"invalid opcode=${inputPktFrag.bth.opcode}, should be send/write/read/atomic requests",
       severity = FAILURE
@@ -927,16 +1013,18 @@ class DmaReqInitiator(busWidth: BusWidth) extends Component {
   val (forkReadAtomicReqStream1, forkReadAtomicReqStream2) = StreamFork2(
     readAtomicReqStream
   )
-  io.txDmaReadReq.req <-/< forkReadAtomicReqStream1
-    .throwWhen(io.recvQCtrl.flush)
+
+  io.dma.rd.req <-/< forkReadAtomicReqStream1
+    .throwWhen(io.recvQCtrl.stateErrFlush)
     .translateWith {
-      val rslt = cloneOf(io.txDmaReadReq.req.payload)
-      rslt.opcode := inputPktFrag.bth.opcode
-      rslt.sqpn := io.qpAttr.sqpn
-      rslt.psn := inputPktFrag.bth.psn
-      rslt.addr := inputDmaHeader.pa
-      rslt.len := inputDmaHeader.dlen
-      rslt
+      val rslt = cloneOf(io.dma.rd.req.payloadType)
+      rslt.set(
+        initiator = DmaInitiator.RQ_RD,
+        sqpn = io.qpAttr.sqpn,
+        psnStart = inputPktFrag.bth.psn,
+        addr = inputDmaHeader.pa,
+        lenBytes = inputDmaHeader.dlen
+      )
     }
   io.txReadAtomic.reqWithRecvBufAndDmaCommHeader <-/< forkReadAtomicReqStream2
 
@@ -948,147 +1036,143 @@ class DmaReqInitiator(busWidth: BusWidth) extends Component {
   val (forkSendWriteReqStream1, forkSendWriteReqStream2) = StreamFork2(
     sendWriteReqStream
   )
-  io.txDmaWriteReq.req <-/< forkSendWriteReqStream1
-    .throwWhen(io.recvQCtrl.flush)
+  io.dma.wr.req <-/< forkSendWriteReqStream1
+    .throwWhen(io.recvQCtrl.stateErrFlush)
     .translateWith {
-      val rslt = cloneOf(io.txDmaWriteReq.req) //DmaWriteReq(busWidth)
-      rslt.opcode := inputPktFrag.bth.opcode
-      rslt.sqpn := io.qpAttr.sqpn
-      rslt.psn := inputPktFrag.bth.psn
-      rslt.addr := (inputValid && io.rx.reqWithRecvBufAndDmaCommHeader.dmaHeaderValid) ? inputDmaHeader.pa | dmaAddrReg
-      rslt.wrId := io.rx.reqWithRecvBufAndDmaCommHeader.recvBuffer.id
-      rslt.wrIdValid := io.rx.reqWithRecvBufAndDmaCommHeader.recvBufValid
-      rslt.data := inputPktFrag.data
-      rslt.mty := inputPktFrag.mty
+      val rslt = cloneOf(io.dma.wr.req.payloadType) //DmaWriteReq(busWidth)
       rslt.last := isLastFrag
+      rslt.set(
+        initiator = DmaInitiator.RQ_WR,
+        sqpn = io.qpAttr.sqpn,
+        psn = inputPktFrag.bth.psn,
+        addr =
+          (inputValid && io.rx.reqWithRecvBufAndDmaCommHeader.dmaHeaderValid) ? inputDmaHeader.pa | dmaAddrReg,
+        workReqId = io.rx.reqWithRecvBufAndDmaCommHeader.recvBuffer.id,
+        data = inputPktFrag.data,
+        mty = inputPktFrag.mty
+      )
       rslt
     }
   io.txSendWrite.reqWithRecvBufAndDmaCommHeader <-/< forkSendWriteReqStream2
 }
 
 /** Used to extract full atomic request when bus width < widthOf(BTH + AtomicEth) */
-class AtomicReqExtractor(busWidth: BusWidth) extends Component {
-  val io = new Bundle {
-    // val qpAttr = in(QpAttrData())
-    val recvQCtrl = in(RecvQCtrl())
-    val rx = slave(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
-    // val txAtomicReq = master(Stream(AtomicReq()))
-    val txAtomicReqSaveToCache = master(Stream(ReadAtomicResultCacheData()))
-  }
-
-  val busWidthBytes = busWidth.id / 8
-  val bthWidth = widthOf(BTH())
-  val bthLenBytes = bthWidth / 8
-  val atomicEthLenBytes = widthOf(AtomicEth()) / 8
-
-  val inputValid = io.rx.reqWithRecvBufAndDmaCommHeader.valid
-  val inputPktFrag = io.rx.reqWithRecvBufAndDmaCommHeader.pktFrag
-  val isLastFrag = io.rx.reqWithRecvBufAndDmaCommHeader.last
-
-  require(bthWidth == 12, s"bthWidth=${bthWidth} should be 12 bytes")
-  // For easiness, bus width should be larger than BTH width,
-  // Therefore, it's convenient to read BTH in the first packet
-  require(
-    busWidthBytes >= bthLenBytes,
-    s"busWidthBytes=${busWidthBytes} should be larger than BTH width=${bthLenBytes} bytes"
-  )
-  require(
-    atomicEthLenBytes + bthLenBytes > busWidthBytes,
-    s"must have AtomicEth width=${atomicEthLenBytes} bytes + BTH width=${bthLenBytes} bytes > busWidthBytes=${busWidthBytes} bytes"
-  )
-
-  assert(
-    assertion = OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode),
-    message =
-      L"AtomicReqExtractor can only handle atomic request, but opcode=${inputPktFrag.bth.opcode}",
-    severity = FAILURE
-  )
-
-  // Handle bus width smaller than atomic request length
-  val atomicReqLen = widthOf(BTH()) + widthOf(AtomicEth())
-  // Atomic request length: BTH 12 bytes + AtomicEth 28 bytes = 40 bytes
-  // For 256 bits (32 bytes) bus width, residue = 8 bytes, left over of AtomicEth = 20 bytes
-  val residueLen = atomicReqLen - busWidth.id
-  val leftOverLen = if (atomicReqLen > busWidth.id) {
-    widthOf(AtomicEth()) - residueLen
-  } else {
-    0 // Bus width larger than atomicReqLen, no left over bits
-  }
-
-  val atomicEth = AtomicEth()
-  if (residueLen > 0) { // Bus width less than atomicReqLen
-    if (leftOverLen > 0) { // AtomicEth spans two consecutive fragments
-      val isFirstFragReg = RegInit(True)
-      when(inputValid) {
-        isFirstFragReg := isLastFrag
-      }
-
-      val atomicLeftOverReg = Reg(Bits(leftOverLen bits))
-      when(inputValid && isFirstFragReg) {
-        atomicLeftOverReg := inputPktFrag.data(0, leftOverLen bits)
-      }
-
-      // TODO: verify inputPktFrag.data is big endian
-      atomicEth.assignFromBits(
-        atomicLeftOverReg ## inputPktFrag
-          .data((busWidth.id - residueLen) until busWidth.id)
-      )
-    } else { // AtomicEth is within the last fragment, two fragments total
-      // TODO: verify inputPktFrag.data is big endian
-      atomicEth.assignFromBits(
-        inputPktFrag
-          .data((busWidth.id - widthOf(AtomicEth())) until busWidth.id)
-      )
-
-    }
-  } else { // Bus width greater than atomicReqLen
-    // TODO: verify inputPktFrag.data is big endian
-    atomicEth.assignFromBits(
-      inputPktFrag.data(
-        (busWidth.id - widthOf(BTH()) - widthOf(AtomicEth())) until
-          (busWidth.id - widthOf(BTH()))
-      )
-    )
-  }
-
-  io.txAtomicReqSaveToCache <-/< io.rx.reqWithRecvBufAndDmaCommHeader
-    .throwWhen(io.recvQCtrl.flush || !isLastFrag)
-    .translateWith {
-      val rslt = cloneOf(io.txAtomicReqSaveToCache.payload)
-//      rslt.bth.set(
-//        opcode = inputPktFrag.bth.opcode,
-//        psn = inputPktFrag.bth.psn,
-//        dqpn = io.qpAttr.dqpn
+/** DO NOT DELETE */
+//class AtomicReqExtractor(busWidth: BusWidth) extends Component {
+//  val io = new Bundle {
+//    // val qpAttr = in(QpAttrData())
+//    val recvQCtrl = in(RecvQCtrl())
+//    val rx = slave(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
+//    // val txAtomicReq = master(Stream(AtomicReq()))
+//    val txAtomicReqSaveToCache = master(Stream(ReadAtomicResultCacheData()))
+//  }
+//
+//  val busWidthBytes = busWidth.id / BYTE_WIDTH
+//  val bthWidth = widthOf(BTH())
+//  val bthLenBytes = bthWidth / BYTE_WIDTH
+//  val atomicEthLenBytes = widthOf(AtomicEth()) / BYTE_WIDTH
+//
+//  val inputValid = io.rx.reqWithRecvBufAndDmaCommHeader.valid
+//  val inputPktFrag = io.rx.reqWithRecvBufAndDmaCommHeader.pktFrag
+//  val isLastFrag = io.rx.reqWithRecvBufAndDmaCommHeader.last
+//
+//  require(bthWidth == 12, s"bthWidth=${bthWidth} should be 12 bytes")
+//  // For easiness, bus width should be larger than BTH width,
+//  // Therefore, it's convenient to read BTH in the first packet
+//  require(
+//    busWidthBytes >= bthLenBytes,
+//    s"busWidthBytes=${busWidthBytes} should be larger than BTH width=${bthLenBytes} bytes"
+//  )
+//  require(
+//    atomicEthLenBytes + bthLenBytes > busWidthBytes,
+//    s"must have AtomicEth width=${atomicEthLenBytes} bytes + BTH width=${bthLenBytes} bytes > busWidthBytes=${busWidthBytes} bytes"
+//  )
+//
+//  assert(
+//    assertion = OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode),
+//    message =
+//      L"AtomicReqExtractor can only handle atomic request, but opcode=${inputPktFrag.bth.opcode}",
+//    severity = FAILURE
+//  )
+//
+//  // Handle bus width smaller than atomic request length
+//  val atomicReqLen = widthOf(BTH()) + widthOf(AtomicEth())
+//  // Atomic request length: BTH 12 bytes + AtomicEth 28 bytes = 40 bytes
+//  // For 256 bits (32 bytes) bus width, residue = 8 bytes, left over of AtomicEth = 20 bytes
+//  val residueLen = atomicReqLen - busWidth.id
+//  val leftOverLen = if (atomicReqLen > busWidth.id) {
+//    widthOf(AtomicEth()) - residueLen
+//  } else {
+//    0 // Bus width larger than atomicReqLen, no left over bits
+//  }
+//
+//  val atomicEth = AtomicEth()
+//  if (residueLen > 0) { // Bus width less than atomicReqLen
+//    if (leftOverLen > 0) { // AtomicEth spans two consecutive fragments
+//      val isFirstFragReg = RegInit(True)
+//      when(inputValid) {
+//        isFirstFragReg := isLastFrag
+//      }
+//
+//      val atomicLeftOverReg = Reg(Bits(leftOverLen bits))
+//      when(inputValid && isFirstFragReg) {
+//        atomicLeftOverReg := inputPktFrag.data(0, leftOverLen bits)
+//      }
+//
+//      // TODO: verify inputPktFrag.data is big endian
+//      atomicEth.assignFromBits(
+//        atomicLeftOverReg ## inputPktFrag
+//          .data((busWidth.id - residueLen) until busWidth.id)
 //      )
-//      rslt.atomicEth := atomicEth
+//    } else { // AtomicEth is within the last fragment, two fragments total
+//      // TODO: verify inputPktFrag.data is big endian
+//      atomicEth.assignFromBits(
+//        inputPktFrag
+//          .data((busWidth.id - widthOf(AtomicEth())) until busWidth.id)
+//      )
+//
+//    }
+//  } else { // Bus width greater than atomicReqLen
+//    // TODO: verify inputPktFrag.data is big endian
+//    atomicEth.assignFromBits(
+//      inputPktFrag.data(
+//        (busWidth.id - widthOf(BTH()) - widthOf(AtomicEth())) until
+//          (busWidth.id - widthOf(BTH()))
+//      )
+//    )
+//  }
+//
+//  io.txAtomicReqSaveToCache <-/< io.rx.reqWithRecvBufAndDmaCommHeader
+//    .throwWhen(io.recvQCtrl.stateErrFlush || !isLastFrag)
+//    .translateWith {
+//      val rslt = cloneOf(io.txAtomicReqSaveToCache.payloadType)
+//      rslt.psnStart := inputPktFrag.bth.psn
+//      rslt.pktNum := 1 // Atomic response has only one packet
+//      rslt.opcode := inputPktFrag.bth.opcode
+//      rslt.pa := io.rx.reqWithRecvBufAndDmaCommHeader.dmaCommHeader.pa
+//      rslt.va := atomicEth.va
+//      rslt.rkey := atomicEth.rkey
+//      rslt.dlen := io.rx.reqWithRecvBufAndDmaCommHeader.dmaCommHeader.dlen
+//      rslt.swap := atomicEth.swap
+//      rslt.comp := atomicEth.comp
+//      rslt.atomicRslt := 0
+//      rslt.done := False
 //      rslt
-      rslt.psn := inputPktFrag.bth.psn
-      rslt.opcode := inputPktFrag.bth.opcode
-      rslt.pa := io.rx.reqWithRecvBufAndDmaCommHeader.dmaCommHeader.pa
-      rslt.va := atomicEth.va
-      rslt.rkey := atomicEth.rkey
-      rslt.dlen := io.rx.reqWithRecvBufAndDmaCommHeader.dmaCommHeader.dlen
-      rslt.swap := atomicEth.swap
-      rslt.comp := atomicEth.comp
-      rslt.atomicRslt := 0
-      rslt.done := False
-      rslt
-    }
-}
+//    }
+//}
 
 class ReadAtomicReqExtractor(busWidth: BusWidth) extends Component {
   val io = new Bundle {
+    val qpAttr = in(QpAttrData())
     val recvQCtrl = in(RecvQCtrl())
     val rx = slave(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
-    // val rx = slave(RdmaDataBus(busWidth))
-    // val tx = master(RdmaDataBus(busWidth))
     val txSaveToCacheReq = master(Stream(ReadAtomicResultCacheData()))
   }
 
-  val busWidthBytes = busWidth.id / 8
-  val bthLenBytes = widthOf(BTH()) / 8
-  val rethLenBytes = widthOf(RETH()) / 8
-  val atomicEthLenBytes = widthOf(AtomicEth()) / 8
+  val busWidthBytes = busWidth.id / BYTE_WIDTH
+  val bthLenBytes = widthOf(BTH()) / BYTE_WIDTH
+  val rethLenBytes = widthOf(RETH()) / BYTE_WIDTH
+  val atomicEthLenBytes = widthOf(AtomicEth()) / BYTE_WIDTH
 
   // Bus width should be larger than BTH + AtomicEth width
   require(
@@ -1133,10 +1217,11 @@ class ReadAtomicReqExtractor(busWidth: BusWidth) extends Component {
   atomicEth.assignFromBits(atomicEthBits)
 
   io.txSaveToCacheReq <-/< io.rx.reqWithRecvBufAndDmaCommHeader
-    .throwWhen(io.recvQCtrl.flush)
+    .throwWhen(io.recvQCtrl.stateErrFlush)
     .translateWith {
-      val rslt = cloneOf(io.txSaveToCacheReq.payload)
-      rslt.psn := inputPktFrag.bth.psn
+      val rslt = cloneOf(io.txSaveToCacheReq.payloadType)
+      rslt.psnStart := inputPktFrag.bth.psn
+      rslt.pktNum := computePktNum(reth.dlen, io.qpAttr.pmtu)
       rslt.opcode := inputPktFrag.bth.opcode
       rslt.pa := io.rx.reqWithRecvBufAndDmaCommHeader.dmaCommHeader.pa
       when(isReadReq) {
@@ -1158,75 +1243,15 @@ class ReadAtomicReqExtractor(busWidth: BusWidth) extends Component {
     }
 }
 
-//class ReadAtomicReqSaveToCacheHandler(busWidth: BusWidth) extends Component {
-//  val io = new Bundle {
-//    val recvQCtrl = in(RecvQCtrl())
-//    val rxReadAtomic = slave(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
-//    // val rxAtomicReq = slave(Stream(ReadAtomicResultCacheData()))
-//    // val rxReadReq = slave(Stream(ReadAtomicResultCacheData()))
-//    val tx = master(Stream(ReadAtomicResultCacheData()))
-//  }
-//
-//  val inputValid = io.rxReadAtomic.reqWithRecvBufAndDmaCommHeader.valid
-//  val inputPktFrag = io.rxReadAtomic.reqWithRecvBufAndDmaCommHeader.pktFrag
-//
-//  val txSel = Bool()
-//  when(OpCode.isReadReqPkt(inputPktFrag.bth.opcode)) {
-//    txSel := True
-//  } elsewhen (OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode)) {
-//    txSel := False
-//  } otherwise {
-//    txSel := False
-//    assert(
-//      assertion = False,
-//      message =
-//        L"invalid opcode=${inputPktFrag.bth.opcode}, should be read/atomic requests",
-//      severity = FAILURE
-//    )
-//  }
-//  val twoStreams =
-//    StreamDemux(
-//      io.rxReadAtomic.reqWithRecvBufAndDmaCommHeader,
-//      select = txSel.asUInt,
-//      portCount = 2
-//    )
-//
-//  val atomicReqExtractor = new AtomicReqExtractor(busWidth)
-//  atomicReqExtractor.io.recvQCtrl := io.recvQCtrl
-//  atomicReqExtractor.io.rx.reqWithRecvBufAndDmaCommHeader <-/< twoStreams(0)
-//
-//  val readValid = readReqExtractor.io.txReadReqSaveToCache.valid
-//  val atomicValid = atomicReqExtractor.io.txAtomicReqSaveToCache.valid
-//  assert(
-//    assertion = !(readValid && atomicValid),
-//    message =
-//      L"readValid=${readValid} and atomicValid=${atomicValid} cannot be true at same time",
-//    severity = FAILURE
-//  )
-//
-//  val outputRead = readValid && !atomicValid
-//  val outputAtomic = !readValid && atomicValid
-//  val cacheData = ReadAtomicResultCacheData().setDefaultVal()
-//  when(outputRead) {
-//    cacheData := readReqExtractor.io.txReadReqSaveToCache
-//  } elsewhen (outputAtomic) {
-//    cacheData := atomicReqExtractor.io.txAtomicReqSaveToCache
-//  }
-//
-//  io.tx <-/< StreamSource()
-//    .throwWhen(io.recvQCtrl.flush)
-//    .continueWhen(outputRead || outputAtomic)
-//    .translateWith(cacheData)
-//}
-
+// TODO: prevent coalesce response to too many send/write requests
 class SendWriteRespGenerator(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val recvQCtrl = in(RecvQCtrl())
-    // val nakNotify = out(NakErr())
+    // val nakNotify = out(NakNotifier())
     // val addrCacheReadResp = slave(AddrCacheReadRespBus())
     val rx = slave(RqReqWithRecvBufAndDmaCommHeaderBus(busWidth))
-    val tx = master(Stream(Acknowlege()))
+    val tx = master(Stream(Acknowledge()))
   }
 
   val inputValid = io.rx.reqWithRecvBufAndDmaCommHeader.valid
@@ -1286,13 +1311,13 @@ class SendWriteRespGenerator(busWidth: BusWidth) extends Component {
   }
 
   val rdmaAck =
-    Acknowlege().setAck(AckType.NORMAL, inputPktFrag.bth.psn, io.qpAttr.dqpn)
+    Acknowledge().setAck(AckType.NORMAL, inputPktFrag.bth.psn, io.qpAttr.dqpn)
   val rdmaNak =
-    Acknowlege().setAck(AckType.NAK_INV, inputPktFrag.bth.psn, io.qpAttr.dqpn)
+    Acknowledge().setAck(AckType.NAK_INV, inputPktFrag.bth.psn, io.qpAttr.dqpn)
 
   io.tx <-/< io.rx.reqWithRecvBufAndDmaCommHeader
     .throwWhen(
-      io.recvQCtrl.flush ||
+      io.recvQCtrl.stateErrFlush ||
         !lenCheckErr ||
         !inputPktFrag.bth.ackreq
     )
@@ -1301,71 +1326,113 @@ class SendWriteRespGenerator(busWidth: BusWidth) extends Component {
     }
 }
 
+/** When received a new DMA response, query ReadAtomicResultCache,
+  * and then combine the DMA response and ReadAtomicResultCache query response
+  * to downstream.
+  */
+class RqDmaReadRespHandler(busWidth: BusWidth) extends Component {
+  val io = new Bundle {
+    val qpAttr = in(QpAttrData())
+    val recvQCtrl = in(RecvQCtrl())
+    val readAtomicResultCacheQuery = master(ReadAtomicResultCacheQueryBus())
+    val dmaReadResp = slave(DmaReadRespBus(busWidth))
+    val readAtomicResultCacheRespAndDmaReadResp = master(
+      Stream(Fragment(ReadAtomicResultCacheRespAndDmaReadResp(busWidth)))
+    )
+  }
+
+  val dmaReadRespValid = io.dmaReadResp.resp.valid
+  val isFirstDmaReadResp = io.dmaReadResp.resp.isFirst
+  val isLastDmaReadResp = io.dmaReadResp.resp.isLast
+
+  // Send out ReadAtomicResultCache query request
+  // TODO: verify first DMA response is only one cycle, that dmaReadRespQueue has enough space
+  io.readAtomicResultCacheQuery.req <-/< SignalEdgeDrivenStream(
+    isFirstDmaReadResp
+  ).translateWith {
+    val rslt = cloneOf(io.readAtomicResultCacheQuery.req.payloadType)
+    rslt.psn := io.dmaReadResp.resp.psnStart
+    rslt
+  }
+
+  val dmaReadRespQueue = io.dmaReadResp.resp
+    .throwWhen(io.recvQCtrl.stateErrFlush)
+    .queueLowLatency(READ_ATOMIC_RESULT_CACHE_QUERY_DELAY_CYCLE)
+  when(dmaReadRespValid && isFirstDmaReadResp) {
+    assert(
+      assertion = dmaReadRespQueue.ready,
+      message =
+        L"when receive first DMA response, dmaReadRespQueue must have space to accept the first DMA response, try increase READ_ATOMIC_RESULT_CACHE_QUERY_DELAY_CYCLE",
+      severity = FAILURE
+    )
+  }
+
+  // Join ReadAtomicResultCache query response with DmaReadResp
+  val joinStream = FragmentStreamJoinStream(
+    dmaReadRespQueue,
+    io.readAtomicResultCacheQuery.resp
+  )
+  io.readAtomicResultCacheRespAndDmaReadResp <-/< joinStream.translateWith {
+    val rslt = cloneOf(io.readAtomicResultCacheRespAndDmaReadResp.payloadType)
+    rslt.dmaReadResp := joinStream._1
+    rslt.resultCacheResp := joinStream._2
+    rslt.last := joinStream.isLast
+    rslt
+  }
+}
+
 // TODO: handle read DMA size = 0
 class ReadRespGenerator(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val recvQCtrl = in(RecvQCtrl())
-    val tx = master(RdmaDataBus(busWidth))
-    // val txErrResp = master(Stream(Acknowlege()))
-    val dmaReadResp = slave(DmaReadRespBus(busWidth))
+    val txReadResp = master(RdmaDataBus(busWidth))
+    // val txErrResp = master(Stream(Acknowledge()))
+    val readAtomicResultCacheRespAndDmaReadResp = slave(
+      Stream(Fragment(ReadAtomicResultCacheRespAndDmaReadResp(busWidth)))
+    )
   }
 
-  val readRespHeaderBitLen = widthOf(BTH()) + widthOf(AETH())
-  val readRespHeaderLenBytes = readRespHeaderBitLen / 8
-  val bthHeaderLenBytes = widthOf(BTH()) / 8
-  val busWidthBytes = busWidth.id / 8
+  val bthHeaderLenBytes = widthOf(BTH()) / BYTE_WIDTH
+  val busWidthBytes = busWidth.id / BYTE_WIDTH
 
-  val inputValid = io.dmaReadResp.resp.valid
-  val inputDmaDataFrag = io.dmaReadResp.resp.fragment
-  val isLastDmaDataFrag = io.dmaReadResp.resp.isLast
-  val isFirstDmaDataFrag = io.dmaReadResp.resp.isFirst
-
-  val numReadRespPkt =
-    divideByPmtuUp(inputDmaDataFrag.totalLenBytes, io.qpAttr.pmtu)
-  val lastOrOnlyReadRespPktLenBytes =
-    moduloByPmtu(inputDmaDataFrag.totalLenBytes, io.qpAttr.pmtu)
-
-  val pmtuFragNum = pmtuPktLenBytes(io.qpAttr.pmtu) >> log2Up(busWidth.id / 8)
+  val pmtuFragNum = pmtuPktLenBytes(io.qpAttr.pmtu) >> log2Up(
+    busWidth.id / BYTE_WIDTH
+  )
   val segmentStream = StreamSegment(
-    io.dmaReadResp.resp
-      .throwWhen(io.recvQCtrl.flush)
-      .translateWith {
-        val rslt = Fragment(DataAndMty(busWidth.id))
-        rslt.data := io.dmaReadResp.resp.data
-        rslt.mty := io.dmaReadResp.resp.mty
-        rslt.last := io.dmaReadResp.resp.last
-        rslt
-      },
+    io.readAtomicResultCacheRespAndDmaReadResp
+      .throwWhen(io.recvQCtrl.stateErrFlush),
     fragmentNum = pmtuFragNum.resize(PMTU_FRAG_NUM_WIDTH)
   )
+  val input = cloneOf(io.readAtomicResultCacheRespAndDmaReadResp)
+  input <-/< segmentStream
+
+  val inputDmaDataFrag = input.dmaReadResp
+  val inputResultCacheData = input.resultCacheResp.cachedData
+  val isFirstDataFrag = input.isFirst
+  val isLastDataFrag = input.isLast
 
   // Count the number of read response packet processed
-  val readRespPktCnt = Counter(
-    bitCount = (RDMA_MAX_LEN_WIDTH / busWidth.id) bits,
-    inc = segmentStream.fire && segmentStream.fire
+  val readRespPktCntr = Counter(
+    // RDMA_MAX_LEN_WIDTH >> PMTU.U256.id = RDMA_MAX_LEN_WIDTH / 256
+    // This is the max number of packets of a request.
+    bitCount = (RDMA_MAX_LEN_WIDTH >> PMTU.U256.id) bits,
+    inc = input.lastFire
   )
 
-  val curPsn = io.dmaReadResp.resp.psn + readRespPktCnt.value
+  val numReadRespPkt =
+    divideByPmtuUp(inputDmaDataFrag.lenBytes, io.qpAttr.pmtu)
+  val lastOrOnlyReadRespPktLenBytes =
+    moduloByPmtu(inputDmaDataFrag.lenBytes, io.qpAttr.pmtu)
+  when(readRespPktCntr.value === numReadRespPkt - 1) {
+    readRespPktCntr.clear()
+  }
+
+  val isFromFirstResp =
+    inputDmaDataFrag.psnStart === inputResultCacheData.psnStart
+  val curPsn = inputDmaDataFrag.psnStart + readRespPktCntr.value
   val opcode = Bits(OPCODE_WIDTH bits)
   val padcount = U(0, PADCOUNT_WIDTH bits)
-  val isMidReadResp = False
-  when(numReadRespPkt > 1) {
-    when(readRespPktCnt.value === 0) {
-      opcode := OpCode.RDMA_READ_RESPONSE_FIRST.id
-    } elsewhen (readRespPktCnt.value === numReadRespPkt - 1) {
-      opcode := OpCode.RDMA_READ_RESPONSE_LAST.id
-      padcount := (4 - lastOrOnlyReadRespPktLenBytes(0, PADCOUNT_WIDTH bits))
-        .resize(PADCOUNT_WIDTH)
-    } otherwise {
-      opcode := OpCode.RDMA_READ_RESPONSE_MIDDLE.id
-      isMidReadResp := True
-    }
-  } otherwise {
-    opcode := OpCode.RDMA_READ_RESPONSE_ONLY.id
-    padcount := (4 - lastOrOnlyReadRespPktLenBytes(0, PADCOUNT_WIDTH bits))
-      .resize(PADCOUNT_WIDTH)
-  }
 
   val bth = BTH().set(
     opcode = opcode,
@@ -1374,40 +1441,106 @@ class ReadRespGenerator(busWidth: BusWidth) extends Component {
     psn = curPsn
   )
   val aeth = AETH().set(AckType.NORMAL)
-  val bthMty = Bits(widthOf(bth) / 8 bits).setAll()
-  val aethMty = Bits(widthOf(aeth) / 8 bits).setAll()
+  val bthMty = Bits(widthOf(bth) / BYTE_WIDTH bits).setAll()
+  val aethMty = Bits(widthOf(aeth) / BYTE_WIDTH bits).setAll()
 
-  val twoStreams = StreamFork(segmentStream, portCount = 2)
+  val headerBits = Bits(busWidth.id bits)
+  val headerMtyBits = Bits(busWidthBytes bits)
+  when(numReadRespPkt > 1) {
+    when(readRespPktCntr.value === 0) {
+      when(isFromFirstResp) {
+        opcode := OpCode.RDMA_READ_RESPONSE_FIRST.id
 
-  // For read response other than middle, it adds both BTH and AETH
-  val addBthAethHeaderStream =
-    StreamAddHeader(
-      twoStreams(0).throwWhen(isMidReadResp),
-      bth ## aeth,
-      bthMty ## aethMty
-    )
-  // For middle read response, it adds BTH only
-  val addBthHeaderStream =
-    StreamAddHeader(
-      twoStreams(1).throwWhen(!isMidReadResp),
-      bth ## aeth,
-      bthMty ## aethMty
-    )
-  val streamSel = StreamMux(
-    select = isMidReadResp.asUInt,
-    Vec(addBthAethHeaderStream, addBthHeaderStream)
-  )
-  io.tx.pktFrag <-/< streamSel
-    .throwWhen(io.recvQCtrl.flush)
+        // TODO: verify endian
+        headerBits := (bth ## aeth).resize(busWidth.id)
+        headerMtyBits := (bthMty ## aethMty).resize(busWidthBytes)
+      } otherwise {
+        opcode := OpCode.RDMA_READ_RESPONSE_MIDDLE.id
+
+        // TODO: verify endian
+        headerBits := bth.asBits.resize(busWidth.id)
+        headerMtyBits := bthMty.resize(busWidthBytes)
+      }
+    } elsewhen (readRespPktCntr.value === numReadRespPkt - 1) {
+      opcode := OpCode.RDMA_READ_RESPONSE_LAST.id
+      padcount := (PADCOUNT_FULL -
+        lastOrOnlyReadRespPktLenBytes(0, PADCOUNT_WIDTH bits))
+        .resize(PADCOUNT_WIDTH)
+
+      // TODO: verify endian
+      headerBits := (bth ## aeth).resize(busWidth.id)
+      headerMtyBits := (bthMty ## aethMty).resize(busWidthBytes)
+    } otherwise {
+      opcode := OpCode.RDMA_READ_RESPONSE_MIDDLE.id
+
+      // TODO: verify endian
+      headerBits := bth.asBits.resize(busWidth.id)
+      headerMtyBits := bthMty.resize(busWidthBytes)
+    }
+  } otherwise {
+    when(isFromFirstResp) {
+      opcode := OpCode.RDMA_READ_RESPONSE_ONLY.id
+    } otherwise {
+      opcode := OpCode.RDMA_READ_RESPONSE_LAST.id
+    }
+    padcount := (PADCOUNT_FULL -
+      lastOrOnlyReadRespPktLenBytes(0, PADCOUNT_WIDTH bits))
+      .resize(PADCOUNT_WIDTH)
+
+    // TODO: verify endian
+    headerBits := (bth ## aeth).resize(busWidth.id)
+    headerMtyBits := (bthMty ## aethMty).resize(busWidthBytes)
+  }
+
+  val headerStream = StreamSource()
+    .throwWhen(io.recvQCtrl.stateErrFlush)
+    .continueWhen(isFirstDataFrag)
     .translateWith {
-      val rslt = Fragment(RdmaDataPacket(busWidth))
-      rslt.data := streamSel.data
-      rslt.mty := streamSel.mty
-      rslt.last := False
+      val rslt = HeaderDataAndMty(BTH(), busWidth.id)
+      rslt.header := bth
+      rslt.data := headerBits
+      rslt.mty := headerMtyBits
       rslt
     }
+  val addHeaderStream = StreamAddHeader(
+    input
+      .throwWhen(io.recvQCtrl.stateErrFlush)
+      .translateWith {
+        val rslt = Fragment(DataAndMty(busWidth.id))
+        rslt.data := inputDmaDataFrag.data
+        rslt.mty := inputDmaDataFrag.mty
+        rslt.last := isLastDataFrag
+        rslt
+      },
+    headerStream
+  )
+  io.txReadResp.pktFrag <-/< addHeaderStream.translateWith {
+    val rslt = Fragment(RdmaDataPacket(busWidth))
+    rslt.bth := addHeaderStream.header
+    rslt.data := addHeaderStream.data
+    rslt.mty := addHeaderStream.mty
+    rslt.last := addHeaderStream.last
+    rslt
+  }
 }
 
+// pp. 286 spec 1.4
+// If an RDMA READ work request is posted before an ATOMIC Operation
+// work request then the atomic may execute its remote memory
+// operations before the previous RDMA READ has read its data.
+// This can occur because the responder is allowed to delay execution
+// of the RDMA READ. Strict ordering can be assured by posting
+// the ATOMIC Operation work request with the fence modifier.
+//
+// When a sequence of requests arrives at a QP, the ATOMIC Operation
+// only accesses memory after prior (non-RDMA READ) requests
+// access memory and before subsequent requests access memory.
+// Since the responder takes time to issue the response to the atomic
+// request, and this response takes more time to reach the requester
+// and even more time for the requester to create a completion queue
+// entry, requests after the atomic may access the responders memory
+// before the requester writes the completion queue entry for the
+// ATOMIC Operation request.
 // TODO: handle duplicated atomic request
 class AtomicRespGenerator(busWidth: BusWidth) extends Component {
   val io = new Bundle {
@@ -1417,14 +1550,33 @@ class AtomicRespGenerator(busWidth: BusWidth) extends Component {
     val dma = master(DmaBus(busWidth))
   }
 
-  io.dma.rd.req << io.dma.rd.resp.translateWith(DmaReadReq().setDefaultVal())
+  // TODO: implemntation
+  val atomicResp = AtomicResp().setDefaultVal()
+
+  io.dma.rd.req << io.dma.rd.resp.translateWith(
+    DmaReadReq().set(
+      initiator = DmaInitiator.RQ_ATOMIC_RD,
+      psnStart = atomicResp.bth.psn,
+      sqpn = io.qpAttr.sqpn,
+      addr = 0,
+      lenBytes = ATOMIC_DATA_LEN
+    )
+  )
   io.dma.wr.req << io.dma.wr.resp.translateWith {
     val rslt = Fragment(DmaWriteReq(busWidth))
-    rslt.setDefaultVal()
+    rslt.set(
+      initiator = DmaInitiator.RQ_ATOMIC_WR,
+      sqpn = io.qpAttr.sqpn,
+      psn = atomicResp.bth.psn,
+      addr = 0,
+      workReqId = 0, // TODO: RQ has no WR ID, need refactor
+      data = 0,
+      mty = 0
+    )
     rslt.last := True
     rslt
   }
-  io.tx << StreamSource().translateWith(AtomicResp().setDefaultVal())
+  io.tx << StreamSource().translateWith(atomicResp)
 }
 
 class RqSendWriteWorkCompGenerator extends Component {
@@ -1440,24 +1592,23 @@ class RqSendWriteWorkCompGenerator extends Component {
 
 // For duplicated requests, also return ACK in PSN order
 // TODO: after RNR and NAK SEQ returned, no other nested NAK send
-class SeqOut(busWidth: BusWidth) extends Component {
+class RqOut(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val recvQCtrl = in(RecvQCtrl())
     val opsnInc = out(PsnInc())
-    // val qpAttrUpdate = in(QpAttrUpdateNotifier())
     val psnRangePush = slave(Stream(RespPsnRange()))
     val readAtomicResultCachePop = slave(Stream(ReadAtomicResultCacheData()))
-    val rxSendWriteResp = slave(Stream(Acknowlege()))
+    val rxSendWriteResp = slave(Stream(Acknowledge()))
     val rxReadResp = slave(RdmaDataBus(busWidth))
     val rxAtomicResp = slave(Stream(AtomicResp()))
-    val rxRnrResp = slave(Stream(Acknowlege()))
-    val rxDupSendWriteResp = slave(Stream(Acknowlege()))
+    val rxRnrResp = slave(Stream(Acknowledge()))
+    val rxDupSendWriteResp = slave(Stream(Acknowledge()))
     val rxDupReadResp = slave(RdmaDataBus(busWidth))
     val rxDupAtomicResp = slave(Stream(AtomicResp()))
-    val rxCommCheckErrResp = slave(Stream(Acknowlege()))
-    val rxPktLenCheckErrResp = slave(Stream(Acknowlege()))
-    val rxAddrValidatorErrResp = slave(Stream(Acknowlege()))
+    val rxCommCheckErrResp = slave(Stream(Acknowledge()))
+    val rxPktLenCheckErrResp = slave(Stream(Acknowledge()))
+    val rxAddrValidatorErrResp = slave(Stream(Acknowledge()))
     val tx = master(RdmaDataBus(busWidth))
   }
 
@@ -1475,14 +1626,14 @@ class SeqOut(busWidth: BusWidth) extends Component {
 
   StreamSink(RespPsnRange()) << psnOutRangeFifo.io.pop
   StreamSink(ReadAtomicResultCacheData()) << io.readAtomicResultCachePop
-  StreamSink(Acknowlege()) << io.rxSendWriteResp
+  StreamSink(Acknowledge()) << io.rxSendWriteResp
   StreamSink(NoData) << io.rxReadResp.pktFrag.translateWith(NoData)
   StreamSink(AtomicResp()) << io.rxAtomicResp
-  StreamSink(Acknowlege()) << io.rxRnrResp
-  StreamSink(Acknowlege()) << io.rxDupSendWriteResp
+  StreamSink(Acknowledge()) << io.rxRnrResp
+  StreamSink(Acknowledge()) << io.rxDupSendWriteResp
   StreamSink(NoData) << io.rxDupReadResp.pktFrag.translateWith(NoData)
   StreamSink(AtomicResp()) << io.rxDupAtomicResp
-  StreamSink(Acknowlege()) << io.rxCommCheckErrResp
-  StreamSink(Acknowlege()) << io.rxPktLenCheckErrResp
-  StreamSink(Acknowlege()) << io.rxAddrValidatorErrResp
+  StreamSink(Acknowledge()) << io.rxCommCheckErrResp
+  StreamSink(Acknowledge()) << io.rxPktLenCheckErrResp
+  StreamSink(Acknowledge()) << io.rxAddrValidatorErrResp
 }

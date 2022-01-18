@@ -104,6 +104,25 @@ case class AETH() extends RdmaHeader {
   val value = Bits(AETH_VALUE_WIDTH bits)
   val msn = UInt(MSN_WIDTH bits)
 
+  def toWorkCompStatus(): Bits =
+    new Composite(this) {
+      val workCompStatus = Bits(WC_STATUS_WIDTH bits)
+      when(isNormalAck()) {
+        workCompStatus := WorkCompStatus.SUCCESS.id
+      } elsewhen (isInvReqNak()) {
+        workCompStatus := WorkCompStatus.REM_INV_REQ_ERR.id
+      } elsewhen (isRmtAccNak()) {
+        workCompStatus := WorkCompStatus.REM_ACCESS_ERR.id
+      } elsewhen (isRmtOpNak()) {
+        workCompStatus := WorkCompStatus.REM_OP_ERR.id
+      } otherwise {
+        report(
+          message = L"illegal AETH to WC state, code=${code}, value=${value}"
+        )
+        workCompStatus := WorkCompStatus.FATAL_ERR.id
+      }
+    }.workCompStatus
+
   def set(ackType: AckType.AckType): this.type = {
     require(
       ackType != AckType.NAK_RNR,
@@ -168,24 +187,48 @@ case class AETH() extends RdmaHeader {
       default {
         code := AethCode.RSVD.id
         value := 0
-        assert(
-          assertion = False,
-          message = L"invalid AckType=$ackType",
-          severity = FAILURE
-        )
+        report(message = L"invalid AckType=$ackType", severity = FAILURE)
       }
     }
     this
   }
 
+  def isNormalAck(): Bool =
+    new Composite(this) {
+      val rslt = code === AethCode.ACK.id
+    }.rslt
+
   def isRetryAck(): Bool =
     new Composite(this) {
-      val rslt = False
-      when(code === AethCode.RNR.id) {
-        rslt := True
-      } elsewhen (code === AethCode.NAK.id && value === NakCode.SEQ.id) {
-        rslt := True
-      }
+      val rslt =
+        code === AethCode.RNR.id || (code === AethCode.NAK.id && value === NakCode.SEQ.id)
+    }.rslt
+
+  def isErrAck(): Bool =
+    new Composite(this) {
+      val rslt = code === AethCode.NAK.id && value =/= NakCode.SEQ.id &&
+        !NakCode.isReserved(value)
+    }.rslt
+
+  def isInvReqNak(): Bool =
+    new Composite(this) {
+      val rslt = code === AethCode.NAK.id && value === NakCode.INV.id
+    }.rslt
+
+  def isRmtAccNak(): Bool =
+    new Composite(this) {
+      val rslt = code === AethCode.NAK.id && value === NakCode.RMT_ACC.id
+    }.rslt
+
+  def isRmtOpNak(): Bool =
+    new Composite(this) {
+      val rslt = code === AethCode.NAK.id && value === NakCode.RMT_OP.id
+    }.rslt
+
+  def isReserved(): Bool =
+    new Composite(this) {
+      val rslt = code === AethCode.RSVD.id ||
+        (code === AethCode.NAK.id && NakCode.isReserved(value))
     }.rslt
 
   // TODO: remove this

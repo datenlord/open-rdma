@@ -6,48 +6,25 @@ import BusWidth.BusWidth
 import ConstantSettings._
 import RdmaConstants._
 
-object setAllBits {
-  def apply(width: Int): BigInt = {
-    val rslt: BigInt = (1 << width) - 1
-    rslt
-  }
+// Stream related utilities
 
-  def apply(width: UInt): Bits =
-    new Composite(width) {
-      val one = U(1, 1 bit)
-      val shift = (one << width) - 1
-      val rslt = shift.asBits
-    }.rslt
+object timeNumToCycleNum {
+  def apply(timeNumber: TimeNumber): BigInt = {
+    (timeNumber * ClockDomain.current.frequency.getValue).toBigInt
+  }
 }
 
-object IPv4Addr {
-  def apply(ipv4Str: String): Bits = {
-    ipv4Str match {
-      case s"$a.$b.$c.$d" => {
-        val parts = List(a, b, c, d).map(_.toInt)
-        assert(!parts.exists(_ > 255), s"invalid IPv4 addr=$ipv4Str")
-        parts.map(i => B(i & 0xff, 8 bits)).reduce(_ ## _)
-      }
-      case _ => {
-        assert(False, s"illegal IPv4 string=${ipv4Str}")
-        B(0, 32 bits)
-      }
-    }
-
-//    val strParts = ipv4Str.split('.')
-//    assert(
-//      strParts.length == 4,
-//      s"string split parts length=${strParts.length}, invalid IPv4 addr=$ipv4Str"
-//    )
-//    val intParts = strParts.map(_.toInt)
-//    intParts.foreach(i =>
-//      assert(i < 256 && i >= 0, s"invalid IPv4 addr=$ipv4Str")
-//    )
-//    val ipBits = intParts.map(a => B(a & 0xff, 8 bits)).reduce(_ ## _)
-//    assert(ipBits.getWidth == 32, s"invalid IPv4 addr=$ipv4Str")
-//
-//    ipBits
+object StreamSource {
+  def apply(): Event = {
+    val rslt = Event
+    rslt.valid := True
+    rslt
   }
+}
+
+object StreamSink {
+  def apply[T <: Data](payloadType: HardType[T]): Stream[T] =
+    Stream(payloadType).freeRun()
 }
 
 /** Segment the inputStream into multiple pieces,
@@ -66,7 +43,6 @@ class StreamSegment[T <: Data](dataType: HardType[T]) extends Component {
   val isFirstFrag = io.inputStream.isFirst
   val isLastFrag = io.inputStream.isLast
 
-//  require(isPow2(inputWidth), s"inputWidth=${inputWidth} should be power of 2")
   assert(
     assertion = CountOne(io.fragmentNum) > 0,
     message = L"fragmentNum=${io.fragmentNum} should be larger than 0",
@@ -80,8 +56,8 @@ class StreamSegment[T <: Data](dataType: HardType[T]) extends Component {
     inputFragCnt.clear()
   }
 
-  io.outputStream <-/< io.inputStream.translateWith {
-    val rslt = cloneOf(io.inputStream.payload) // Fragment(dataType())
+  io.outputStream << io.inputStream.translateWith {
+    val rslt = cloneOf(io.inputStream.payloadType) // Fragment(dataType())
     rslt.fragment := inputData
     rslt.last := isLastOutputFrag
     rslt
@@ -93,7 +69,7 @@ object StreamSegment {
       inputStream: Stream[Fragment[T]],
       fragmentNum: UInt
   ): Stream[Fragment[T]] = {
-    val rslt = new StreamSegment(cloneOf(inputStream.payload.fragment))
+    val rslt = new StreamSegment(cloneOf(inputStream.fragmentType))
     rslt.io.inputStream << inputStream
     rslt.io.fragmentNum := fragmentNum
     rslt.io.outputStream
@@ -104,41 +80,61 @@ object StreamSegment {
   * Assume the header width is 4, the valid header Mty can only be 4'b0000, 4'b0001, 4'b0011,
   * 4'b0111, 4'b1111.
   * The output stream does not make any change to the header.
+  *
+  * Each header is for a packet, from first fragment to last fragment.
   */
-class StreamAddHeader(width: Int, headerWidth: Int) extends Component {
+class StreamAddHeader[T <: Data](headerType: HardType[T], width: Int)
+    extends Component {
   val io = new Bundle {
     val inputStream = slave(Stream(Fragment(DataAndMty(width))))
-    val header = in(Bits(headerWidth bits))
-    val headerMty = in(Bits((headerWidth / 8) bits))
-    val outputStream = master(Stream(Fragment(DataAndMty(width))))
+    val inputHeader = slave(Stream(HeaderDataAndMty(headerType, width)))
+    val outputStream = master(
+      Stream(Fragment(HeaderDataAndMty(headerType, width)))
+    )
   }
 
-  val inputValid = io.inputStream.valid
-  val inputData = io.inputStream.data
-  val inputMty = io.inputStream.mty
-  val isFirstFrag = io.inputStream.isFirst
-  val isLastFrag = io.inputStream.isLast
+  val joinStream = FragmentStreamJoinStream(io.inputStream, io.inputHeader)
+
+  val inputValid = joinStream.valid
+  val inputData = joinStream._1.data
+  val inputMty = joinStream._1.mty
+  val inputHeader = joinStream._2.header
+  val inputHeaderData = joinStream._2.data
+  val inputHeaderMty = joinStream._2.mty
+  val isFirstFrag = joinStream.isFirst
+  val isLastFrag = joinStream.isLast
 
   val inputWidth = widthOf(inputData)
   val inputMtyWidth = widthOf(inputMty)
-  val inputWidthBytes = inputWidth / 8
+  val inputWidthBytes = inputWidth / BYTE_WIDTH
   require(
     inputWidthBytes == inputMtyWidth,
     s"inputWidthBytes=${inputWidthBytes} should == inputMtyWidth=${inputMtyWidth}"
   )
-
-  val headerLenBytes = widthOf(io.header) / 8
-  val headerMtyWidth = widthOf(io.headerMty)
   require(
-    headerLenBytes == headerMtyWidth,
-    s"headerLenBytes=${headerLenBytes} should == headerMtyWidth=${headerMtyWidth}"
-  )
-  require(
-    headerLenBytes <= inputWidthBytes,
-    s"headerLenBytes=${headerLenBytes} should <= inputWidthBytes=${inputWidthBytes}"
+    width % BYTE_WIDTH == 0,
+    s"bus width=${width} must be multiple of byte length=${BYTE_WIDTH}"
   )
 
+  val headerMtyWidthUInt = CountOne(inputHeaderMty)
+  val headerMtyComp = setAllBits(headerMtyWidthUInt)
   when(inputValid) {
+    assert(
+      assertion = inputHeaderMty === headerMtyComp.resize(inputMtyWidth),
+      message =
+        L"invalid inputHeaderMty=${inputHeaderMty} with headerMtyWidth=${headerMtyWidthUInt}, should be ${headerMtyComp}",
+      severity = FAILURE
+    )
+    when(inputHeaderMty.orR) {
+      assert(
+        // OHMasking.first() return an OH indicate the right most 1 bit.
+        assertion = OHMasking.first(inputHeaderMty) === 1,
+        message =
+          L"the inputHeaderMty=${inputHeaderMty} should have consecutive valid bits from LSB side",
+        severity = FAILURE
+      )
+    }
+
     when(!isLastFrag) {
       assert(
         assertion = inputMty.andR,
@@ -154,18 +150,11 @@ class StreamAddHeader(width: Int, headerWidth: Int) extends Component {
       )
     }
   }
-  when(io.headerMty.orR) {
-    assert(
-      assertion = OHMasking.first(io.headerMty) === 1,
-      message =
-        L"the headerMty should have consecutive valid bits from LSB side, but MTY=${inputMty}",
-      severity = FAILURE
-    )
-  }
 
   val cacheValidReg = RegInit(False)
   val cachedDataReg = Reg(Bits(inputWidth bits))
   val cachedMtyReg = Reg(Bits(inputMtyWidth bits))
+  val cachedHeaderReg = Reg(joinStream._2.headerType())
 
   val isOutputStreamLastResidue = RegInit(False)
   // If inputWidth is 32 bits, headerMty is 4'b0011,
@@ -173,37 +162,81 @@ class StreamAddHeader(width: Int, headerWidth: Int) extends Component {
   // There is no bytes remaining to output.
   // If the inputMty of the last fragment is 4'b1110, then after the last input fragment,
   // THere is one extra byte remaining to output.
-  val lastFragHasResidue = (inputMty & io.headerMty.resize(inputMtyWidth)).orR
+  val lastFragHasResidue = (inputMty & inputHeaderMty).orR
 
-  val rightShiftBitAmt = inputWidth - headerWidth
-  val rightShiftByteAmt = inputMtyWidth - headerMtyWidth
   val outputData = Bits(inputWidth bits)
   val outputMty = Bits(inputWidthBytes bits)
-  when(isFirstFrag) { // isFirstFrag is true, concatenate header and inputData
-    outputData := (io.header ## inputData).resizeLeft(inputWidth)
-    outputMty := (io.headerMty ## inputMty).resizeLeft(inputMtyWidth)
-  } otherwise {
-    outputData := (cachedDataReg(0, headerWidth bits) ## inputData)
-      .resizeLeft(inputWidth)
-    outputMty := (cachedMtyReg(0, headerMtyWidth bits) ## inputMty)
-      .resizeLeft(inputMtyWidth)
+  val extraLastFragData = Bits(inputWidth bits)
+  val extraLastFragMty = Bits(inputWidthBytes bits)
+  switch(headerMtyWidthUInt) {
+    // Header length in bytes:
+    // BTH 12, RETH 16, AtomicETH 28, AETH 4, AtomicAckETH 8, ImmDt 4, IETH 4.
+    //
+    // Send request headers: BTH, BTH + ImmDt, BTH + IETH, 12 or 16 bytes
+    // Write request headers: BTH + RETH, BTH, BTH + ImmDt, BTH + RETH + ImmDt, 28 or 12 or 16 or 32 bytes
+    // Send/write Ack: BTH + AETH, 16 bytes
+    //
+    // Read request header: BTH + RETH, 28 bytes
+    // Read response header: BTH + AETH, BTH, 16 or 12 bytes
+    //
+    // Atomic request header: BTH + AtomicETH, 40 bytes
+    // Atomic response header: BTH + AETH + AtomicAckETH, 24 bytes
+    //
+    // Headers have length of multiple of 4 bytes
+    //
+    // TODO: remove unused header MTY width
+    for (headerMtyWidth <- 1 until inputWidthBytes) {
+      // for (headerMtyWidth <- widthOf(BTH()) until inputWidthBytes by 4) {
+      is(headerMtyWidth) {
+        val headerWidth = headerMtyWidth * BYTE_WIDTH
+
+        // TODO: check header valid bits are right-hand sided
+        when(isFirstFrag) { // isFirstFrag is true, concatenate header and inputData
+          outputData := (inputHeaderData(0, headerWidth bits) ## inputData)
+            .resizeLeft(inputWidth)
+          outputMty := (inputHeaderMty(0, headerMtyWidth bits) ## inputMty)
+            .resizeLeft(inputMtyWidth)
+        } otherwise {
+          outputData := (cachedDataReg(0, headerWidth bits) ## inputData)
+            .resizeLeft(inputWidth)
+          outputMty := (cachedMtyReg(0, headerMtyWidth bits) ## inputMty)
+            .resizeLeft(inputMtyWidth)
+        }
+
+        // The extra last fragment
+        extraLastFragData := (cachedDataReg(0, headerWidth bits) ##
+          B(0, inputWidth bits)).resizeLeft(inputWidth)
+        // When output stream has residue, the last beat is only from cachedDataReg, not from inputData
+        extraLastFragMty := (cachedMtyReg(0, headerMtyWidth bits) ##
+          B(0, inputMtyWidth bits)).resizeLeft(inputMtyWidth)
+      }
+    }
+    default {
+      outputData := 0
+      outputMty := 0
+      extraLastFragData := 0
+      extraLastFragMty := 0
+
+      report(
+        message =
+          L"invalid inputHeaderMty=${inputHeaderMty} with MTY width=${headerMtyWidthUInt} and inputHeaderData=${inputHeaderData}",
+        severity = FAILURE
+      )
+    }
   }
-  val inputStreamTranslate = io.inputStream.translateWith {
-    val rslt = cloneOf(io.inputStream.payload)
+
+  val inputStreamTranslate = joinStream.translateWith {
+    val rslt = cloneOf(io.outputStream.payloadType)
+    rslt.header := inputHeader
     rslt.data := outputData
     rslt.mty := outputMty
     rslt.last := isLastFrag && !lastFragHasResidue
     rslt
   }
 
-  // The extra last fragment
-  val extraLastFragData = (cachedDataReg(0, headerWidth bits) ##
-    B(0, inputWidth bits)).resizeLeft(inputWidth)
-  // When output stream has residue, the last beat is only from cachedDataReg, not from inputData
-  val extraLastFragMty = (cachedMtyReg(0, headerMtyWidth bits) ##
-    B(0, inputMtyWidth bits)).resizeLeft(inputMtyWidth)
-  val extraLastFragStream = cloneOf(io.inputStream)
+  val extraLastFragStream = cloneOf(io.outputStream)
   extraLastFragStream.valid := isOutputStreamLastResidue
+  extraLastFragStream.header := cachedHeaderReg
   extraLastFragStream.data := extraLastFragData
   extraLastFragStream.mty := extraLastFragMty
   extraLastFragStream.last := True
@@ -220,6 +253,7 @@ class StreamAddHeader(width: Int, headerWidth: Int) extends Component {
   when(outputStream.fire) {
     cachedDataReg := inputData
     cachedMtyReg := inputMty
+    cachedHeaderReg := inputHeader
 
     when(isLastFrag) {
       when(lastFragHasResidue) { // Input stream ends but output stream has one more beat
@@ -227,27 +261,24 @@ class StreamAddHeader(width: Int, headerWidth: Int) extends Component {
         isOutputStreamLastResidue := True
       } otherwise { // Both input and output stream end
         cacheValidReg := False
-        // outputStream.last := True
       }
     } otherwise {
       cacheValidReg := True
     }
   }
 
-  io.outputStream <-/< outputStream
+  io.outputStream << outputStream
 }
 
 object StreamAddHeader {
-  def apply(
+  def apply[T <: Data](
       inputStream: Stream[Fragment[DataAndMty]],
-      header: Bits,
-      headerMty: Bits
-  ): Stream[Fragment[DataAndMty]] = {
+      inputHeader: Stream[HeaderDataAndMty[T]]
+  ): Stream[Fragment[HeaderDataAndMty[T]]] = {
     val rslt =
-      new StreamAddHeader(widthOf(inputStream.data), widthOf(header))
+      new StreamAddHeader(inputHeader.headerType, widthOf(inputStream.data))
     rslt.io.inputStream << inputStream
-    rslt.io.header := header
-    rslt.io.headerMty := headerMty
+    rslt.io.inputHeader << inputHeader
     rslt.io.outputStream
   }
 }
@@ -259,7 +290,7 @@ object StreamAddHeader {
 class StreamRemoveHeader(width: Int) extends Component {
   val io = new Bundle {
     val inputStream = slave(Stream(Fragment(DataAndMty(width))))
-    val headerLenBytes = in(UInt(log2Up(width / 8) + 1 bits))
+    val headerLenBytes = in(UInt(log2Up(width / BYTE_WIDTH) + 1 bits))
     val outputStream = master(Stream(Fragment(DataAndMty(width))))
   }
 
@@ -271,7 +302,7 @@ class StreamRemoveHeader(width: Int) extends Component {
 
   val inputWidth = widthOf(inputData)
   val inputMtyWidth = widthOf(inputMty)
-  val inputWidthBytes = inputWidth / 8
+  val inputWidthBytes = inputWidth / BYTE_WIDTH
   require(
     inputWidthBytes == inputMtyWidth,
     s"inputWidthBytes=${inputWidthBytes} should == inputMtyWidth=${inputMtyWidth}"
@@ -301,7 +332,9 @@ class StreamRemoveHeader(width: Int) extends Component {
   val lastFragHasResidue = (inputMty & headerMty).orR
 
   val rightShiftBitAmt = UInt(log2Up(width) + 1 bits)
-  rightShiftBitAmt := inputWidth - (io.headerLenBytes << 3) // left shift 3 bits mean multiply by 8
+  rightShiftBitAmt := inputWidth - (io.headerLenBytes << log2Up(
+    BYTE_WIDTH
+  )) // left shift 3 bits mean multiply by 8
   val rightShiftByteAmt = UInt(widthOf(io.headerLenBytes) bits)
   rightShiftByteAmt := inputMtyWidth - io.headerLenBytes
 
@@ -317,7 +350,7 @@ class StreamRemoveHeader(width: Int) extends Component {
   val inputStreamTranslate = io.inputStream
     .throwWhen(throwCond)
     .translateWith {
-      val rslt = cloneOf(io.inputStream.payload)
+      val rslt = cloneOf(io.inputStream.payloadType)
       rslt.data := outputData
       rslt.mty := outputMty
       rslt.last := isLastFrag && !lastFragHasResidue
@@ -371,7 +404,7 @@ class StreamRemoveHeader(width: Int) extends Component {
     }
   }
 
-  io.outputStream <-/< outputStream
+  io.outputStream << outputStream
 }
 
 object StreamRemoveHeader {
@@ -387,8 +420,198 @@ object StreamRemoveHeader {
   }
 }
 
-object psnComp {
-  def apply(psnA: UInt, psnB: UInt, curPsn: UInt): UInt =
+/** Join a stream A of fragments with a stream B,
+  * that B will fire only when the first fragment of A fires.
+  */
+class FragmentStreamJoinStream[T1 <: Data, T2 <: Data](
+    dataType1: HardType[T1],
+    dataType2: HardType[T2]
+) extends Component {
+  val io = new Bundle {
+    val inputFragmentStream = slave(Stream(Fragment(dataType1)))
+    val inputStream = slave(Stream(dataType2))
+    val outputJoinStream = master(
+      Stream(Fragment(TupleBundle2(dataType1, dataType2)))
+    )
+  }
+  val dataType2Reg =
+    RegNextWhen(io.inputStream.payload, cond = io.inputStream.fire)
+
+  val isFragVald = io.inputFragmentStream.valid
+  val isFirstFrag = io.inputFragmentStream.isFirst
+  val isLastFrag = io.inputFragmentStream.isLast
+
+  io.inputStream.ready := isFragVald && isFirstFrag && io.inputFragmentStream.fire
+  when(isFragVald && isFirstFrag) {
+    assert(
+      assertion = io.inputFragmentStream.fire === io.inputStream.fire,
+      message =
+        L"during each first beat, inputFragmentStream and inputStream should fire together",
+      severity = FAILURE
+    )
+  }
+
+  // At the first fragment, inputFragmentStream should continue only when inputStream is valid
+  val continueCond = (isFragVald && isFirstFrag) ? io.inputStream.valid | True
+  io.outputJoinStream << io.inputFragmentStream
+    .continueWhen(continueCond)
+    .translateWith {
+      val rslt = cloneOf(io.outputJoinStream.payloadType)
+      rslt._1 := io.inputFragmentStream.fragment
+      rslt._2 := (isFragVald && isFirstFrag) ? io.inputStream.payload | dataType2Reg
+      rslt.last := io.inputFragmentStream.isLast
+      rslt
+    }
+}
+
+object FragmentStreamJoinStream {
+  def apply[T1 <: Data, T2 <: Data](
+      inputFragmentStream: Stream[Fragment[T1]],
+      inputStream: Stream[T2]
+  ): Stream[Fragment[TupleBundle2[T1, T2]]] = {
+    val join = new FragmentStreamJoinStream(
+      inputFragmentStream.fragmentType,
+      inputStream.payloadType
+    )
+    join.io.inputFragmentStream << inputFragmentStream
+    join.io.inputStream << inputStream
+    join.io.outputJoinStream
+  }
+}
+
+/** Send a payload at each signal rise edge,
+  * clear the payload after fire.
+  * No more than one signal rise before fire.
+  */
+object SignalEdgeDrivenStream {
+  def apply(signal: Bool): Stream[NoData] =
+    new Composite(signal) {
+      val rslt = Stream(NoData)
+      val signalRiseEdge = signal.rise(initAt = False)
+      val validReg = Reg(Bool())
+        .setWhen(signalRiseEdge)
+        .clearWhen(rslt.fire)
+      when(validReg) {
+        assert(
+          assertion = !signalRiseEdge,
+          message =
+            L"previous signal edge triggered stream data hasn't fired yet, validReg=${validReg}, signalRiseEdge=${signalRiseEdge}",
+          severity = FAILURE
+        )
+      }
+      rslt.valid := signal.rise(initAt = False) || validReg
+    }.rslt
+}
+
+object StreamVec {
+  implicit def build[T <: Data](that: Vec[Stream[T]]): StreamVec[T] =
+    new StreamVec(that)
+}
+
+class StreamVec[T <: Data](val strmVec: Vec[Stream[T]]) {
+  def <-/<(that: Vec[Stream[T]]): Area = new Area {
+    require(
+      strmVec.length == that.length,
+      s"StreamVec size not match, this.len=${strmVec.length} != that.len=${that.length}"
+    )
+    for (idx <- 0 until that.length) {
+      strmVec(idx) <-/< that(idx)
+    }
+  }
+  def <<(that: Vec[Stream[T]]): Area = new Area {
+    require(
+      strmVec.length == that.length,
+      s"StreamVec size not match, this.len=${strmVec.length} != that.len=${that.length}"
+    )
+    for (idx <- 0 until that.length) {
+      strmVec(idx) << that(idx)
+    }
+  }
+
+  //  def >-/>(that: Vec[Stream[T]]) = new Area {
+  //    require(
+  //      strmVec.length == that.length,
+  //      s"StreamVec size not match, this.len=${strmVec.length} != that.len=${that.length}"
+  //    )
+  //    for (idx <- 0 until that.length) {
+  //      that(idx) <-/< strmVec(idx)
+  //    }
+  //  }
+}
+
+//========== Misc utilities ==========
+
+object setAllBits {
+  def apply(width: Int): BigInt = {
+    val rslt: BigInt = (1 << width) - 1
+    rslt
+  }
+
+  def apply(width: UInt): Bits =
+    new Composite(width) {
+      val one = U(1, 1 bit)
+      val shift = (one << width) - 1
+      val rslt = shift.asBits
+    }.rslt
+}
+
+object IPv4Addr {
+  def apply(ipv4Str: String): Bits = {
+    ipv4Str match {
+      case s"$a.$b.$c.$d" => {
+        val parts = List(a, b, c, d).map(_.toInt)
+        assert(!parts.exists(_ > 255), s"invalid IPv4 addr=$ipv4Str")
+        parts.map(i => B(i & 0xff, 8 bits)).reduce(_ ## _)
+      }
+      case _ => {
+        assert(False, s"illegal IPv4 string=${ipv4Str}")
+        B(0, 32 bits)
+      }
+    }
+
+    //    val strParts = ipv4Str.split('.')
+    //    assert(
+    //      strParts.length == 4,
+    //      s"string split parts length=${strParts.length}, invalid IPv4 addr=$ipv4Str"
+    //    )
+    //    val intParts = strParts.map(_.toInt)
+    //    intParts.foreach(i =>
+    //      assert(i < 256 && i >= 0, s"invalid IPv4 addr=$ipv4Str")
+    //    )
+    //    val ipBits = intParts.map(a => B(a & 0xff, 8 bits)).reduce(_ ## _)
+    //    assert(ipBits.getWidth == 32, s"invalid IPv4 addr=$ipv4Str")
+    //
+    //    ipBits
+  }
+}
+
+// TODO: remove this once Spinal HDL upgraded to 1.6.2
+object ComponentEnrichment {
+  implicit class ComponentExt[T <: Component](val that: T) {
+    def stub(): T = that.rework {
+      // step1: First remove all we don't want
+      that.children.clear()
+      that.dslBody.foreachStatements {
+        case bt: BaseType if !bt.isDirectionLess =>
+        case s                                   => s.removeStatement()
+      }
+      // step2: remove output and assign zero
+      // this step can't merge into step1
+      that.dslBody.foreachStatements {
+        case bt: BaseType if bt.isOutput | bt.isInOut =>
+          bt.removeAssignments()
+          bt := bt.getZero
+        case _ =>
+      }
+      that
+    }
+  }
+}
+
+//========== Packet validation related utilities ==========
+
+object PsnUtil {
+  def cmp(psnA: UInt, psnB: UInt, curPsn: UInt): UInt =
     new Composite(curPsn) {
       val rslt = UInt(PSN_COMP_RESULT_WIDTH bits)
       val oldestPSN = (curPsn - HALF_MAX_PSN) & PSN_MASK
@@ -413,88 +636,34 @@ object psnComp {
         }
       }
     }.rslt
-}
 
-object computePktNum {
-  def apply(len: UInt, pmtu: Bits): UInt =
-    new Composite(len) {
+  /** psnA - psnB
+    */
+  def diff(psnA: UInt, psnB: UInt): UInt =
+    new Composite(psnA) {
       val rslt = UInt(PSN_WIDTH bits)
-      val shiftAmt = UInt(PMTU_WIDTH bits)
-      val residueMaxWidth = PMTU.U4096.id
-      val residue = UInt(residueMaxWidth bits)
-      switch(pmtu) {
-        is(PMTU.U256.id) {
-          shiftAmt := PMTU.U256.id
-          residue := len(0, PMTU.U256.id bits).resize(residueMaxWidth)
-        }
-        is(PMTU.U512.id) {
-          shiftAmt := PMTU.U512.id
-          residue := len(0, PMTU.U512.id bits).resize(residueMaxWidth)
-        }
-        is(PMTU.U1024.id) {
-          shiftAmt := PMTU.U1024.id
-          residue := len(0, PMTU.U1024.id bits).resize(residueMaxWidth)
-        }
-        is(PMTU.U2048.id) {
-          shiftAmt := PMTU.U2048.id
-          residue := len(0, PMTU.U2048.id bits).resize(residueMaxWidth)
-        }
-        is(PMTU.U4096.id) {
-          shiftAmt := PMTU.U4096.id
-          residue := len(0, PMTU.U4096.id bits).resize(residueMaxWidth)
-        }
-        default {
-          shiftAmt := 0
-          residue := 0
-
-          assert(
-            assertion = False,
-            message = L"invalid PMTU=$pmtu",
-            severity = FAILURE
-          )
-        }
-      }
-
-      val pktNum = (len >> shiftAmt) + (residue.orR).asUInt
-      // This downsize is safe, since max length is 2^32 bytes,
-      // And the min packet size is 256=2^8 bytes,
-      // So the max packet number is 2^PSN_WIDTH=2^24
-      rslt := pktNum.resize(PSN_WIDTH)
-//      when(residue.orR) {
-//        rslt := (len >> shiftAmt) + 1
-//      } otherwise {
-//        rslt := (len >> shiftAmt)
-//      }
-    }.rslt
-}
-
-object computeEPsnInc {
-  def apply(pktFrag: RdmaDataPacket, pmtu: Bits, busWidth: BusWidth): UInt =
-    new Composite(pktFrag) {
-      val rslt = UInt(PSN_WIDTH bits)
-      val isReadReq = OpCode.isReadReqPkt(pktFrag.bth.opcode)
-      when(isReadReq) {
-        // BTH is included in inputPktFrag.data
-        // TODO: verify inputPktFrag.data is big endian
-        val rethBits = pktFrag.data(
-          (busWidth.id - widthOf(BTH()) - widthOf(RETH())) until
-            (busWidth.id - widthOf(BTH()))
-        )
-        val reth = RETH()
-        reth.assignFromBits(rethBits)
-
-        rslt := computePktNum(reth.dlen, pmtu)
+      when(psnA >= psnB) {
+        rslt := psnA - psnB
+      } elsewhen (psnA === psnB) {
+        rslt := 0
       } otherwise {
-        rslt := 1
-
-        assert(
-          assertion = OpCode.isReqPkt(pktFrag.bth.opcode),
-          message =
-            L"computeEPsnInc() expects requests, but opcode=${pktFrag.bth.opcode}",
-          severity = FAILURE
-        )
+        rslt := (TOTAL_PSN - (psnB - psnA)).resize(PSN_WIDTH)
       }
     }.rslt
+
+  def lt(psnA: UInt, psnB: UInt, curPsn: UInt): Bool =
+    cmp(psnA, psnB, curPsn) === PsnCompResult.LESSER.id
+
+  def gt(psnA: UInt, psnB: UInt, curPsn: UInt): Bool =
+    cmp(psnA, psnB, curPsn) === PsnCompResult.GREATER.id
+
+  def lte(psnA: UInt, psnB: UInt, curPsn: UInt): Bool =
+    cmp(psnA, psnB, curPsn) === PsnCompResult.LESSER.id &&
+      psnA === psnB
+
+  def gte(psnA: UInt, psnB: UInt, curPsn: UInt): Bool =
+    cmp(psnA, psnB, curPsn) === PsnCompResult.GREATER.id &&
+      psnA === psnB
 }
 
 object bufSizeCheck {
@@ -511,240 +680,6 @@ object bufSizeCheck {
         bufPhysicalAddr <= targetPhysicalAddr && targetEndAddr <= bufEndAddr
     }.rslt
 }
-
-object pmtuPktLenBytes {
-  def apply(pmtu: Bits): UInt = {
-    val rslt = UInt(PMTU_FRAG_NUM_WIDTH bits)
-    switch(pmtu) {
-      // The value means right shift amount of bits
-      is(PMTU.U256.id) { // 8
-        rslt := 256
-      }
-      is(PMTU.U512.id) { // 9
-        rslt := 512
-      }
-      is(PMTU.U1024.id) { // 10
-        rslt := 1024
-      }
-      is(PMTU.U2048.id) { // 11
-        rslt := 2048
-      }
-      is(PMTU.U4096.id) { // 12
-        rslt := 4096
-      }
-      default {
-        rslt := 0
-        assert(
-          assertion = False,
-          message = L"invalid PMTU Bits=${pmtu}",
-          severity = FAILURE
-        )
-      }
-    }
-    rslt
-  }
-}
-
-object pmtuLenMask {
-  def apply(pmtu: Bits): Bits = {
-    val rslt = Bits(PMTU_FRAG_NUM_WIDTH bits)
-    switch(pmtu) {
-      // The value means right shift amount of bits
-      is(PMTU.U256.id) { // 8
-        rslt := 256 - 1
-      }
-      is(PMTU.U512.id) { // 9
-        rslt := 512 - 1
-      }
-      is(PMTU.U1024.id) { // 10
-        rslt := 1024 - 1
-      }
-      is(PMTU.U2048.id) { // 11
-        rslt := 2048 - 1
-      }
-      is(PMTU.U4096.id) { // 12
-        rslt := 4096 - 1
-      }
-      default {
-        rslt := 0
-        assert(
-          assertion = False,
-          message = L"invalid PMTU Bits=${pmtu}",
-          severity = FAILURE
-        )
-      }
-    }
-    rslt
-  }
-}
-
-/** Divide the dividend by a divisor, and take the celling
-  * NOTE: divisor must be power of 2
-  */
-object divideByPmtuUp {
-  def apply(dividend: UInt, pmtu: Bits): UInt = {
-    val shiftAmt = pmtuPktLenBytes(pmtu)
-    dividend >> shiftAmt + (moduloByPmtu(dividend, pmtu).orR.asUInt
-      .resize(widthOf(dividend)))
-  }
-}
-
-/** Modulo of the dividend by a divisor.
-  * NOTE: divisor must be power of 2
-  */
-object moduloByPmtu {
-  def apply(dividend: UInt, pmtu: Bits): UInt = {
-//    require(
-//      widthOf(dividend) >= widthOf(divisor),
-//      "width of dividend should >= that of divisor"
-//    )
-//    assert(
-//      assertion = CountOne(divisor) === 1,
-//      message = L"divisor=${divisor} should be power of 2",
-//      severity = FAILURE
-//    )
-    val mask = pmtuLenMask(pmtu)
-    dividend & mask.resize(widthOf(dividend)).asUInt
-  }
-}
-
-object StreamSequentialFork {
-  def apply[T <: Data](input: Stream[T], portCount: Int): Vec[Stream[T]] = {
-    val fork = new StreamSequentialFork(input.payloadType, portCount)
-      .setCompositeName(input, "seqfork", true)
-    fork.io.input << input
-    fork.io.outputs
-  }
-}
-
-class StreamSequentialFork[T <: Data](dataType: HardType[T], portCount: Int)
-    extends Component {
-  val io = new Bundle {
-    val input = slave(Stream(dataType))
-    val outputs = Vec(master(Stream(dataType)), portCount)
-  }
-
-  // Store if an output stream already has taken its value or not
-  val linkEnable = RegInit(Bits(portCount bits).setAll())
-
-  // Ready is true when every output stream takes or has taken its value
-  io.input.ready := True
-  for (i <- 0 until portCount) {
-    when(!io.outputs(i).ready && linkEnable(i)) {
-      io.input.ready := False
-    }
-  }
-
-  // Outputs are valid if the input is valid and
-  // preceding output streams have taken their values,
-  // When an output fires, mark its value as taken. */
-  for (i <- 0 until portCount) {
-    io.outputs(i).valid := io.input.valid && !(linkEnable(0, i bits).orR)
-    io.outputs(i).payload := io.input.payload
-    when(io.outputs(i).fire) {
-      linkEnable(i) := False
-    }
-  }
-
-  // Reset the storage for each new value
-  when(io.input.ready) {
-    linkEnable.setAll()
-  }
-}
-
-object StreamSource {
-  def apply(): Event = {
-    val rslt = Event
-    rslt.valid := True
-    rslt
-  }
-}
-
-object StreamSink {
-  def apply[T <: Data](payloadType: HardType[T]): Stream[T] =
-    Stream(payloadType).freeRun()
-}
-
-/*
-object StreamPipeStage {
-  def apply[T1 <: Data, T2 <: Data](input: Stream[T1],
-                                    continue: Bool,
-                                    flush: Bool)(f: (T1, Bool) => T2) =
-    new Composite(input) {
-      val inputStreamRegistered = input
-        .continueWhen(continue)
-        .throwWhen(flush)
-      val output = inputStreamRegistered
-        .combStage()
-        .translateWith(
-          f(inputStreamRegistered.payload, inputStreamRegistered.valid)
-        )
-        .pipelined(m2s = true, s2m = true)
-    }.output
-}
-
-object StreamPipeStageSink {
-  def apply[T1 <: Data, T2 <: Data](
-    input: Stream[T1],
-    continue: Bool,
-    flush: Bool
-  )(f: (T1, Bool) => T2)(sink: Stream[T2]) =
-    new Area {
-      sink << StreamPipeStage(input, continue, flush)(f)
-    }
-}
- */
-
-/*
-object SingleValidDataFlow {
-  def apply[T <: Data](inputStream: Stream[T]) =
-    new Composite(inputStream) {
-
-      // Insert bubble to input flow every first valid RX, clear after each RX fire
-      val insertInvalid = Reg(Bool()) init (False)
-      when(inputStream.valid) {
-        insertInvalid := True
-      } elsewhen (inputStream.fire) {
-        insertInvalid := False
-      }
-
-      val inputFlow = inputStream.asFlow.throwWhen(insertInvalid)
-    }.inputFlow
-}
-
-// SingleValidDataStream will take one valid data from inputStream,
-// once it's fired, the one valid datum is consumed and it has no more valid data,
-// and it will take a valid one again from inputStream if takeOneCond is true
-object SingleValidDataStream {
-  def apply[T <: Data](inputStream: Stream[T])(takeOneCond: Bool): Stream[T] = {
-    val validReg = RegInit(False)
-    val payloadReg = RegInit(inputStream.payload)
-
-    val singleValidDataStream = Stream(inputStream.payloadType)
-    singleValidDataStream.payload := payloadReg
-    singleValidDataStream.valid := validReg
-
-    // When fired, the single valid datum is consumed
-    when(singleValidDataStream.fire) {
-      validReg := False
-    }
-
-    val takeOneDoneReg = RegInit(False)
-    when(takeOneCond) {
-      takeOneDoneReg := False
-    } elsewhen (validReg) {
-      takeOneDoneReg := True
-    }
-
-    // Take next one valid datum, it'll keep taking if the inputStream valid is low
-    when(!takeOneDoneReg) {
-      validReg := inputStream.valid // One cycle delay
-    }
-
-    singleValidDataStream
-  }
-}
- */
 
 object OpCodeSeq {
   import OpCode._
@@ -867,7 +802,7 @@ object respPadCountCheck {
       when(
         OpCode.isFirstReadRespPkt(opcode) ||
           OpCode.isMidReadRespPkt(opcode) ||
-          OpCode.isSendOrWriteRespPkt(opcode) ||
+          OpCode.isNonReadAtomicRespPkt(opcode) ||
           OpCode.isAtomicRespPkt(opcode)
       ) {
         paddingCheck := padCount === 0
@@ -885,7 +820,7 @@ object respPadCountCheck {
           mtyCheck := pktFragLen === (widthOf(BTH()) + widthOf(
             AtomicAckETH()
           ) % busWidth.id)
-        } elsewhen (OpCode.isSendOrWriteRespPkt(opcode)) {
+        } elsewhen (OpCode.isNonReadAtomicRespPkt(opcode)) {
           // Acknowledge has BTH and AETH, total 48 + 4 = 52 bytes
           // BTH is included in packet payload
           // Assume AETH fits in bus width
@@ -905,113 +840,170 @@ object respPadCountCheck {
     }.rslt
 }
 
-//object pktLenCheck {
-//  def pmtuLen(pmtu: Bits) = {
-//    val rslt = UInt(RDMA_MAX_LEN_WIDTH bits)
-//    switch(pmtu) {
-//      is(PMTU.U256.id) {
-//        rslt := 256
-//      }
-//      is(PMTU.U512.id) {
-//        rslt := 512
-//      }
-//      is(PMTU.U1024.id) {
-//        rslt := 1024
-//      }
-//      is(PMTU.U2048.id) {
-//        rslt := 2048
-//      }
-//      is(PMTU.U4096.id) {
-//        rslt := 4096
-//      }
-//      default {
-//        assert(
-//          assertion = False,
-//          message = L"invalid PMTU=$pmtu",
-//          severity = FAILURE
-//        )
-//        rslt := 0
-//      }
-//    }
-//    rslt
-//  }
-//
-//  def apply(pktTotalLen: UInt, opcode: Bits, pmtu: Bits, busWidth: BusWidth) =
-//    new Composite(pktTotalLen) {
-//      val lengthCheck = Bool()
-//      when(
-//        OpCode.isFirstReqPkt(opcode) || OpCode.isMidReqPkt(opcode) || OpCode
-//          .isMidReadRespPkt(opcode)
-//      ) {
-//        // TODO: verify length check correctness
-//        lengthCheck := pmtuLen(pmtu) === pktTotalLen
-//      } elsewhen (OpCode.isLastReqPkt(opcode) || OpCode.isLastReadRespPkt(
-//        opcode
-//      )) {
-//        lengthCheck := 1 <= pktTotalLen && pktTotalLen <= pmtuLen(pmtu)
-//      } otherwise {
-//        lengthCheck := True
-//      }
-//    }.lengthCheck
-//}
+object computeEPsnInc {
+  def apply(pktFrag: RdmaDataPacket, pmtu: Bits, busWidth: BusWidth): UInt =
+    new Composite(pktFrag) {
+      val rslt = UInt(PSN_WIDTH bits)
+      val isReadReq = OpCode.isReadReqPkt(pktFrag.bth.opcode)
+      when(isReadReq) {
+        // BTH is included in inputPktFrag.data
+        // TODO: verify inputPktFrag.data is big endian
+        val rethBits = pktFrag.data(
+          (busWidth.id - widthOf(BTH()) - widthOf(RETH())) until
+            (busWidth.id - widthOf(BTH()))
+        )
+        val reth = RETH()
+        reth.assignFromBits(rethBits)
 
-object StreamVec {
-  implicit def build[T <: Data](that: Vec[Stream[T]]): StreamVec[T] =
-    new StreamVec(that)
+        rslt := computePktNum(reth.dlen, pmtu)
+      } otherwise {
+        rslt := 1
+
+        assert(
+          assertion = OpCode.isReqPkt(pktFrag.bth.opcode),
+          message =
+            L"computeEPsnInc() expects requests, but opcode=${pktFrag.bth.opcode}",
+          severity = FAILURE
+        )
+      }
+    }.rslt
 }
 
-class StreamVec[T <: Data](val strmVec: Vec[Stream[T]]) {
-  def <-/<(that: Vec[Stream[T]]): Area = new Area {
-    require(
-      strmVec.length == that.length,
-      s"StreamVec size not match, this.len=${strmVec.length} != that.len=${that.length}"
-    )
-    for (idx <- 0 until that.length) {
-      strmVec(idx) <-/< that(idx)
-    }
-  }
-  def <<(that: Vec[Stream[T]]): Area = new Area {
-    require(
-      strmVec.length == that.length,
-      s"StreamVec size not match, this.len=${strmVec.length} != that.len=${that.length}"
-    )
-    for (idx <- 0 until that.length) {
-      strmVec(idx) << that(idx)
-    }
-  }
+//========== Packet related utilities ==========
 
-//  def >-/>(that: Vec[Stream[T]]) = new Area {
+object computePktNum {
+  def apply(len: UInt, pmtu: Bits): UInt =
+    new Composite(len) {
+      val rslt = UInt(PSN_WIDTH bits)
+      val shiftAmt = UInt(PMTU_WIDTH bits)
+      val residueMaxWidth = PMTU.U4096.id
+      val residue = UInt(residueMaxWidth bits)
+      switch(pmtu) {
+        is(PMTU.U256.id) {
+          shiftAmt := PMTU.U256.id
+          residue := len(0, PMTU.U256.id bits).resize(residueMaxWidth)
+        }
+        is(PMTU.U512.id) {
+          shiftAmt := PMTU.U512.id
+          residue := len(0, PMTU.U512.id bits).resize(residueMaxWidth)
+        }
+        is(PMTU.U1024.id) {
+          shiftAmt := PMTU.U1024.id
+          residue := len(0, PMTU.U1024.id bits).resize(residueMaxWidth)
+        }
+        is(PMTU.U2048.id) {
+          shiftAmt := PMTU.U2048.id
+          residue := len(0, PMTU.U2048.id bits).resize(residueMaxWidth)
+        }
+        is(PMTU.U4096.id) {
+          shiftAmt := PMTU.U4096.id
+          residue := len(0, PMTU.U4096.id bits).resize(residueMaxWidth)
+        }
+        default {
+          shiftAmt := 0
+          residue := 0
+
+          report(message = L"invalid PMTU=$pmtu", severity = FAILURE)
+        }
+      }
+
+      val pktNum = (len >> shiftAmt) + (residue.orR).asUInt
+      // This downsize is safe, since max length is 2^32 bytes,
+      // And the min packet size is 256=2^8 bytes,
+      // So the max packet number is 2^PSN_WIDTH=2^24
+      rslt := pktNum.resize(PSN_WIDTH)
+    }.rslt
+}
+
+object pmtuPktLenBytes {
+  def apply(pmtu: Bits): UInt = {
+    val rslt = UInt(PMTU_FRAG_NUM_WIDTH bits)
+    switch(pmtu) {
+      // The PMTU enum value itself means right shift amount of bits
+      is(PMTU.U256.id) { // 8
+        rslt := 256
+      }
+      is(PMTU.U512.id) { // 9
+        rslt := 512
+      }
+      is(PMTU.U1024.id) { // 10
+        rslt := 1024
+      }
+      is(PMTU.U2048.id) { // 11
+        rslt := 2048
+      }
+      is(PMTU.U4096.id) { // 12
+        rslt := 4096
+      }
+      default {
+        rslt := 0
+        report(message = L"invalid PMTU Bits=${pmtu}", severity = FAILURE)
+      }
+    }
+    rslt
+  }
+}
+
+object pmtuLenMask {
+  def apply(pmtu: Bits): Bits = {
+    val rslt = Bits(PMTU_FRAG_NUM_WIDTH bits)
+    switch(pmtu) {
+      // The value means right shift amount of bits
+      is(PMTU.U256.id) { // 8
+        rslt := 256 - 1
+      }
+      is(PMTU.U512.id) { // 9
+        rslt := 512 - 1
+      }
+      is(PMTU.U1024.id) { // 10
+        rslt := 1024 - 1
+      }
+      is(PMTU.U2048.id) { // 11
+        rslt := 2048 - 1
+      }
+      is(PMTU.U4096.id) { // 12
+        rslt := 4096 - 1
+      }
+      default {
+        rslt := 0
+        report(message = L"invalid PMTU Bits=${pmtu}", severity = FAILURE)
+      }
+    }
+    rslt
+  }
+}
+
+/** Divide the dividend by a divisor, and take the celling
+  * NOTE: divisor must be power of 2
+  */
+object divideByPmtuUp {
+  def apply(dividend: UInt, pmtu: Bits): UInt = {
+    val shiftAmt = pmtuPktLenBytes(pmtu)
+    dividend >> shiftAmt + (moduloByPmtu(dividend, pmtu).orR.asUInt
+      .resize(widthOf(dividend)))
+  }
+}
+
+/** Modulo of the dividend by a divisor.
+  * NOTE: divisor must be power of 2
+  */
+object moduloByPmtu {
+  def apply(dividend: UInt, pmtu: Bits): UInt = {
 //    require(
-//      strmVec.length == that.length,
-//      s"StreamVec size not match, this.len=${strmVec.length} != that.len=${that.length}"
+//      widthOf(dividend) >= widthOf(divisor),
+//      "width of dividend should >= that of divisor"
 //    )
-//    for (idx <- 0 until that.length) {
-//      that(idx) <-/< strmVec(idx)
-//    }
-//  }
-}
-
-object ComponentEnrichment {
-  implicit class ComponentExt[T <: Component](val that: T) {
-    def stub(): T = that.rework {
-      // step1: First remove all we don't want
-      that.children.clear()
-      that.dslBody.foreachStatements {
-        case bt: BaseType if !bt.isDirectionLess =>
-        case s                                   => s.removeStatement()
-      }
-      // step2: remove output and assign zero
-      // this step can't merge into step1
-      that.dslBody.foreachStatements {
-        case bt: BaseType if bt.isOutput | bt.isInOut =>
-          bt.removeAssignments()
-          bt := bt.getZero
-        case _ =>
-      }
-      that
-    }
+//    assert(
+//      assertion = CountOne(divisor) === 1,
+//      message = L"divisor=${divisor} should be power of 2",
+//      severity = FAILURE
+//    )
+    val mask = pmtuLenMask(pmtu)
+    dividend & mask.resize(widthOf(dividend)).asUInt
   }
 }
+
+//========== TupleBundle related utilities ==========
 
 //object asTuple {
 //  def apply[T1 <: Data, T2 <: Data](t2: TupleBundle2[T1, T2]) =
