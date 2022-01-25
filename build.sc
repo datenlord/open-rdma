@@ -5,7 +5,6 @@ import mill._, scalalib._, scalafmt._
 
 val spinalVersion = "1.6.0"
 val scalaTestVersion = "3.2.10"
-val vexRiscvVersion = "2.0.0"
 
 trait CommonSpinalModule extends ScalaModule with ScalafmtModule with ScalafixModule { // with ScalaMetalsSupport {
   def scalaVersion = "2.13.6"
@@ -79,7 +78,6 @@ trait CommonSpinalModule extends ScalaModule with ScalafmtModule with ScalafixMo
     "-Xlint:unit-special",            // Warn for specialization of Unit in parameter position.
     "-Xlint:multiarg-infix",          // Infix operator was defined or used with multiarg operand.
     "-Xlint:implicit-recursion",      // Implicit resolves to an enclosing definition.
-
   )
 
   override def ivyDeps = Agg(

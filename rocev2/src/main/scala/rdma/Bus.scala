@@ -21,13 +21,13 @@ case class DevMetaData() extends Bundle {
   }
 }
 
-case class RetryNotifier() extends Bundle {
+case class SqRetryNotifier() extends Bundle {
   val pulse = Bool()
   val psnStart = UInt(PSN_WIDTH bits)
   val reason = RetryReason()
 
-  def merge(that: RetryNotifier, curPsn: UInt): RetryNotifier = {
-    val rslt = RetryNotifier()
+  def merge(that: SqRetryNotifier, curPsn: UInt): SqRetryNotifier = {
+    val rslt = SqRetryNotifier()
     rslt.pulse := this.pulse || that.pulse
     when(this.pulse && !that.pulse) {
       rslt.psnStart := this.psnStart
@@ -49,7 +49,7 @@ case class RetryNotifier() extends Bundle {
       assert(
         assertion = this.psnStart =/= that.psnStart,
         message =
-          L"impossible to have two RetryNotifier with the same PSN=${this.psnStart}",
+          L"impossible to have two SqRetryNotifier with the same PSN=${this.psnStart}",
         severity = FAILURE
       )
     }
@@ -61,23 +61,12 @@ case class RnrNakSeqClear() extends Bundle {
   val pulse = Bool()
 }
 
-case class RnrNak() extends Bundle {
+case class RetryNak() extends Bundle {
   val psn = UInt(PSN_WIDTH bits)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val pulse = Bool()
 
-  def findRnrPreOpCode(curOpCode: Bits) =
-    new Composite(this) {
-      val rslt = Bits(OPCODE_WIDTH bits)
-      when(OpCode.isWriteLastReqPkt(curOpCode)) {
-        rslt := OpCode.RDMA_WRITE_MIDDLE.id
-      } otherwise {
-        rslt := OpCode.SEND_ONLY.id
-      }
-    }.rslt
-
-  // TODO: remove this
-  def setDefaultVal(): this.type = {
+  def setNoErr(): this.type = {
     psn := 0
     preOpCode := OpCode.SEND_ONLY.id
     pulse := False
@@ -85,8 +74,9 @@ case class RnrNak() extends Bundle {
   }
 }
 
-case class NakNotifier() extends Bundle {
-  val seqErr = Bool()
+case class SqNakNotifier() extends Bundle {
+//  val rnr = RetryNak()
+//  val seqErr = RetryNak()
   val invReq = Bool()
   val rmtAcc = Bool()
   val rmtOp = Bool()
@@ -95,6 +85,89 @@ case class NakNotifier() extends Bundle {
   def setFromAeth(aeth: AETH): this.type = {
     when(aeth.isNormalAck()) {
       setNoErr()
+      //    } elsewhen (aeth.isRnrNak()) {
+      //      setRnrNak(aeth)
+      //    } elsewhen (aeth.isSeqNak()) {
+      //      setSeqErr(aeth)
+    } elsewhen (aeth.isInvReqNak()) {
+      setInvReq()
+    } elsewhen (aeth.isRmtAccNak()) {
+      setRmtAcc()
+    } elsewhen (aeth.isRmtOpNak()) {
+      setRmtOp()
+    } otherwise {
+      report(
+        message =
+          L"illegal AETH to set SqNakNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}",
+        severity = FAILURE
+      )
+      setLocalErr()
+    }
+    this
+  }
+
+  private def setInvReq(): this.type = {
+    invReq := True
+    this
+  }
+
+  private def setRmtAcc(): this.type = {
+    rmtAcc := True
+    this
+  }
+
+  private def setRmtOp(): this.type = {
+    rmtOp := True
+    this
+  }
+
+  def setLocalErr(): this.type = {
+    localErr := True
+    this
+  }
+
+  def setNoErr(): this.type = {
+//    rnr.setNoErr()
+//    seqErr.setNoErr()
+    invReq := False
+    rmtAcc := False
+    rmtOp := False
+    localErr := False
+    this
+  }
+
+  def hasFatalNak(): Bool = invReq || rmtAcc || rmtOp || localErr
+
+  def ||(that: SqNakNotifier): SqNakNotifier = {
+    val rslt = SqNakNotifier()
+//      rslt.seqErr := this.seqErr || that.seqErr
+    rslt.invReq := this.invReq || that.invReq
+    rslt.rmtAcc := this.rmtAcc || that.rmtAcc
+    rslt.rmtOp := this.rmtOp || that.rmtOp
+    rslt.localErr := this.localErr || that.localErr
+    rslt
+  }
+}
+
+case class RqNakNotifier() extends Bundle {
+  val rnr = RetryNak()
+  val seqErr = RetryNak()
+  val invReq = Bool()
+  val rmtAcc = Bool()
+  val rmtOp = Bool()
+//  val localErr = Bool()
+
+  def setFromAeth(
+      aeth: AETH,
+      pulse: Bool,
+      preOpCode: Bits,
+      psn: UInt
+  ): this.type = {
+    setNoErr()
+    when(aeth.isRnrNak()) {
+      setRnrNak(pulse, preOpCode, psn)
+    } elsewhen (aeth.isSeqNak()) {
+      setSeqErr(pulse, preOpCode, psn)
     } elsewhen (aeth.isInvReqNak()) {
       setInvReq()
     } elsewhen (aeth.isRmtAccNak()) {
@@ -107,69 +180,78 @@ case class NakNotifier() extends Bundle {
           L"illegal AETH to set NakNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}",
         severity = FAILURE
       )
-      setLocalErr()
+      setInvReq()
     }
     this
   }
 
-  def setSeqErr(): this.type = {
-    seqErr := True
+  private def setRnrNak(pulse: Bool, preOpCode: Bits, psn: UInt): this.type = {
+    rnr.pulse := pulse
+    rnr.psn := psn
+    rnr.preOpCode := preOpCode
     this
   }
 
-  def setInvReq(): this.type = {
+  private def setSeqErr(pulse: Bool, preOpCode: Bits, psn: UInt): this.type = {
+    seqErr.pulse := pulse
+    seqErr.psn := psn
+    seqErr.preOpCode := preOpCode
+    this
+  }
+
+  private def setInvReq(): this.type = {
     invReq := True
     this
   }
 
-  def setRmtAcc(): this.type = {
+  private def setRmtAcc(): this.type = {
     rmtAcc := True
     this
   }
 
-  def setRmtOp(): this.type = {
+  private def setRmtOp(): this.type = {
     rmtOp := True
     this
   }
 
-  def setLocalErr(): this.type = {
-    localErr := True
-    this
-  }
+//  private def setLocalErr(): this.type = {
+//    localErr := True
+//    this
+//  }
 
   def setNoErr(): this.type = {
-    seqErr := False
+    rnr.setNoErr()
+    seqErr.setNoErr()
     invReq := False
     rmtAcc := False
     rmtOp := False
-    localErr := False
+//    localErr := False
     this
   }
 
-  def hasFatalNak(): Bool = invReq || rmtAcc || rmtOp || localErr
+  def hasFatalNak(): Bool = invReq || rmtAcc || rmtOp // || localErr
 
-  def ||(that: NakNotifier): NakNotifier = {
-    val rslt = NakNotifier()
-    rslt.seqErr := this.seqErr || that.seqErr
-    rslt.invReq := this.invReq || that.invReq
-    rslt.rmtAcc := this.rmtAcc || that.rmtAcc
-    rslt.rmtOp := this.rmtOp || that.rmtOp
-    rslt.localErr := this.localErr || that.localErr
-    rslt
-  }
+//  def ||(that: NakNotifier): NakNotifier = {
+//    val rslt = NakNotifier()
+//    rslt.seqErr := this.seqErr || that.seqErr
+//    rslt.invReq := this.invReq || that.invReq
+//    rslt.rmtAcc := this.rmtAcc || that.rmtAcc
+//    rslt.rmtOp := this.rmtOp || that.rmtOp
+//    rslt.localErr := this.localErr || that.localErr
+//    rslt
+//  }
 }
 
 case class RqNotifier() extends Bundle {
-  val nak = NakNotifier()
-  val rnr = RnrNak()
+  val nak = RqNakNotifier()
   val clearRnrOrNakSeq = RnrNakSeqClear()
 
   def hasFatalNak(): Bool = nak.hasFatalNak()
 }
 
 case class SqNotifier() extends Bundle {
-  val nak = NakNotifier()
-  val retry = RetryNotifier()
+  val nak = SqNakNotifier()
+  val retry = SqRetryNotifier()
   val workReqHasFence = Bool()
   val workReqCacheEmpty = Bool()
   val coalesceAckDone = Bool()
@@ -177,52 +259,12 @@ case class SqNotifier() extends Bundle {
   def hasFatalNak(): Bool = nak.hasFatalNak()
 }
 
-case class RqNakNotifier() extends Bundle {
-  val reqCheck = NakNotifier()
-  val rnr = RnrNak()
-  val pktLen = NakNotifier()
-  val addr = NakNotifier()
-
-  def hasFatalNak(): Bool =
-    reqCheck.hasFatalNak() || pktLen.hasFatalNak() || addr.hasFatalNak()
-
-  // TODO: remove this
-  def setDefaultVal(): this.type = {
-    reqCheck.setNoErr()
-    pktLen.setNoErr()
-    addr.setNoErr()
-    this
-  }
-}
-
-case class SqNakNotifier() extends Bundle {
-  val reqSender = NakNotifier()
-  val respHandler = NakNotifier()
-
-  def hasFatalNak(): Bool =
-    reqSender.hasFatalNak() || respHandler.hasFatalNak()
-
-  // TODO: remove this
-  def setDefaultVal(): this.type = {
-    reqSender.setNoErr()
-    respHandler.setNoErr()
-    this
-  }
-}
-
-//case class NakNotifier() extends Bundle {
-//  val rq = RqNakNotifier()
-//  val sq = SqNakNotifier()
-//
-//  def hasFatalNak(): Bool = rq.hasFatalNak() || sq.hasFatalNak()
-//}
-
 case class RecvQCtrl() extends Bundle {
   val stateErrFlush = Bool()
   val rnrFlush = Bool()
   val rnrTimeOut = Bool()
   val nakSeqTrigger = Bool()
-//  val flush = Bool()
+  val flush = Bool()
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
@@ -230,7 +272,7 @@ case class RecvQCtrl() extends Bundle {
     rnrFlush := False
     rnrTimeOut := True
     nakSeqTrigger := False
-//    flush := False
+    flush := False
     this
   }
 }
@@ -252,19 +294,24 @@ case class EPsnInc() extends Bundle {
   val preReqOpCode = Bits(OPCODE_WIDTH bits)
 }
 
-case class PsnInc() extends Bundle {
+case class NPsnInc() extends Bundle {
   val inc = Bool()
   val incVal = UInt(PSN_WIDTH bits)
 }
 
+case class OPsnInc() extends Bundle {
+  val inc = Bool()
+  val psnVal = UInt(PSN_WIDTH bits)
+}
+
 case class RqPsnInc() extends Bundle {
   val epsn = EPsnInc()
-  val opsn = PsnInc()
+  val opsn = OPsnInc()
 }
 
 case class SqPsnInc() extends Bundle {
-  val npsn = PsnInc()
-  val opsn = PsnInc()
+  val npsn = NPsnInc()
+  val opsn = OPsnInc()
 }
 
 case class PsnIncNotifier() extends Bundle {
@@ -275,7 +322,7 @@ case class PsnIncNotifier() extends Bundle {
 case class QpAttrData() extends Bundle {
   val ipv4Peer = Bits(IPV4_WIDTH bits) // IPv4 only
 
-  val pd = Bits(PD_ID_WIDTH bits)
+  val pdId = Bits(PD_ID_WIDTH bits)
   val epsn = UInt(PSN_WIDTH bits)
   val npsn = UInt(PSN_WIDTH bits)
   val rqOutPsn = UInt(PSN_WIDTH bits)
@@ -309,7 +356,7 @@ case class QpAttrData() extends Bundle {
 
   def initOrReset(): this.type = {
     ipv4Peer := 0
-    pd := 0
+    pdId := 0
     epsn := 0
     npsn := 0
     rqOutPsn := 0
@@ -326,6 +373,8 @@ case class QpAttrData() extends Bundle {
     rqPreReqOpCode := OpCode.SEND_ONLY.id
     rnrTimeOut := 1 // 1 means 0.01ms
     respTimeOut := 17 // 17 means 536.8709ms
+    retryPsnStart := 0
+    retryReason := RetryReason.RESP_TIMEOUT
     maxRetryCnt := 3
 
 //    fence := False
@@ -815,14 +864,10 @@ case class DmaReadBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
   val resp = Stream(Fragment(DmaReadResp(busWidth)))
 
   def arbitReq(dmaRdReqVec: Vec[Stream[DmaReadReq]]) = new Area {
-    val dmaRdReqSel = StreamArbiterFactory.roundRobin.on(dmaRdReqVec)
+    val dmaRdReqSel =
+      StreamArbiterFactory.roundRobin.transactionLock.on(dmaRdReqVec)
     req <-/< dmaRdReqSel
   }
-
-//  // TODO: should demux by opcode type
-//  def forkResp(dmaRdRespVec: Vec[Stream[Fragment[DmaReadResp]]]) = new Area {
-//    dmaRdRespVec <-/< StreamFork(resp, portCount = dmaRdRespVec.size)
-//  }
 
   def deMuxRespByInitiator(
       rqRead: Stream[Fragment[DmaReadResp]],
@@ -874,12 +919,21 @@ case class DmaReadBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
       dmaRdRespVec: Vec[Stream[Fragment[DmaReadResp]]],
       qpAttrVec: Vec[QpAttrData]
   ) = new Area {
-    val dmaRdReqSel = StreamArbiterFactory.roundRobin.on(dmaRdReqVec)
+    val dmaRdReqSel =
+      StreamArbiterFactory.roundRobin.transactionLock.on(dmaRdReqVec)
     req <-/< dmaRdReqSel
 
     val dmaRdRespOH = qpAttrVec.map(_.sqpn === resp.sqpn)
-    val dmaRdRespIdx = OHToUInt(dmaRdRespOH)
-    dmaRdRespVec <-/< StreamDemux(resp, dmaRdRespIdx, dmaRdRespVec.size)
+    val foundRespTargetQp = dmaRdRespOH.orR
+    when(resp.valid) {
+      assert(
+        assertion = foundRespTargetQp,
+        message =
+          L"failed to find DMA read response target QP with QPN=${resp.sqpn}",
+        severity = FAILURE
+      )
+    }
+    dmaRdRespVec <-/< StreamOneHotDeMux(resp, dmaRdRespOH.asBits())
   }
 
   def >>(that: DmaReadBus): Unit = {
@@ -973,13 +1027,6 @@ case class DmaWriteReqBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
 case class DmaWriteRespBus() extends Bundle with IMasterSlave {
   val resp = Stream(DmaWriteResp())
 
-//  def demuxRespByQpn(dmaWrRespVec: Vec[Stream[DmaWriteResp]],
-//                     qpAttrVec: Vec[QpAttrData]) = new Area {
-//    val dmaWrRespOH = qpAttrVec.map(_.sqpn === resp.sqpn)
-//    val dmaWrRespIdx = OHToUInt(dmaWrRespOH)
-//    dmaWrRespVec <-/< StreamDemux(resp, dmaWrRespIdx, dmaWrRespVec.size)
-//  }
-
   def >>(that: DmaWriteRespBus): Unit = {
     this.resp >> that.resp
   }
@@ -1003,8 +1050,16 @@ case class DmaWriteBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
     arbitReq(dmaWrReqVec)
 
     val dmaWrRespOH = qpAttrVec.map(_.sqpn === resp.sqpn)
-    val dmaWrRespIdx = OHToUInt(dmaWrRespOH)
-    dmaWrRespVec <-/< StreamDemux(resp, dmaWrRespIdx, dmaWrRespVec.size)
+    val foundRespTargetQp = dmaWrRespOH.orR
+    when(resp.valid) {
+      assert(
+        assertion = foundRespTargetQp,
+        message =
+          L"failed to find DMA write response target QP with QPN=${resp.sqpn}",
+        severity = FAILURE
+      )
+    }
+    dmaWrRespVec <-/< StreamOneHotDeMux(resp, dmaWrRespOH.asBits())
   }
 
   def arbitReq(dmaWrReqVec: Vec[Stream[Fragment[DmaWriteReq]]]) =
@@ -1013,11 +1068,6 @@ case class DmaWriteBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
         StreamArbiterFactory.roundRobin.fragmentLock.on(dmaWrReqVec)
       req <-/< dmaWrReqSel
     }
-
-//  // TODO: should demux by opcode type
-//  def forkResp(dmaWrRespVec: Vec[Stream[DmaWriteResp]]) = new Area {
-//    dmaWrRespVec <-/< StreamFork(resp, portCount = dmaWrRespVec.size)
-//  }
 
   def deMuxRespByInitiator(
       rqWrite: Stream[DmaWriteResp],
@@ -1267,12 +1317,12 @@ case class CachedWorkReq() extends Bundle {
   }
 }
 
-case class WorkReqCacheReq() extends Bundle {
+case class WorkReqCacheQueryReq() extends Bundle {
   val psn = UInt(PSN_WIDTH bits)
 }
 
-case class WorkReqCacheReqBus() extends Bundle with IMasterSlave {
-  val req = Stream(WorkReqCacheReq())
+case class WorkReqCacheQueryReqBus() extends Bundle with IMasterSlave {
+  val req = Stream(WorkReqCacheQueryReq())
 
   override def asMaster(): Unit = {
     master(req)
@@ -1281,7 +1331,7 @@ case class WorkReqCacheReqBus() extends Bundle with IMasterSlave {
 
 case class WorkReqCacheResp() extends Bundle {
   val cachedWorkReq = CachedWorkReq()
-  val query = WorkReqCacheReq()
+  val query = WorkReqCacheQueryReq()
   val found = Bool()
 }
 
@@ -1294,7 +1344,7 @@ case class WorkReqCacheRespBus() extends Bundle with IMasterSlave {
 }
 
 case class WorkReqCacheQueryBus() extends Bundle with IMasterSlave {
-  val req = Stream(WorkReqCacheReq())
+  val req = Stream(WorkReqCacheQueryReq())
   val resp = Stream(WorkReqCacheResp())
 
   def >>(that: WorkReqCacheQueryBus): Unit = {
@@ -1401,6 +1451,11 @@ case class ReadAtomicResultCacheRespAndDmaReadResp(busWidth: BusWidth)
   val dmaReadResp = DmaReadResp(busWidth)
   val resultCacheResp = ReadAtomicResultCacheResp()
 }
+case class ReadAtomicResultCacheDataAndDmaReadResp(busWidth: BusWidth)
+    extends Bundle {
+  val dmaReadResp = DmaReadResp(busWidth)
+  val resultCacheData = ReadAtomicResultCacheData()
+}
 
 /** for SQ */
 case class WorkReqCacheRespAndDmaReadResp(busWidth: BusWidth) extends Bundle {
@@ -1425,22 +1480,73 @@ case class WorkComp() extends Bundle {
   val status = Bits(WC_STATUS_WIDTH bits)
   val immDtOrRmtKeyToInv = Bits(LRKEY_IMM_DATA_WIDTH bits)
 
-  def setSuccessFromWorkReq(workReq: WorkReq, dqpn: UInt): this.type = {
-    id := workReq.id
-    setOpCodeFromSqWorkReqOpCode(workReq.opcode)
-    lenBytes := workReq.lenBytes
-    sqpn := workReq.sqpn
+  def setSuccessFromRecvWorkReq(
+      recvWorkReq: RecvWorkReq,
+      reqOpCode: Bits,
+      dqpn: UInt,
+      reqTotalLenBytes: UInt,
+      pktFragData: Bits
+  ): this.type = {
+    val status = Bits(WC_STATUS_WIDTH bits)
+    status := WorkCompStatus.SUCCESS.id
+    setFromRecvWorkReq(
+      recvWorkReq,
+      reqOpCode,
+      dqpn,
+      status,
+      reqTotalLenBytes,
+      pktFragData
+    )
+  }
+
+  def setFromRecvWorkReq(
+      recvWorkReq: RecvWorkReq,
+      reqOpCode: Bits,
+      dqpn: UInt,
+      status: Bits,
+      reqTotalLenBytes: UInt,
+      pktFragData: Bits
+  ): this.type = {
+    id := recvWorkReq.id
+    setOpCodeFromRqReqOpCode(reqOpCode)
+    sqpn := recvWorkReq.sqpn
     this.dqpn := dqpn
-    when(WorkReqOpCode.hasImmDt(workReq.opcode)) {
+    lenBytes := reqTotalLenBytes
+
+    require(
+      widthOf(IETH()) == widthOf(ImmDt()),
+      s"widthOf(IETH())=${widthOf(IETH())} should == widthOf(ImmDt())=${widthOf(ImmDt())}"
+    )
+    require(
+      widthOf(pktFragData) >= widthOf(BTH()) + widthOf(ImmDt()),
+      s"widthOf(pktFragData)=${widthOf(pktFragData)} should >= widthOf(BTH())=${widthOf(
+        BTH()
+      )} + widthOf(ImmDt())=${widthOf(ImmDt())}"
+    )
+    // TODO: verify inputPktFrag.data is big endian
+    val immDtOrRmtKeyToInvBits = pktFragData(
+      (widthOf(pktFragData) - widthOf(BTH()) - widthOf(ImmDt())) until
+        (widthOf(pktFragData) - widthOf(BTH()))
+    )
+
+    when(OpCode.hasImmDt(reqOpCode)) {
       flags := WorkCompFlags.WITH_IMM.id
-    } elsewhen (WorkReqOpCode.hasIeth(workReq.opcode)) {
+      immDtOrRmtKeyToInv := immDtOrRmtKeyToInvBits
+    } elsewhen (OpCode.hasIeth(reqOpCode)) {
       flags := WorkCompFlags.WITH_INV.id
+      immDtOrRmtKeyToInv := immDtOrRmtKeyToInvBits
     } otherwise {
       flags := WorkCompFlags.NO_FLAGS.id
+      immDtOrRmtKeyToInv := 0
     }
-    this.status := WorkCompStatus.SUCCESS.id
-    immDtOrRmtKeyToInv := workReq.immDtOrRmtKeyToInv
+    this.status := status
     this
+  }
+
+  def setSuccessFromWorkReq(workReq: WorkReq, dqpn: UInt): this.type = {
+    val status = Bits(WC_STATUS_WIDTH bits)
+    status := WorkCompStatus.SUCCESS.id
+    setFromWorkReq(workReq, dqpn, status)
   }
 
   def setFromWorkReq(workReq: WorkReq, dqpn: UInt, status: Bits): this.type = {
@@ -1469,7 +1575,8 @@ case class WorkComp() extends Bundle {
     } otherwise {
       report(
         message =
-          L"unmatched WC opcode at RQ site for request opcode=${reqOpCode}"
+          L"unmatched WC opcode at RQ site for request opcode=${reqOpCode}",
+        severity = FAILURE
       )
       opcode := 0
     }
@@ -1540,11 +1647,177 @@ case class WorkComp() extends Bundle {
   }
 }
 
-case class AddrCacheReadReq() extends Bundle {
+case class QpCreateOrModifyReq() extends Bundle {
+  val qpAttr = QpAttrData()
+}
+
+case class QpCreateOrModifyResp() extends Bundle {
+  val successOrFailure = Bool()
+}
+
+case class QpCreateOrModifyBus() extends Bundle with IMasterSlave {
+  val req = Stream(QpCreateOrModifyReq())
+  val resp = Stream(QpCreateOrModifyResp())
+
+  def >>(that: QpCreateOrModifyBus): Unit = {
+    this.req >> that.req
+    this.resp << that.resp
+  }
+
+  def <<(that: QpCreateOrModifyBus): Unit = that >> this
+
+  override def asMaster(): Unit = {
+    master(req)
+    slave(resp)
+  }
+}
+
+case class PdAddrCacheReadReq() extends Bundle {
+  val initiator = AddrQueryInitiator()
   val sqpn = UInt(QPN_WIDTH bits)
   val psn = UInt(PSN_WIDTH bits)
   val key = Bits(LRKEY_IMM_DATA_WIDTH bits)
-  val pd = Bits(PD_ID_WIDTH bits)
+  val pdId = Bits(PD_ID_WIDTH bits)
+  val remoteOrLocalKey = Bool() // True: remote, False: local
+  val accessType = Bits(ACCESS_TYPE_WIDTH bits)
+  val va = UInt(MEM_ADDR_WIDTH bits)
+  val dataLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
+
+  def setKeyTypeRemoteOrLocal(isRemoteKey: Bool): this.type = {
+    remoteOrLocalKey := isRemoteKey
+    this
+  }
+}
+
+case class PdAddrCacheReadResp() extends Bundle {
+  val initiator = AddrQueryInitiator()
+  val sqpn = UInt(QPN_WIDTH bits)
+  val psn = UInt(PSN_WIDTH bits)
+  val keyValid = Bool()
+  val sizeValid = Bool()
+  val accessValid = Bool()
+  val pa = UInt(MEM_ADDR_WIDTH bits)
+}
+
+case class PdAddrCacheReadBus() extends Bundle with IMasterSlave {
+  val req = Stream(PdAddrCacheReadReq())
+  val resp = Stream(PdAddrCacheReadResp())
+
+  def >>(that: PdAddrCacheReadBus): Unit = {
+    this.req >> that.req
+    this.resp << that.resp
+  }
+
+  def <<(that: PdAddrCacheReadBus): Unit = that >> this
+
+  override def asMaster(): Unit = {
+    master(req)
+    slave(resp)
+  }
+}
+
+case class PdCreateOrDeleteReq() extends Bundle {
+  val createOrDelete = CRUD()
+  val pdId = Bits(PD_ID_WIDTH bits)
+}
+
+case class PdCreateOrDeleteResp() extends Bundle {
+  val successOrFailure = Bool()
+  val pdId = Bits(PD_ID_WIDTH bits)
+}
+
+case class PdCreateOrDeleteBus() extends Bundle with IMasterSlave {
+  val req = Stream(PdCreateOrDeleteReq())
+  val resp = Stream(PdCreateOrDeleteResp())
+
+  def >>(that: PdCreateOrDeleteBus): Unit = {
+    this.req >> that.req
+    this.resp << that.resp
+  }
+
+  def <<(that: PdCreateOrDeleteBus): Unit = that >> this
+
+  override def asMaster(): Unit = {
+    master(req)
+    slave(resp)
+  }
+}
+
+case class PdAddrDataCreateOrDeleteReq() extends Bundle {
+  val createOrDelete = CRUD()
+  val pdId = Bits(PD_ID_WIDTH bits)
+  val addrData = AddrData()
+}
+
+case class PdAddrDataCreateOrDeleteResp() extends Bundle {
+  val successOrFailure = Bool()
+}
+
+case class PdAddrDataCreateOrDeleteBus() extends Bundle with IMasterSlave {
+  val req = Stream(PdAddrDataCreateOrDeleteReq())
+  val resp = Stream(PdAddrDataCreateOrDeleteResp())
+
+  def >>(that: PdAddrDataCreateOrDeleteBus): Unit = {
+    this.req >> that.req
+    this.resp << that.resp
+  }
+
+  def <<(that: PdAddrDataCreateOrDeleteBus): Unit = that >> this
+
+  override def asMaster(): Unit = {
+    master(req)
+    slave(resp)
+  }
+}
+
+case class AddrCacheDataCreateOrDeleteReq() extends Bundle {
+  val createOrDelete = CRUD()
+  val addrData = AddrData()
+}
+
+case class AddrCacheDataCreateOrDeleteResp() extends Bundle {
+  val successOrFailure = Bool()
+}
+
+case class AddrCacheDataCreateOrDeleteBus() extends Bundle with IMasterSlave {
+  val req = Stream(AddrCacheDataCreateOrDeleteReq())
+  val resp = Stream(AddrCacheDataCreateOrDeleteBus())
+
+  override def asMaster(): Unit = {
+    master(req)
+    slave(resp)
+  }
+}
+
+//case class PdAddrCacheQueryReq() extends Bundle {
+//  val remoteOrLocalKey = Bool() // True: remote, False: local
+//  val key = Bits(LRKEY_IMM_DATA_WIDTH bits)
+//}
+
+case class AddrData() extends Bundle {
+  val lkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
+  val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
+  val accessType = Bits(ACCESS_TYPE_WIDTH bits)
+  val va = UInt(MEM_ADDR_WIDTH bits)
+  val pa = UInt(MEM_ADDR_WIDTH bits)
+  val dataLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
+
+  def init(): this.type = {
+    lkey := 0
+    rkey := 0
+    accessType := 0
+    va := 0
+    pa := 0
+    dataLenBytes := 0
+    this
+  }
+}
+
+case class QpAddrCacheAgentReadReq() extends Bundle {
+  val sqpn = UInt(QPN_WIDTH bits)
+  val psn = UInt(PSN_WIDTH bits)
+  val key = Bits(LRKEY_IMM_DATA_WIDTH bits)
+  val pdId = Bits(PD_ID_WIDTH bits)
   // TODO: consider remove remoteOrLocalKey
   private val remoteOrLocalKey = Bool() // True: remote, False: local
   val accessType = Bits(ACCESS_TYPE_WIDTH bits)
@@ -1561,7 +1834,7 @@ case class AddrCacheReadReq() extends Bundle {
     sqpn := 0
     psn := 0
     key := 0
-    pd := 0
+    pdId := 0
     remoteOrLocalKey := True
     accessType := 0
     va := 0
@@ -1570,12 +1843,13 @@ case class AddrCacheReadReq() extends Bundle {
   }
 }
 
-case class AddrCacheReadResp() extends Bundle {
+case class QpAddrCacheAgentReadResp() extends Bundle {
   val sqpn = UInt(QPN_WIDTH bits)
   val psn = UInt(PSN_WIDTH bits)
-  val found = Bool()
+//  val found = Bool()
   val keyValid = Bool()
   val sizeValid = Bool()
+  val accessValid = Bool()
   // val va = UInt(MEM_ADDR_WIDTH bits)
   val pa = UInt(MEM_ADDR_WIDTH bits)
   // val len = UInt(RDMA_MAX_LEN_WIDTH bits)
@@ -1584,60 +1858,61 @@ case class AddrCacheReadResp() extends Bundle {
   def setDefaultVal(): this.type = {
     sqpn := 0
     psn := 0
-    found := False
+//    found := False
     keyValid := False
     sizeValid := False
+    accessValid := False
     // va := 0
     pa := 0
     this
   }
 }
 
-case class AddrCacheReadReqBus() extends Bundle with IMasterSlave {
-  val req = Stream(AddrCacheReadReq())
+case class QpAddrCacheAgentReadReqBus() extends Bundle with IMasterSlave {
+  val req = Stream(QpAddrCacheAgentReadReq())
 
-//  def >>(that: AddrCacheReadReqBus): Unit = {
+//  def >>(that: QpAddrCacheAgentReadReqBus): Unit = {
 //    this.req >> that.req
 //  }
 //
-//  def <<(that: AddrCacheReadReqBus): Unit = that >> this
+//  def <<(that: QpAddrCacheAgentReadReqBus): Unit = that >> this
 
   override def asMaster(): Unit = {
     master(req)
   }
 }
 
-case class AddrCacheReadRespBus() extends Bundle with IMasterSlave {
-  val resp = Stream(AddrCacheReadResp())
+case class QpAddrCacheAgentReadRespBus() extends Bundle with IMasterSlave {
+  val resp = Stream(QpAddrCacheAgentReadResp())
 
-//  def >>(that: AddrCacheReadRespBus): Unit = {
+//  def >>(that: QpAddrCacheAgentReadRespBus): Unit = {
 //    this.resp >> that.resp
 //  }
 //
-//  def <<(that: AddrCacheReadRespBus): Unit = that >> this
+//  def <<(that: QpAddrCacheAgentReadRespBus): Unit = that >> this
 
   override def asMaster(): Unit = {
     master(resp)
   }
 }
 
-case class AddrCacheReadBus() extends Bundle with IMasterSlave {
-  val req = Stream(AddrCacheReadReq())
-  val resp = Stream(AddrCacheReadResp())
+case class QpAddrCacheAgentReadBus() extends Bundle with IMasterSlave {
+  val req = Stream(QpAddrCacheAgentReadReq())
+  val resp = Stream(QpAddrCacheAgentReadResp())
 
-  def >>(that: AddrCacheReadBus): Unit = {
+  def >>(that: QpAddrCacheAgentReadBus): Unit = {
     this.req >> that.req
     this.resp << that.resp
   }
 
-  def <<(that: AddrCacheReadBus): Unit = that >> this
+  def <<(that: QpAddrCacheAgentReadBus): Unit = that >> this
 
   override def asMaster(): Unit = {
     master(req)
     slave(resp)
   }
 
-//  def sendAddrCacheReq(reqValid: Bool,
+//  def sendQpAddrCacheAgentReq(reqValid: Bool,
 //                       accessKey: Bits,
 //                       accessType: Bits,
 //                       pd: Bits,
@@ -1647,7 +1922,7 @@ case class AddrCacheReadBus() extends Bundle with IMasterSlave {
 //    req <-/< StreamSource()
 //      .throwWhen(!reqValid)
 //      .translateWith {
-//        val addrCacheReadReq = AddrCacheReadReq()
+//        val addrCacheReadReq = QpAddrCacheAgentReadReq()
 //        addrCacheReadReq.key := accessKey
 //        addrCacheReadReq.pd := pd
 //        addrCacheReadReq.remoteOrLocalKey := remoteOrLocalKey
@@ -1658,11 +1933,11 @@ case class AddrCacheReadBus() extends Bundle with IMasterSlave {
 //      }
 //  }
 
-//  def joinWithAddrCacheRespStream[T <: Data](streamIn: Stream[T],
+//  def joinWithQpAddrCacheAgentRespStream[T <: Data](streamIn: Stream[T],
 //                                             joinCond: Bool) =
 //    new Composite(resp) {
 //      val invalidStream =
-//        StreamSource().translateWith(AddrCacheReadResp().setDefaultVal())
+//        StreamSource().translateWith(QpAddrCacheAgentReadResp().setDefaultVal())
 //      val addrCacheRespStream =
 //        StreamMux(select = joinCond.asUInt, Vec(invalidStream, resp))
 //      val joinedStream = StreamJoin(streamIn, addrCacheRespStream)
@@ -1670,23 +1945,23 @@ case class AddrCacheReadBus() extends Bundle with IMasterSlave {
 //    }.joinedStream
 }
 
-//case class RqAddrCacheReadBus() extends Bundle with IMasterSlave {
-//  val bus = AddrCacheReadBus()
+//case class RqQpAddrCacheAgentReadBus() extends Bundle with IMasterSlave {
+//  val bus = QpAddrCacheAgentReadBus()
 //
-//  def >>(that: RqAddrCacheReadBus): Unit = {
+//  def >>(that: RqQpAddrCacheAgentReadBus): Unit = {
 //    this.bus >> that.bus
 //  }
-////  val sendWrite = AddrCacheReadBus()
-////  val read = AddrCacheReadBus()
-////  val atomic = AddrCacheReadBus()
+////  val sendWrite = QpAddrCacheAgentReadBus()
+////  val read = QpAddrCacheAgentReadBus()
+////  val atomic = QpAddrCacheAgentReadBus()
 ////
-////  def >>(that: RqAddrCacheReadBus): Unit = {
+////  def >>(that: RqQpAddrCacheAgentReadBus): Unit = {
 ////    this.sendWrite >> that.sendWrite
 ////    this.read >> that.read
 ////    this.atomic >> that.atomic
 ////  }
 //
-//  def <<(that: RqAddrCacheReadBus): Unit = that >> this
+//  def <<(that: RqQpAddrCacheAgentReadBus): Unit = that >> this
 //
 //  def asMaster(): Unit = {
 //    master(bus)
@@ -1694,16 +1969,16 @@ case class AddrCacheReadBus() extends Bundle with IMasterSlave {
 //  }
 //}
 
-case class SqOrRetryAddrCacheReadBus() extends Bundle with IMasterSlave {
-  val send = AddrCacheReadBus()
-  val write = AddrCacheReadBus()
+case class SqOrRetryQpAddrCacheAgentReadBus() extends Bundle with IMasterSlave {
+  val send = QpAddrCacheAgentReadBus()
+  val write = QpAddrCacheAgentReadBus()
 
-  def >>(that: SqOrRetryAddrCacheReadBus): Unit = {
+  def >>(that: SqOrRetryQpAddrCacheAgentReadBus): Unit = {
     this.send >> that.send
     this.write >> that.write
   }
 
-  def <<(that: SqOrRetryAddrCacheReadBus): Unit = that >> this
+  def <<(that: SqOrRetryQpAddrCacheAgentReadBus): Unit = that >> this
 
   def asMaster(): Unit = {
     master(send, write)
@@ -1712,6 +1987,13 @@ case class SqOrRetryAddrCacheReadBus() extends Bundle with IMasterSlave {
 
 case class RespPsnRange() extends Bundle {
   val opcode = Bits(OPCODE_WIDTH bits)
+  val start = UInt(PSN_WIDTH bits)
+  // end PSN is included in the range
+  val end = UInt(PSN_WIDTH bits)
+}
+
+case class ReqPsnRange() extends Bundle {
+  val opcode = Bits(WR_OPCODE_WIDTH bits)
   val start = UInt(PSN_WIDTH bits)
   // end PSN is included in the range
   val end = UInt(PSN_WIDTH bits)
@@ -1744,7 +2026,7 @@ case class UdpDataBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
 //----------Combined packets----------//
 // TODO: defined as IMasterSlave
 case class RdmaDataBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
-  val pktFrag = Stream(Fragment(RdmaDataPacket(busWidth)))
+  val pktFrag = Stream(Fragment(RdmaDataPkt(busWidth)))
 
   def >>(that: RdmaDataBus): Unit = {
     this.pktFrag >> that.pktFrag
@@ -1756,7 +2038,7 @@ case class RdmaDataBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
 
   // TODO: remove this
   def setDefaultVal() = {
-    val rslt = Fragment(RdmaDataPacket(busWidth))
+    val rslt = Fragment(RdmaDataPkt(busWidth))
     rslt.fragment.setDefaultVal()
     rslt.last := False
     rslt
@@ -1771,8 +2053,7 @@ case class DmaCommHeader() extends Bundle {
   val lrkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
   val dlen = UInt(RDMA_MAX_LEN_WIDTH bits)
 
-  // TODO: remove this
-  def setDefaultVal(): this.type = {
+  def init(): this.type = {
     va := 0
     pa := 0
     lrkey := 0
@@ -1782,14 +2063,20 @@ case class DmaCommHeader() extends Bundle {
 }
 
 case class RqReqCheckRslt() extends Bundle {
-  val psnCheckRslt = Bool()
+  val isPsnCheckPass = Bool()
   val isDupReq = Bool()
-  val isInvReq = Bool()
+  val isOpSeqCheckPass = Bool()
+  val isSupportedOpCode = Bool()
+  val isPadCntCheckPass = Bool()
+  val isReadAtomicResultCacheFull = Bool()
   val epsn = UInt(PSN_WIDTH bits)
 }
 
 case class RqReqWithRecvBuf(busWidth: BusWidth) extends Bundle {
-  val pktFrag = RdmaDataPacket(busWidth)
+  val pktFrag = RdmaDataPkt(busWidth)
+  val preOpCode = Bits(OPCODE_WIDTH bits)
+  val hasNak = Bool()
+  val nakAeth = AETH()
   // RecvWorkReq is only valid at the first or only fragment for send,
   // or valid at the last or only fragment for write imm
   val recvBufValid = Bool()
@@ -1810,21 +2097,40 @@ case class RqReqWithRecvBufBus(busWidth: BusWidth)
   override def asMaster(): Unit = master(reqWithRecvBuf)
 }
 
-case class RqReqCheckOutput(busWidth: BusWidth) extends Bundle {
-  val pktFrag = RdmaDataPacket(busWidth)
+case class RqReqCheckInternalOutput(busWidth: BusWidth) extends Bundle {
+  val pktFrag = RdmaDataPkt(busWidth)
   val checkRslt = RqReqCheckRslt()
 }
 
-case class RqReqCommCheckInternalRsltBus(busWidth: BusWidth)
-    extends Bundle
-    with IMasterSlave {
-  val req = Stream(Fragment(RqReqCheckOutput(busWidth)))
-
-  override def asMaster(): Unit = master(req)
+case class RqReqCheckStageOutput(busWidth: BusWidth) extends Bundle {
+  val pktFrag = RdmaDataPkt(busWidth)
+  val preOpCode = Bits(OPCODE_WIDTH bits)
+  val hasNak = Bool()
+  val nakAeth = AETH()
 }
 
-case class RqReqWithRecvBufAndDmaCommHeader(busWidth: BusWidth) extends Bundle {
-  val pktFrag = RdmaDataPacket(busWidth)
+case class RqReqCommCheckStageOutputBus(busWidth: BusWidth)
+    extends Bundle
+    with IMasterSlave {
+  val checkOutput = Stream(Fragment(RqReqCheckStageOutput(busWidth)))
+
+  def >>(that: RqReqCommCheckStageOutputBus): Unit = {
+    this.checkOutput >> that.checkOutput
+  }
+
+  def <<(that: RqReqCommCheckStageOutputBus): Unit = that >> this
+
+  override def asMaster(): Unit = master(checkOutput)
+}
+
+case class RqReqWithRecvBufAndDmaInfo(busWidth: BusWidth) extends Bundle {
+  val pktFrag = RdmaDataPkt(busWidth)
+  val preOpCode = Bits(OPCODE_WIDTH bits)
+  val hasNak = Bool()
+  val nakAeth = AETH()
+  // reqTotalLenValid is only for the last fragment of send/write request packet
+  val reqTotalLenValid = Bool()
+  val reqTotalLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
   // RecvWorkReq is only valid at the first or only fragment for send,
   // or valid at the last or only fragment for write imm
   val recvBufValid = Bool()
@@ -1834,24 +2140,24 @@ case class RqReqWithRecvBufAndDmaCommHeader(busWidth: BusWidth) extends Bundle {
   val dmaCommHeader = DmaCommHeader()
 }
 
-case class RqReqWithRecvBufAndDmaCommHeaderBus(busWidth: BusWidth)
+case class RqReqWithRecvBufAndDmaInfoBus(busWidth: BusWidth)
     extends Bundle
     with IMasterSlave {
-  val reqWithRecvBufAndDmaCommHeader = Stream(
-    Fragment(RqReqWithRecvBufAndDmaCommHeader(busWidth))
+  val reqWithRecvBufAndDmaInfo = Stream(
+    Fragment(RqReqWithRecvBufAndDmaInfo(busWidth))
   )
 
-  def >>(that: RqReqWithRecvBufAndDmaCommHeaderBus): Unit = {
-    this.reqWithRecvBufAndDmaCommHeader >> that.reqWithRecvBufAndDmaCommHeader
+  def >>(that: RqReqWithRecvBufAndDmaInfoBus): Unit = {
+    this.reqWithRecvBufAndDmaInfo >> that.reqWithRecvBufAndDmaInfo
   }
 
-  def <<(that: RqReqWithRecvBufAndDmaCommHeaderBus): Unit = that >> this
+  def <<(that: RqReqWithRecvBufAndDmaInfoBus): Unit = that >> this
 
-  override def asMaster(): Unit = master(reqWithRecvBufAndDmaCommHeader)
+  override def asMaster(): Unit = master(reqWithRecvBufAndDmaInfo)
 }
 
 sealed abstract class RdmaBasePacket extends Bundle {
-  // this: Bundle => // RdmaDataPacket must be of Bundle class
+  // this: Bundle => // RdmaDataPkt must be of Bundle class
   val bth = BTH()
   // val eth = Bits(ETH_WIDTH bits)
 }
@@ -1871,11 +2177,11 @@ case class HeaderDataAndMty[T <: Data](headerType: HardType[T], width: Int)
   val mty = Bits((width / BYTE_WIDTH) bits)
 }
 
-object RdmaDataPacket {
-  def apply(busWidth: BusWidth) = new RdmaDataPacket(busWidth)
+object RdmaDataPkt {
+  def apply(busWidth: BusWidth) = new RdmaDataPkt(busWidth)
 }
 
-sealed class RdmaDataPacket(busWidth: BusWidth) extends RdmaBasePacket {
+sealed class RdmaDataPkt(busWidth: BusWidth) extends RdmaBasePacket {
   // data include BTH
   val data = Bits(busWidth.id bits)
   // mty does not include BTH
@@ -1921,16 +2227,31 @@ trait IethHeader extends RdmaBasePacket {
 }
 
 case class SendReq(busWidth: BusWidth)
-    extends RdmaDataPacket(busWidth)
+    extends RdmaDataPkt(busWidth)
     with ImmDtHeader
     with IethHeader {}
 
 case class WriteReq(busWidth: BusWidth)
-    extends RdmaDataPacket(busWidth)
+    extends RdmaDataPkt(busWidth)
     with RdmaReq
     with ImmDtHeader {}
 
 case class ReadReq() extends RdmaReq {
+  def toRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
+    new Composite(this) {
+      val ackWidth = widthOf(bth) + widthOf(reth)
+      require(
+        busWidth.id >= ackWidth,
+        s"busWidth=${busWidth.id} must >= ACK width=${ackWidth}"
+      )
+      val rslt = Fragment(RdmaDataPkt(busWidth))
+      rslt.last := True
+      rslt.bth := bth
+      rslt.data := (bth ## reth).resize(busWidth.id)
+      // TODO: verify endian
+      rslt.mty := (setAllBits(ackWidth) << (busWidth.id - ackWidth))
+    }.rslt
+
   def set(thatBth: BTH, rethBits: Bits): this.type = {
     bth := thatBth
     // TODO: verify rethBits is big endian
@@ -1956,7 +2277,7 @@ case class ReadReq() extends RdmaReq {
 }
 
 case class ReadOnlyFirstLastResp(busWidth: BusWidth)
-    extends RdmaDataPacket(busWidth)
+    extends RdmaDataPkt(busWidth)
     with Response {
 //  when(OpCode.isMidReadRespPkt(bth.opcode)) {
 //    assert(
@@ -1968,9 +2289,30 @@ case class ReadOnlyFirstLastResp(busWidth: BusWidth)
 //  }
 }
 
-case class ReadMidResp(busWidth: BusWidth) extends RdmaDataPacket(busWidth) {}
+case class ReadMidResp(busWidth: BusWidth) extends RdmaDataPkt(busWidth) {}
 
 case class Acknowledge() extends Response {
+  def toRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
+    new Composite(this) {
+      val ackWidth = widthOf(bth) + widthOf(aeth)
+      require(
+        busWidth.id >= ackWidth,
+        s"busWidth=${busWidth.id} must >= ACK width=${ackWidth}"
+      )
+      val rslt = Fragment(RdmaDataPkt(busWidth))
+      rslt.last := True
+      rslt.bth := bth
+      rslt.data := (bth ## aeth).resize(busWidth.id)
+      // TODO: verify endian
+      rslt.mty := (setAllBits(ackWidth) << (busWidth.id - ackWidth))
+    }.rslt
+
+  def setAck(aeth: AETH, psn: UInt, dqpn: UInt): this.type = {
+    bth.set(opcode = OpCode.ACKNOWLEDGE.id, dqpn = dqpn, psn = psn)
+    this.aeth := aeth
+    this
+  }
+
   def setAck(ackType: AckType.AckType, psn: UInt, dqpn: UInt): this.type = {
 //    val ackTypeBits = Bits(ACK_TYPE_WIDTH bits)
 //    ackTypeBits := ackType.id
@@ -2023,6 +2365,21 @@ case class Acknowledge() extends Response {
 case class AtomicReq() extends RdmaBasePacket {
   val atomicEth = AtomicEth()
 
+  def toRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
+    new Composite(this) {
+      val ackWidth = widthOf(bth) + widthOf(atomicEth)
+      require(
+        busWidth.id >= ackWidth,
+        s"busWidth=${busWidth.id} must >= ACK width=${ackWidth}"
+      )
+      val rslt = Fragment(RdmaDataPkt(busWidth))
+      rslt.last := True
+      rslt.bth := bth
+      rslt.data := (bth ## atomicEth).resize(busWidth.id)
+      // TODO: verify endian
+      rslt.mty := (setAllBits(ackWidth) << (busWidth.id - ackWidth))
+    }.rslt
+
   def set(
       isCompSwap: Bool,
       dqpn: UInt,
@@ -2057,6 +2414,21 @@ case class AtomicReq() extends RdmaBasePacket {
 
 case class AtomicResp() extends Response {
   val atomicAckETH = AtomicAckETH()
+
+  def toRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
+    new Composite(this) {
+      val ackWidth = widthOf(bth) + widthOf(atomicAckETH)
+      require(
+        busWidth.id >= ackWidth,
+        s"busWidth=${busWidth.id} must >= Atomic ACK width=${ackWidth}"
+      )
+      val rslt = Fragment(RdmaDataPkt(busWidth))
+      rslt.last := True
+      rslt.bth := bth
+      rslt.data := (bth ## atomicAckETH).resize(busWidth.id)
+      // TODO: verify endian
+      rslt.mty := (setAllBits(ackWidth) << (busWidth.id - ackWidth))
+    }.rslt
 
   def set(dqpn: UInt, psn: UInt, orig: Bits): this.type = {
     val opcode = Bits(OPCODE_WIDTH bits)

@@ -115,6 +115,10 @@ case class AETH() extends RdmaHeader {
         workCompStatus := WorkCompStatus.REM_ACCESS_ERR.id
       } elsewhen (isRmtOpNak()) {
         workCompStatus := WorkCompStatus.REM_OP_ERR.id
+      } elsewhen (isSeqNak()) {
+        workCompStatus := WorkCompStatus.RETRY_EXC_ERR.id
+      } elsewhen (isRnrNak()) {
+        workCompStatus := WorkCompStatus.RNR_RETRY_EXC_ERR.id
       } otherwise {
         report(
           message = L"illegal AETH to WC state, code=${code}, value=${value}"
@@ -131,6 +135,10 @@ case class AETH() extends RdmaHeader {
 
     val rnrTimeOut = Bits(AETH_VALUE_WIDTH bits)
     rnrTimeOut := 0
+    set(ackType, msn = 0, creditCnt = 0, rnrTimeOut = rnrTimeOut)
+  }
+
+  def set(ackType: AckType.AckType, rnrTimeOut: Bits): this.type = {
     set(ackType, msn = 0, creditCnt = 0, rnrTimeOut = rnrTimeOut)
   }
 
@@ -198,10 +206,20 @@ case class AETH() extends RdmaHeader {
       val rslt = code === AethCode.ACK.id
     }.rslt
 
-  def isRetryAck(): Bool =
+  def isRetryNak(): Bool =
     new Composite(this) {
       val rslt =
         code === AethCode.RNR.id || (code === AethCode.NAK.id && value === NakCode.SEQ.id)
+    }.rslt
+
+  def isRnrNak(): Bool =
+    new Composite(this) {
+      val rslt = code === AethCode.RNR.id
+    }.rslt
+
+  def isSeqNak(): Bool =
+    new Composite(this) {
+      val rslt = code === AethCode.NAK.id && value === NakCode.SEQ.id
     }.rslt
 
   def isErrAck(): Bool =

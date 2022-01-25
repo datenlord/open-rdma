@@ -503,6 +503,236 @@ object SignalEdgeDrivenStream {
     }.rslt
 }
 
+/** Build an arbiter tree to arbitrate on many inputs.
+  */
+object StreamArbiterTree {
+  def apply[T <: Data](
+      inputVec: Vec[Stream[T]],
+      arbiterPortCount: Int,
+      fragmentLockOn: Boolean,
+      streamPipelined: Boolean
+  ): Stream[T] = {
+    require(
+      !inputVec.isEmpty,
+      s"inputVec cannot be empty but size=${inputVec.size}"
+    )
+    val arbiterTree = new StreamArbiterTree(
+      inputVec(0).payloadType,
+      inputVec.size,
+      arbiterPortCount,
+      fragmentLockOn,
+      streamPipelined
+    )
+    for (
+      (arbiterTreeInput, originalInput) <- arbiterTree.io.inputs.zip(
+        inputVec
+      )
+    ) {
+      arbiterTreeInput << originalInput
+    }
+    arbiterTree.io.output
+  }
+}
+
+class StreamArbiterTree[T <: Data](
+    dataType: HardType[T],
+    inputPortCount: Int,
+    arbiterPortCount: Int,
+    fragmentLockOn: Boolean,
+    streamPipelined: Boolean
+) extends Component {
+  require(isPow2(inputPortCount))
+  val io = new Bundle {
+    val inputs = Vec(slave(Stream(dataType)), inputPortCount)
+    val output = master(Stream(dataType))
+  }
+
+  @scala.annotation.tailrec
+  private def buildArbiterTree(inputVec: Seq[Stream[T]]): Stream[T] = {
+    if (inputVec.size <= arbiterPortCount) {
+      if (fragmentLockOn) {
+        StreamArbiterFactory.roundRobin.fragmentLock
+          .on(inputVec)
+          .pipelined(m2s = streamPipelined, s2m = streamPipelined)
+      } else {
+        StreamArbiterFactory.roundRobin.transactionLock
+          .on(inputVec)
+          .pipelined(m2s = streamPipelined, s2m = streamPipelined)
+      }
+    } else {
+      val segmentList = inputVec.grouped(arbiterPortCount).toList
+      val nextTreeLayer = for (segment <- segmentList) yield {
+        if (fragmentLockOn) {
+          StreamArbiterFactory.roundRobin.fragmentLock
+            .on(segment)
+            .pipelined(m2s = streamPipelined, s2m = streamPipelined)
+        } else {
+          StreamArbiterFactory.roundRobin.transactionLock
+            .on(segment)
+            .pipelined(m2s = streamPipelined, s2m = streamPipelined)
+        }
+      }
+      buildArbiterTree(nextTreeLayer)
+    }
+  }
+
+  if (streamPipelined) {
+    io.output <-/< buildArbiterTree(io.inputs.toSeq)
+  } else {
+    io.output << buildArbiterTree(io.inputs.toSeq)
+  }
+}
+
+object StreamOneHotDeMux {
+  def apply[T <: Data](input: Stream[T], select: Bits): Vec[Stream[T]] = {
+    val portCount = widthOf(select)
+    when(input.valid) {
+      assert(
+        assertion = CountOne(select) <= 1,
+        message = L"select=${select} should be one hot",
+        severity = FAILURE
+      )
+    }
+
+    val streamOneHotDeMux = new StreamOneHotDeMux(input.payload, portCount)
+    streamOneHotDeMux.io.input << input
+    streamOneHotDeMux.io.select := select
+    streamOneHotDeMux.io.outputs
+  }
+}
+
+class StreamOneHotDeMux[T <: Data](dataType: HardType[T], portCount: Int)
+    extends Component {
+  val io = new Bundle {
+    val select = in(Bits(portCount bits))
+    val input = slave(Stream(dataType()))
+    val outputs = Vec(master(Stream(dataType())), portCount)
+  }
+
+  when(io.input.valid) {
+    assert(
+      assertion = CountOne(io.select) <= 1,
+      message = L"io.select=${io.select} is not one hot",
+      severity = FAILURE
+    )
+  }
+
+  io.input.ready := False
+  for (idx <- 0 until portCount) {
+    io.outputs(idx).payload := io.input.payload
+    io.outputs(idx).valid := io.select(idx) && io.input.valid
+    when(io.select(idx)) {
+      io.input.ready := io.outputs(idx).ready
+    }
+  }
+}
+
+object StreamOneHotMux {
+  def apply[T <: Data](select: Bits, inputs: Seq[Stream[T]]): Stream[T] = {
+    val vec = Vec(inputs)
+    StreamOneHotMux(select, vec)
+  }
+
+  def apply[T <: Data](select: Bits, inputs: Vec[Stream[T]]): Stream[T] = {
+    require(
+      widthOf(select) == inputs.size,
+      s"widthOf(select)=${widthOf(select)} should == inputs.size=${inputs.size}"
+    )
+
+    val streamOneHotMux =
+      new StreamOneHotMux(inputs(0).payloadType, inputs.length)
+    streamOneHotMux.io.select := select
+    for (idx <- 0 until widthOf(select)) {
+      streamOneHotMux.io.inputs(idx) << inputs(idx)
+    }
+    streamOneHotMux.io.output
+  }
+}
+
+class StreamOneHotMux[T <: Data](dataType: HardType[T], portCount: Int)
+    extends Component {
+  val io = new Bundle {
+    val select = in(Bits(portCount bit))
+    val inputs = Vec(slave(Stream(dataType())), portCount)
+    val output = master(Stream(dataType()))
+  }
+  require(portCount > 0, s"portCount=${portCount} must > 0")
+
+  io.output.valid := False
+  io.output.payload := io.inputs(0).payload
+  for (idx <- 0 until portCount) {
+    io.inputs(idx).ready := io.select(idx)
+    when(io.select(idx)) {
+      io.output.payload := io.inputs(idx).payload
+    }
+  }
+}
+
+/** Tree-structure StreamFork
+  */
+object StreamForkTree {
+  def apply[T <: Data](
+      input: Stream[T],
+      outputPortCount: Int,
+      forkPortCount: Int,
+      streamPipelined: Boolean
+  ): Vec[Stream[T]] = {
+    val streamForkTree = new StreamForkTree(
+      input.payloadType,
+      outputPortCount,
+      forkPortCount,
+      streamPipelined
+    )
+    streamForkTree.io.input << input
+    streamForkTree.io.outputs
+  }
+}
+
+class StreamForkTree[T <: Data](
+    dataType: HardType[T],
+    outputPortCount: Int,
+    forkPortCount: Int,
+    streamPipelined: Boolean
+) extends Component {
+  val io = new Bundle {
+    val input = slave(Stream(dataType()))
+    val outputs = Vec(master(Stream(dataType())), outputPortCount)
+  }
+
+  require(
+    isPow2(outputPortCount),
+    s"outputPortCount=${outputPortCount} must be power of 2"
+  )
+  require(
+    isPow2(forkPortCount),
+    s"forkPortCount=${forkPortCount} must be power of 2"
+  )
+
+  @scala.annotation.tailrec
+  private def buildForkTree(input: Vec[Stream[T]]): Vec[Stream[T]] = {
+    if (input.size >= outputPortCount) input
+    else {
+      val inputFork = input.flatMap(StreamFork(_, portCount = forkPortCount))
+      if (streamPipelined) {
+        val inputForkPipelined =
+          inputFork.map(
+            _.pipelined(m2s = streamPipelined, s2m = streamPipelined)
+          )
+        buildForkTree(Vec(inputForkPipelined))
+      } else {
+        buildForkTree(Vec(inputFork))
+      }
+    }
+  }
+
+  import StreamVec._
+  if (streamPipelined) {
+    io.outputs <-/< buildForkTree(Vec(io.input))
+  } else {
+    io.outputs << buildForkTree(Vec(io.input))
+  }
+}
+
 object StreamVec {
   implicit def build[T <: Data](that: Vec[Stream[T]]): StreamVec[T] =
     new StreamVec(that)
@@ -840,8 +1070,8 @@ object respPadCountCheck {
     }.rslt
 }
 
-object computeEPsnInc {
-  def apply(pktFrag: RdmaDataPacket, pmtu: Bits, busWidth: BusWidth): UInt =
+object ePsnIncrease {
+  def apply(pktFrag: RdmaDataPkt, pmtu: Bits, busWidth: BusWidth): UInt =
     new Composite(pktFrag) {
       val rslt = UInt(PSN_WIDTH bits)
       val isReadReq = OpCode.isReadReqPkt(pktFrag.bth.opcode)
@@ -862,7 +1092,7 @@ object computeEPsnInc {
         assert(
           assertion = OpCode.isReqPkt(pktFrag.bth.opcode),
           message =
-            L"computeEPsnInc() expects requests, but opcode=${pktFrag.bth.opcode}",
+            L"ePsnIncrease() expects requests, but opcode=${pktFrag.bth.opcode} is not of request",
           severity = FAILURE
         )
       }
@@ -1001,6 +1231,43 @@ object moduloByPmtu {
     val mask = pmtuLenMask(pmtu)
     dividend & mask.resize(widthOf(dividend)).asUInt
   }
+}
+
+object checkWorkReqOpCodeMatch {
+  def apply(workReqOpCode: Bits, reqOpCode: Bits): Bool =
+    new Composite(reqOpCode) {
+      val rslt = (WorkReqOpCode.isSendReq(workReqOpCode) &&
+        OpCode.isSendReqPkt(reqOpCode)) ||
+        (WorkReqOpCode.isWriteReq(workReqOpCode) &&
+          OpCode.isWriteReqPkt(reqOpCode)) ||
+        (WorkReqOpCode.isReadReq(workReqOpCode) &&
+          OpCode.isReadReqPkt(reqOpCode)) ||
+        (WorkReqOpCode.isAtomicReq(workReqOpCode) &&
+          OpCode.isAtomicReqPkt(reqOpCode))
+    }.rslt
+}
+
+object checkRespOpCodeMatch {
+  def apply(reqOpCode: Bits, respOpCode: Bits): Bool =
+    new Composite(reqOpCode) {
+      val rslt = Bool()
+      when(OpCode.isSendReqPkt(reqOpCode) || OpCode.isWriteReqPkt(reqOpCode)) {
+        rslt := OpCode.isNonReadAtomicRespPkt(respOpCode)
+      } elsewhen (OpCode.isReadReqPkt(reqOpCode)) {
+        rslt := OpCode.isReadRespPkt(respOpCode) || OpCode
+          .isNonReadAtomicRespPkt(respOpCode)
+      } elsewhen (OpCode.isAtomicReqPkt(reqOpCode)) {
+        rslt := OpCode.isAtomicRespPkt(respOpCode) || OpCode
+          .isNonReadAtomicRespPkt(respOpCode)
+      } otherwise {
+        report(
+          message =
+            L"reqOpCode=${reqOpCode} should be request opcode, respOpCode=${respOpCode}",
+          severity = FAILURE
+        )
+        rslt := False
+      }
+    }.rslt
 }
 
 //========== TupleBundle related utilities ==========

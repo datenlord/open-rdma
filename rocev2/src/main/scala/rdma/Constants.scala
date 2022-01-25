@@ -83,8 +83,14 @@ object ConstantSettings {
   val ADDR_CACHE_QUERY_DELAY_CYCLE = 8
   val READ_ATOMIC_RESULT_CACHE_QUERY_DELAY_CYCLE = 2
   val DMA_WRITE_DELAY_CYCLE = 128
+  val DMA_READ_DELAY_CYCLE = 128
 
   val MAX_COALESCE_ACK_NUM = 8
+
+  val MAX_PD = 32
+  val MAX_MR_PER_PD = 32
+  // require(MAX_PD <= (1 << PD_ID_WIDTH))
+
   // Non-changeable settings
   val BYTE_WIDTH = 8
 
@@ -141,17 +147,15 @@ object DmaInitiator extends Enumeration {
 }
 
 object RetryReason extends SpinalEnum(binarySequential) {
-  val RETRY_ACK, IMPLICIT_ACK, RESP_TIMEOUT = newElement()
+  val RESP_TIMEOUT, RETRY_ACK, IMPLICIT_ACK = newElement()
 }
 
-object PktSeqType extends Enumeration {
-  type PktSeqType = Value
+object AddrQueryInitiator extends SpinalEnum(binarySequential) {
+  val RQ, SQ_REQ, SQ_RESP = newElement()
+}
 
-  val NONE = Value(0)
-  val FIRST = Value(1)
-  val MIDDLE = Value(2)
-  val LAST = Value(3)
-  val ONLY = Value(4)
+object CRUD extends SpinalEnum(binarySequential) {
+  val DELETE, CREATE, READ, UPDATE = newElement()
 }
 
 object PsnCompResult extends Enumeration {

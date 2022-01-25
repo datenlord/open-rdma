@@ -29,5 +29,6 @@ else
 fi
 
 # mill test is not compatible with SpinalHDL, use testOnly instead
-#./mill rocev2.test.testOnly rdma.SeqOutTest
+./mill rocev2.test.testOnly rdma.RqReadDmaRespHandlerTest
 ./mill rocev2.test.testOnly rdma.SetSuite
+rm RoCEv2.*.bin

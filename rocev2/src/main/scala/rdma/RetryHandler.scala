@@ -424,7 +424,7 @@ class SendReqGenerator(busWidth: BusWidth) extends Component {
     headerStream
   )
   io.txSendReq.pktFrag <-/< addHeaderStream.translateWith {
-    val rslt = Fragment(RdmaDataPacket(busWidth))
+    val rslt = Fragment(RdmaDataPkt(busWidth))
     rslt.bth := addHeaderStream.header
     rslt.data := addHeaderStream.data
     rslt.mty := addHeaderStream.mty
@@ -600,7 +600,7 @@ class WriteReqGenerator(busWidth: BusWidth) extends Component {
     headerStream
   )
   io.txWriteReq.pktFrag <-/< addHeaderStream.translateWith {
-    val rslt = Fragment(RdmaDataPacket(busWidth))
+    val rslt = Fragment(RdmaDataPkt(busWidth))
     rslt.bth := addHeaderStream.header
     rslt.data := addHeaderStream.data
     rslt.mty := addHeaderStream.mty

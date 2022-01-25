@@ -32,7 +32,7 @@ class ReqRespSplitter(busWidth: BusWidth) extends Component {
 class FlowCtrl(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
-    val resp = slave(Flow(Fragment(RdmaDataPacket(busWidth))))
+    val resp = slave(Flow(Fragment(RdmaDataPkt(busWidth))))
     val rx = slave(RdmaDataBus(busWidth))
     val tx = master(RdmaDataBus(busWidth))
   }
@@ -58,23 +58,25 @@ class QpCtrl extends Component {
     val sqNotifier = in(SqNotifier())
     val rqNotifier = in(RqNotifier())
     val retryFlushDone = in(Bool())
-    val qpCreateOrModify = slave(Stream(QpAttrData()))
+    val qpCreateOrModify = slave(QpCreateOrModifyBus())
     val qpAttr = out(QpAttrData())
     val recvQCtrl = out(RecvQCtrl())
     val sendQCtrl = out(SendQCtrl())
     val workReqCacheScanBus = master(
-      QueryCacheScanBus(CachedWorkReq(), PENDING_REQ_NUM)
+      CamFifoScanBus(CachedWorkReq(), PENDING_REQ_NUM)
     )
     val retryWorkReq = master(Stream(CachedWorkReq()))
   }
   val qpAttr = RegInit(QpAttrData().initOrReset())
   io.qpAttr := qpAttr
 
-  io.qpCreateOrModify.ready := True
-  when(io.qpCreateOrModify.valid) {
+  io.qpCreateOrModify.req.ready := True
+  when(io.qpCreateOrModify.req.valid) {
     // TODO: modify QP attributes by mask
-    qpAttr := io.qpCreateOrModify
+    qpAttr := io.qpCreateOrModify.req.qpAttr
   }
+  io.qpCreateOrModify.resp.valid := io.qpCreateOrModify.req.valid
+  io.qpCreateOrModify.resp.successOrFailure := True
 
   // retryDone just means finishing re-send requests, not means all retry responses received
   val retryDone = False
@@ -91,9 +93,9 @@ class QpCtrl extends Component {
     val ERR_FLUSH: State = new State {
       whenIsActive {
         when(
-          io.qpCreateOrModify.valid &&
-            io.qpCreateOrModify.modifyMask === QpAttrMask.QP_STATE.id &&
-            io.qpCreateOrModify.state === QpState.RESET.id
+          io.qpCreateOrModify.req.valid &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.state === QpState.RESET.id
         ) {
           exit()
         }
@@ -101,7 +103,7 @@ class QpCtrl extends Component {
     }
   }
 
-  def retryStateFsm() = new StateMachine {
+  def sqRetryStateFsm() = new StateMachine {
     val RETRY_FLUSH: State = new State with EntryPoint {
       onEntry {
         qpAttr.retryReason := io.sqNotifier.retry.reason
@@ -124,7 +126,7 @@ class QpCtrl extends Component {
     }
   }
 
-  val fenceRetryFsm = retryStateFsm()
+  val fenceRetryFsm = sqRetryStateFsm()
   def fenceStateFsm() = new StateMachine {
     val FENCE: State = new State with EntryPoint {
       whenIsActive {
@@ -154,9 +156,9 @@ class QpCtrl extends Component {
     val DRAINED: State = new State {
       whenIsActive {
         when(
-          io.qpCreateOrModify.valid &&
-            io.qpCreateOrModify.modifyMask === QpAttrMask.QP_STATE.id &&
-            io.qpCreateOrModify.state === QpState.RTS.id
+          io.qpCreateOrModify.req.valid &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.state === QpState.RTS.id
         ) {
           exit()
         }
@@ -171,9 +173,13 @@ class QpCtrl extends Component {
 
     val NORMAL: State = new State with EntryPoint {
       whenIsActive {
-        when(io.rqNotifier.nak.seqErr) {
+        when(io.rqNotifier.nak.seqErr.pulse) {
+          qpAttr.rqPreReqOpCode := io.rqNotifier.nak.seqErr.preOpCode
+          qpAttr.epsn := io.rqNotifier.nak.seqErr.psn
           goto(NAK_SEQ)
-        } elsewhen (io.rqNotifier.rnr.pulse) {
+        } elsewhen (io.rqNotifier.nak.rnr.pulse) {
+          qpAttr.rqPreReqOpCode := io.rqNotifier.nak.rnr.preOpCode
+          qpAttr.epsn := io.rqNotifier.nak.rnr.psn
           goto(RNR_TIMEOUT)
         }
       }
@@ -208,17 +214,17 @@ class QpCtrl extends Component {
 
     when(this.isActive(NAK_SEQ)) {
       assert(
-        assertion = !io.rqNotifier.rnr.pulse,
+        assertion = !io.rqNotifier.nak.rnr.pulse,
         message =
-          L"there's already a NAK SQK sent PSN=${qpAttr.epsn}, but there's another RNR NAK to send: io.rqNotifier.rnr.pulse=${io.rqNotifier.rnr.pulse}, io.rqNotifier.rnr.psn=${io.rqNotifier.rnr.psn}",
+          L"there's already a NAK SQK sent PSN=${qpAttr.epsn}, but there's another RNR NAK to send: io.rqNotifier.nak.rnr.pulse=${io.rqNotifier.nak.rnr.pulse}, io.rqNotifier.nak.rnr.psn=${io.rqNotifier.nak.rnr.psn}",
         severity = FAILURE
       )
     }
     when(this.isActive(RNR_TIMEOUT) || this.isActive(RNR)) {
       assert(
-        assertion = !io.rqNotifier.rnr.pulse,
+        assertion = !io.rqNotifier.nak.rnr.pulse,
         message =
-          L"there's already a RNR NAK sent PSN=${qpAttr.epsn}, but there's another RNR NAK to send: io.rqNotifier.rnr.pulse=${io.rqNotifier.rnr.pulse}, io.rqNotifier.rnr.psn=${io.rqNotifier.rnr.psn}",
+          L"there's already a RNR NAK sent PSN=${qpAttr.epsn}, but there's another RNR NAK to send: io.rqNotifier.nak.rnr.pulse=${io.rqNotifier.nak.rnr.pulse}, io.rqNotifier.nak.rnr.psn=${io.rqNotifier.nak.rnr.psn}",
         severity = FAILURE
       )
     }
@@ -232,7 +238,7 @@ class QpCtrl extends Component {
     }
   }
 
-  val retryFsm = retryStateFsm()
+  val sqRetryFsm = sqRetryStateFsm()
   val fenceFsm = fenceStateFsm()
   def sqInternalFsm() = new StateMachine {
     val NORMAL: State = new State with EntryPoint {
@@ -245,7 +251,7 @@ class QpCtrl extends Component {
       }
     }
 
-    val RETRY: State = new StateFsm(fsm = retryFsm) {
+    val RETRY: State = new StateFsm(fsm = sqRetryFsm) {
       whenCompleted {
         goto(NORMAL)
       }
@@ -283,9 +289,9 @@ class QpCtrl extends Component {
       }
       .whenIsActive {
         when(
-          io.qpCreateOrModify.valid &&
-            io.qpCreateOrModify.modifyMask === QpAttrMask.QP_STATE.id &&
-            io.qpCreateOrModify.state === QpState.INIT.id
+          io.qpCreateOrModify.req.valid &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.state === QpState.INIT.id
         ) {
           goto(INIT)
         }
@@ -297,9 +303,9 @@ class QpCtrl extends Component {
       }
       .whenIsActive {
         when(
-          io.qpCreateOrModify.valid &&
-            io.qpCreateOrModify.modifyMask === QpAttrMask.QP_STATE.id &&
-            io.qpCreateOrModify.state === QpState.RTR.id
+          io.qpCreateOrModify.req.valid &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.state === QpState.RTR.id
         ) {
           goto(RTR)
         }
@@ -315,9 +321,9 @@ class QpCtrl extends Component {
       }
       .whenIsActive {
         when(
-          io.qpCreateOrModify.valid &&
-            io.qpCreateOrModify.modifyMask === QpAttrMask.QP_STATE.id &&
-            io.qpCreateOrModify.state === QpState.RTS.id
+          io.qpCreateOrModify.req.valid &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.state === QpState.RTS.id
         ) {
           goto(RTS)
         }
@@ -333,9 +339,9 @@ class QpCtrl extends Component {
       }
       .whenIsActive {
         when(
-          io.qpCreateOrModify.valid &&
-            io.qpCreateOrModify.modifyMask === QpAttrMask.QP_STATE.id &&
-            io.qpCreateOrModify.state === QpState.SQD.id
+          io.qpCreateOrModify.req.valid &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.state === QpState.SQD.id
         ) {
           goto(SQD)
         }
@@ -377,23 +383,23 @@ class QpCtrl extends Component {
       qpAttr.rqPreReqOpCode := io.psnInc.rq.epsn.preReqOpCode
     }
     when(io.psnInc.rq.opsn.inc) {
-      qpAttr.rqOutPsn := qpAttr.rqOutPsn + io.psnInc.rq.opsn.incVal
+      qpAttr.rqOutPsn := io.psnInc.rq.opsn.psnVal
     }
     when(io.psnInc.sq.npsn.inc) {
       qpAttr.npsn := qpAttr.npsn + io.psnInc.sq.npsn.incVal
     }
     when(io.psnInc.sq.opsn.inc) {
-      qpAttr.sqOutPsn := qpAttr.sqOutPsn + io.psnInc.sq.opsn.incVal
+      qpAttr.sqOutPsn := io.psnInc.sq.opsn.psnVal
     }
   }
-  val retryCtrl = new Area {
+  val sqRetryCtrl = new Area {
     // TODO: consider better setup instead of PENDING_REQ_NUM + 1
     val curPtr = Counter(PENDING_REQ_NUM)
 
     val fsmInRetryState = sqFsm.isActive(sqFsm.RETRY) ||
       fenceFsm.isActive(fenceFsm.FENCE_RETRY)
     val retryFlushState =
-      retryFsm.isActive(retryFsm.RETRY_FLUSH) ||
+      sqRetryFsm.isActive(sqRetryFsm.RETRY_FLUSH) ||
         fenceRetryFsm.isActive(fenceRetryFsm.RETRY_FLUSH)
 
     io.workReqCacheScanBus.scanPtr := curPtr
@@ -475,11 +481,9 @@ class QpCtrl extends Component {
   val isQpStateWrong = fsm.isActive(fsm.ERR) || fsm.isActive(fsm.RESET) ||
     fsm.isActive(fsm.INIT)
   io.sendQCtrl.errorFlush := errFsm.isActive(errFsm.ERR_FLUSH)
-  io.sendQCtrl.retryFlush := retryCtrl.retryFlushState
-  io.sendQCtrl.retry := retryCtrl.fsmInRetryState
+  io.sendQCtrl.retryFlush := sqRetryCtrl.retryFlushState
+  io.sendQCtrl.retry := sqRetryCtrl.fsmInRetryState
   io.sendQCtrl.fencePulse := False
-//  io.sendQCtrl.fencePulse := sqFsm.isEntering(sqFsm.FENCE) ||
-//    sqFsm.isEntering(sqFsm.FENCE_RETRY)
   io.sendQCtrl.fence := fsm.isActive(fsm.SQD) || sqFsm.isActive(sqFsm.FENCE)
   io.sendQCtrl.fenceOrRetry := io.sendQCtrl.fence || io.sendQCtrl.retry
   io.sendQCtrl.wrongStateFlush := isQpStateWrong
@@ -490,19 +494,20 @@ class QpCtrl extends Component {
   io.recvQCtrl.rnrFlush := rqFsm.isActive(rqFsm.RNR) ||
     rqFsm.isActive(rqFsm.RNR)
   io.recvQCtrl.rnrTimeOut := rqFsm.isActive(rqFsm.RNR_TIMEOUT)
-//  io.recvQCtrl.flush := io.recvQCtrl.stateErrFlush || io.recvQCtrl.rnrFlush ||
+  io.recvQCtrl.flush := io.recvQCtrl.stateErrFlush || io.recvQCtrl.rnrFlush || io.recvQCtrl.nakSeqTrigger
 }
 
 class QP(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = out(QpAttrData())
-    val qpCreateOrModify = slave(Stream(QpAttrData()))
+    val qpCreateOrModify = slave(QpCreateOrModifyBus())
     val workReq = slave(Stream(WorkReq()))
     val recvWorkReq = slave(Stream(RecvWorkReq()))
     val workComp = master(Stream(WorkComp()))
     val rx = slave(RdmaDataBus(busWidth))
     val tx = master(RdmaDataBus(busWidth))
     val dma = master(DmaBus(busWidth))
+    val pdAddrCacheQuery = master(PdAddrCacheReadBus())
   }
 
   val sq = new SendQ(busWidth)
@@ -540,16 +545,16 @@ class QP(busWidth: BusWidth) extends Component {
   workCompOut.io.sqWorkCompErr << sq.io.workCompErr
   io.workComp << workCompOut.io.workCompPush
 
-  // TODO: AddrCache should not be per QP structure
-  val addrCache = new AddrCache()
-  addrCache.io.rqCacheRead << rq.io.addrCacheRead
-  addrCache.io.sqReqCacheRead << sq.io.addrCacheRead4Req
-  addrCache.io.sqRespCacheRead << sq.io.addrCacheRead4Resp
+  // TODO: QpAddrCacheAgent should not be per QP structure
+  val addrCacheAgent = new QpAddrCacheAgent()
+  addrCacheAgent.io.qpAttr := io.qpAttr
+  addrCacheAgent.io.rqCacheRead << rq.io.addrCacheRead
+  addrCacheAgent.io.sqReqCacheRead << sq.io.addrCacheRead4Req
+  addrCacheAgent.io.sqRespCacheRead << sq.io.addrCacheRead4Resp
+  io.pdAddrCacheQuery << addrCacheAgent.io.pdAddrCacheQuery
 
   val dmaRdReqVec = Vec(sq.io.dma.dmaRdReqVec ++ rq.io.dma.dmaRdReqVec)
-//  val dmaRdRespVec = Vec(sq.io.dma.dmaRdRespVec ++ rq.io.dma.dmaRdRespVec)
   val dmaWrReqVec = Vec(rq.io.dma.dmaWrReqVec ++ sq.io.dma.dmaWrReqVec)
-//  val dmaWrRespVec = Vec(rq.io.dma.atomic.wr.resp, workCompOut.io.dmaWrite.resp)
   io.dma.rd.arbitReq(dmaRdReqVec)
   io.dma.rd.deMuxRespByInitiator(
     rqRead = rq.io.dma.read.resp,

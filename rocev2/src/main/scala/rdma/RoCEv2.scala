@@ -4,6 +4,7 @@ import spinal.core._
 import spinal.lib._
 
 import BusWidth.BusWidth
+import ConstantSettings._
 import RdmaConstants._
 import StreamVec._
 
@@ -51,44 +52,44 @@ class HeadVerifier(numMaxQPs: Int, busWidth: BusWidth) extends Component {
 class AllQpCtrl(numMaxQPs: Int) extends Component {
   val io = new Bundle {
     val qpAttrVec = in(Vec(QpAttrData(), numMaxQPs))
-    val qpCreateOrModify = slave(Stream(QpAttrData()))
-    val qpCreateOrModifyVec = Vec(master(Stream(QpAttrData())), numMaxQPs)
-    // val qpAttrUpdate = Vec(out(QpAttrUpdateNotifier()), numMaxQPs)
-    // val qpStateChange = Vec(slave(Stream(QpStateChange())), numMaxQPs)
+    val qpCreateOrModify = slave(QpCreateOrModifyBus())
+    val qpCreateOrModifyVec = Vec(master(QpCreateOrModifyBus()), numMaxQPs)
     val full = out(Bool())
   }
 
-//  val qpIdxVec = (0 until numMaxQPs)
-//  val qpAttrVec = Vec(qpIdxVec.map(_ => {
-//    // RegInit(QpAttrData().setDefaultVal())
-//    Reg(QpAttrData()).setDefaultVal()
-//  }))
-//  io.qpAttrVec := qpAttrVec
-
-//  for (qpIdx <- qpIdxVec) {
-//    io.qpAttrUpdate(qpIdx).pulseRqPsnReset := False
-//    io.qpAttrUpdate(qpIdx).pulseSqPsnReset := False
-//
-//    // Change QPS from RQ or SQ
-//    io.qpStateChange(qpIdx).ready := True
-//    when(io.qpStateChange(qpIdx).valid) {
-//      qpAttrVec(qpIdx).state := io.qpStateChange(qpIdx).changeToState
-//    }
-//  }
-
   // QP0 and QP1 are reserved QPN
-  val nextQpnReg = Reg(UInt(QPN_WIDTH bits)) init (2)
+  val nextQpnReg = RegInit(U(2, QPN_WIDTH bits))
 
   val qpVecAvailable = io.qpAttrVec.map(_.isValid === False)
-  io.full := !(qpVecAvailable.asBits().orR)
-
   val availableQpOH = OHMasking.first(qpVecAvailable)
-  val modifyQpOH =
-    Vec(io.qpAttrVec.map(_.sqpn === io.qpCreateOrModify.sqpn))
+  val foundQpAvailable = qpVecAvailable.orR
+  io.full := !foundQpAvailable
 
-  val qpCreation = io.qpCreateOrModify.modifyMask === QpAttrMask.QP_CREATE.id
-  val qpSelIdx = OHToUInt(qpCreation ? availableQpOH | modifyQpOH)
-  when(io.qpCreateOrModify.valid && qpCreation) {
+  val modifyQpOH =
+    Vec(io.qpAttrVec.map(_.sqpn === io.qpCreateOrModify.req.qpAttr.sqpn))
+  val foundQpModify = modifyQpOH.orR
+
+  val isQpCreation =
+    io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_CREATE.id
+  val qpSelIdxOH = isQpCreation ? availableQpOH | modifyQpOH
+  when(io.qpCreateOrModify.req.valid) {
+    when(isQpCreation) {
+      assert(
+        assertion = foundQpAvailable,
+        message = L"failed to create QP, no QP available",
+        severity = FAILURE
+      )
+    } otherwise {
+      assert(
+        assertion = foundQpModify,
+        message =
+          L"failed to find QP with QPN=${io.qpCreateOrModify.req.qpAttr.sqpn} to modify",
+        severity = FAILURE
+      )
+    }
+  }
+
+  when(io.qpCreateOrModify.req.fire && isQpCreation && foundQpAvailable) {
     nextQpnReg := nextQpnReg + 1
     when(nextQpnReg + 1 === 0) {
       // QP0 and QP1 are reserved QPN
@@ -96,18 +97,20 @@ class AllQpCtrl(numMaxQPs: Int) extends Component {
     }
   }
 
-  io.qpCreateOrModifyVec <-/< StreamDemux(
-    io.qpCreateOrModify.translateWith {
-      val rslt = QpAttrData()
-      rslt.assignAllByName(io.qpCreateOrModify.payload)
-      when(io.qpCreateOrModify.valid && qpCreation) {
-        rslt.sqpn := nextQpnReg
+  Vec(io.qpCreateOrModifyVec.map(_.req)) <-/< StreamOneHotDeMux(
+    io.qpCreateOrModify.req.translateWith {
+      val rslt = cloneOf(io.qpCreateOrModify.req.payloadType)
+      rslt.qpAttr := io.qpCreateOrModify.req.qpAttr
+      when(io.qpCreateOrModify.req.valid && isQpCreation && foundQpAvailable) {
+        rslt.qpAttr.sqpn := nextQpnReg
       }
       rslt
     },
-    select = qpSelIdx,
-    portCount = numMaxQPs
+    select = qpSelIdxOH.asBits
   )
+
+  io.qpCreateOrModify.resp <-/< StreamArbiterFactory.roundRobin.transactionLock
+    .on(Vec(io.qpCreateOrModifyVec.map(_.resp)))
 }
 
 class UdpRdmaPktConverter(numMaxQPs: Int, busWidth: BusWidth)
@@ -125,10 +128,102 @@ class UdpRdmaPktConverter(numMaxQPs: Int, busWidth: BusWidth)
   io.rdmaRx.pktFrag <-/< io.rdmaTx.pktFrag
 }
 
+class AllAddrCache(numMaxPDs: Int, numMaxMRsPerPD: Int) extends Component {
+  val io = new Bundle {
+    val pdCreateOrDelete = slave(PdCreateOrDeleteBus())
+    val pdAddrCreateOrDelete = slave(PdAddrDataCreateOrDeleteBus())
+    val query = slave(PdAddrCacheReadBus())
+    val full = out(Bool())
+  }
+
+  val pdIdxVec = (0 until numMaxPDs)
+  val pdAddrCacheVec = pdIdxVec.map(_ => {
+    val pdAddrCache = new PdInternalAddrCache(numMaxMRsPerPD)
+    pdAddrCache
+  })
+
+  val addrCreateOrDelete = new Area {
+    val pdAddrCreateOrDeleteIdxOH = Vec(
+      pdIdxVec.map(io.pdAddrCreateOrDelete.req.pdId === _)
+    )
+    val foundPdAddrCreateOrDeleteIdx = pdAddrCreateOrDeleteIdxOH.orR
+    when(io.pdAddrCreateOrDelete.req.valid) {
+      assert(
+        assertion = foundPdAddrCreateOrDeleteIdx,
+        message =
+          L"failed to find PD with ID=${io.pdAddrCreateOrDelete.req.pdId}",
+        severity = FAILURE
+      )
+    }
+
+    Vec(pdAddrCacheVec.map(_.io.addrCreateOrDelete.req)) <-/< StreamOneHotDeMux(
+      io.pdAddrCreateOrDelete.req,
+      select = pdAddrCreateOrDeleteIdxOH.asBits
+    )
+
+    io.pdAddrCreateOrDelete.resp <-/< StreamArbiterFactory.roundRobin.transactionLock
+      .on(Vec(pdAddrCacheVec.map(_.io.addrCreateOrDelete.resp)))
+  }
+
+  val query = new Area {
+    val pdAddrCacheQueryIdxOH = Vec(pdIdxVec.map(io.query.req.pdId === _))
+    val foundPdAddrCacheQueryIdx = pdAddrCacheQueryIdxOH.orR
+    when(io.pdAddrCreateOrDelete.req.valid) {
+      assert(
+        assertion = foundPdAddrCacheQueryIdx,
+        message = L"failed to find PD with ID=${io.query.req.pdId}",
+        severity = FAILURE
+      )
+    }
+
+    Vec(pdAddrCacheVec.map(_.io.query.req)) <-/< StreamOneHotDeMux(
+      io.query.req,
+      select = pdAddrCacheQueryIdxOH.asBits
+    )
+
+    io.query.resp <-/< StreamArbiterFactory.roundRobin.transactionLock
+      .on(Vec(pdAddrCacheVec.map(_.io.query.resp)))
+  }
+
+  val pdCreateOrDelete = new Area {
+    val pdVec = Vec(pdIdxVec.map(_ => {
+      val pdValidReg = RegInit(False)
+      pdValidReg
+    }))
+
+    val isPdCreation = io.pdCreateOrDelete.req.createOrDelete === CRUD.CREATE
+    val pdVecAvailable = pdVec.map(_ === False)
+    val foundPdAvailable = pdVecAvailable.orR
+    io.full := !foundPdAvailable
+    val pdCreateIdxOH = OHMasking.first(pdVecAvailable)
+
+    val isPdDeletion = io.pdCreateOrDelete.req.createOrDelete === CRUD.DELETE
+    val pdDeleteIdxOH = Vec(pdIdxVec.map(io.pdCreateOrDelete.req.pdId === _))
+    val foundPdDelete = pdDeleteIdxOH.orR
+
+    val pdSelIdxOH = isPdCreation ? pdCreateIdxOH | pdDeleteIdxOH
+    when(io.pdCreateOrDelete.req.valid) {
+      when(isPdCreation && foundPdAvailable) {
+        pdVec.oneHotAccess(pdSelIdxOH.asBits) := io.pdCreateOrDelete.req.fire
+      } elsewhen (isPdDeletion && foundPdDelete) {
+        pdVec.oneHotAccess(pdSelIdxOH.asBits) := !io.pdCreateOrDelete.req.fire
+      }
+    }
+    io.pdCreateOrDelete.resp <-/< io.pdCreateOrDelete.req.translateWith {
+      val rslt = cloneOf(io.pdCreateOrDelete.resp.payloadType)
+      rslt.successOrFailure := (isPdCreation && foundPdAvailable) || (isPdDeletion && foundPdDelete)
+      rslt.pdId := OHToUInt(pdSelIdxOH).resize(PD_ID_WIDTH).asBits
+      rslt
+    }
+  }
+}
+
 // TODO: RoCE should have QP1?
 class AllQpModules(numMaxQPs: Int, busWidth: BusWidth) extends Component {
   val io = new Bundle {
-    val qpCreateOrModify = slave(Stream(QpAttrData()))
+    val qpCreateOrModify = slave(QpCreateOrModifyBus())
+    val pdCreateOrDelete = slave(PdCreateOrDeleteBus())
+    val pdAddrCreateOrDelete = slave(PdAddrDataCreateOrDeleteBus())
     val workReq = Vec(slave(Stream(WorkReq())), numMaxQPs)
     val recvWorkReq = Vec(slave(Stream(RecvWorkReq())), numMaxQPs)
     val workComp = Vec(master(Stream(WorkComp())), numMaxQPs)
@@ -155,8 +250,6 @@ class AllQpModules(numMaxQPs: Int, busWidth: BusWidth) extends Component {
     val qp = new QP(busWidth)
     allQpCtrl.io.qpAttrVec(qpIdx) := qp.io.qpAttr
     qp.io.qpCreateOrModify << allQpCtrl.io.qpCreateOrModifyVec(qpIdx)
-//    qpCtrl.io.qpStateChange(qpIdx) << qp.io.qpStateChange
-//    qp.io.qpAttrUpdate := qpCtrl.io.qpAttrUpdate(qpIdx)
     qp.io.workReq << io.workReq(qpIdx)
     qp.io.recvWorkReq << io.recvWorkReq(qpIdx)
     io.workComp(qpIdx) << qp.io.workComp
@@ -168,7 +261,7 @@ class AllQpModules(numMaxQPs: Int, busWidth: BusWidth) extends Component {
   Vec(qpVec.map(_.io.rx.pktFrag)) <-/< StreamDemux(rdmaRx, rqSelIdx, numMaxQPs)
 
   val txVec = qpVec.map(_.io.tx.pktFrag)
-  val txSel = StreamArbiterFactory.roundRobin.on(txVec)
+  val txSel = StreamArbiterFactory.roundRobin.transactionLock.on(txVec)
   udpRdmaPktConverter.io.rdmaTx.pktFrag <-/< txSel
 
   val dmaWrReqVec = Vec(qpVec.map(_.io.dma.wr.req))
@@ -187,11 +280,25 @@ class AllQpModules(numMaxQPs: Int, busWidth: BusWidth) extends Component {
       dmaRdRespVec,
       allQpCtrl.io.qpAttrVec
     )
+
+  val allAddrCache = new AllAddrCache(MAX_PD, MAX_MR_PER_PD)
+  allAddrCache.io.pdCreateOrDelete << io.pdCreateOrDelete
+  allAddrCache.io.pdAddrCreateOrDelete << io.pdAddrCreateOrDelete
+  allAddrCache.io.query.req <-/< StreamArbiterFactory.roundRobin.transactionLock
+    .on(qpVec.map(_.io.pdAddrCacheQuery.req))
+  val addrCacheRespTargetQpIdxOH =
+    qpVec.map(_.io.qpAttr.sqpn === allAddrCache.io.query.resp.sqpn)
+  Vec(qpVec.map(_.io.pdAddrCacheQuery.resp)) <-/< StreamOneHotDeMux(
+    allAddrCache.io.query.resp,
+    select = addrCacheRespTargetQpIdxOH.asBits()
+  )
 }
 
 class RoCEv2(numMaxQPs: Int, busWidth: BusWidth) extends Component {
   val io = new Bundle {
-    val qpCreateOrModify = slave(Stream(QpAttrData()))
+    val qpCreateOrModify = slave(QpCreateOrModifyBus())
+    val pdCreateOrDelete = slave(PdCreateOrDeleteBus())
+    val pdAddrCreateOrDelete = slave(PdAddrDataCreateOrDeleteBus())
     val workReq = Vec(slave(Stream(WorkReq())), numMaxQPs)
     val recvWorkReq = Vec(slave(Stream(RecvWorkReq())), numMaxQPs)
     val workComp = Vec(master(Stream(WorkComp())), numMaxQPs)
@@ -201,6 +308,8 @@ class RoCEv2(numMaxQPs: Int, busWidth: BusWidth) extends Component {
 
   val allQpModules = new AllQpModules(numMaxQPs, busWidth)
   allQpModules.io.qpCreateOrModify << io.qpCreateOrModify
+  allQpModules.io.pdCreateOrDelete << io.pdCreateOrDelete
+  allQpModules.io.pdAddrCreateOrDelete << io.pdAddrCreateOrDelete
   allQpModules.io.workReq << io.workReq
   allQpModules.io.recvWorkReq << io.recvWorkReq
   io.workComp << allQpModules.io.workComp
@@ -218,7 +327,7 @@ class RoCEv2(numMaxQPs: Int, busWidth: BusWidth) extends Component {
 object RoCEv2 {
   def main(args: Array[String]): Unit = {
     new SpinalConfig(
-      mode = Verilog,
+      mode = SystemVerilog,
       defaultClockDomainFrequency = FixedFrequency(200 MHz)
     ).generate(new RoCEv2(numMaxQPs = 4, BusWidth.W512))
       // SpinalVerilog
