@@ -2162,19 +2162,21 @@ sealed abstract class RdmaBasePacket extends Bundle {
   // val eth = Bits(ETH_WIDTH bits)
 }
 
-case class DataAndMty(width: Int) extends Bundle {
-  require(isPow2(width), s"width=${width} should be power of 2")
-  val data = Bits(width bits)
-  val mty = Bits((width / BYTE_WIDTH) bits)
+case class DataAndMty(busWidth: BusWidth) extends Bundle {
+  require(isPow2(busWidth.id), s"width=${busWidth.id} should be power of 2")
+  val data = Bits(busWidth.id bits)
+  val mty = Bits((busWidth.id / BYTE_WIDTH) bits)
 }
 
-case class HeaderDataAndMty[T <: Data](headerType: HardType[T], width: Int)
-    extends Bundle {
+case class HeaderDataAndMty[T <: Data](
+    headerType: HardType[T],
+    busWidth: BusWidth
+) extends Bundle {
   //  type DataAndMty = HeaderDataAndMty[NoData]
 
   val header = headerType()
-  val data = Bits(width bits)
-  val mty = Bits((width / BYTE_WIDTH) bits)
+  val data = Bits(busWidth.id bits)
+  val mty = Bits((busWidth.id / BYTE_WIDTH) bits)
 }
 
 object RdmaDataPkt {
@@ -2239,17 +2241,20 @@ case class WriteReq(busWidth: BusWidth)
 case class ReadReq() extends RdmaReq {
   def toRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
     new Composite(this) {
-      val ackWidth = widthOf(bth) + widthOf(reth)
+      val reqWidth = widthOf(bth) + widthOf(reth)
       require(
-        busWidth.id >= ackWidth,
-        s"busWidth=${busWidth.id} must >= ACK width=${ackWidth}"
+        busWidth.id >= reqWidth,
+        s"busWidth=${busWidth.id} must >= ReadReq width=${reqWidth}"
       )
+      val busWidthBytes = busWidth.id / BYTE_WIDTH
+      val reqWidthBytes = reqWidth / BYTE_WIDTH
+
       val rslt = Fragment(RdmaDataPkt(busWidth))
       rslt.last := True
       rslt.bth := bth
       rslt.data := (bth ## reth).resize(busWidth.id)
       // TODO: verify endian
-      rslt.mty := (setAllBits(ackWidth) << (busWidth.id - ackWidth))
+      rslt.mty := (setAllBits(reqWidthBytes) << (busWidthBytes - reqWidthBytes))
     }.rslt
 
   def set(thatBth: BTH, rethBits: Bits): this.type = {
@@ -2299,12 +2304,15 @@ case class Acknowledge() extends Response {
         busWidth.id >= ackWidth,
         s"busWidth=${busWidth.id} must >= ACK width=${ackWidth}"
       )
+      val busWidthBytes = busWidth.id / BYTE_WIDTH
+      val ackWidthBytes = ackWidth / BYTE_WIDTH
+
       val rslt = Fragment(RdmaDataPkt(busWidth))
       rslt.last := True
       rslt.bth := bth
       rslt.data := (bth ## aeth).resize(busWidth.id)
       // TODO: verify endian
-      rslt.mty := (setAllBits(ackWidth) << (busWidth.id - ackWidth))
+      rslt.mty := (setAllBits(ackWidthBytes) << (busWidthBytes - ackWidthBytes))
     }.rslt
 
   def setAck(aeth: AETH, psn: UInt, dqpn: UInt): this.type = {
@@ -2367,17 +2375,20 @@ case class AtomicReq() extends RdmaBasePacket {
 
   def toRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
     new Composite(this) {
-      val ackWidth = widthOf(bth) + widthOf(atomicEth)
+      val reqWidth = widthOf(bth) + widthOf(atomicEth)
       require(
-        busWidth.id >= ackWidth,
-        s"busWidth=${busWidth.id} must >= ACK width=${ackWidth}"
+        busWidth.id >= reqWidth,
+        s"busWidth=${busWidth.id} must >= AtomicReq width=${reqWidth}"
       )
+      val busWidthBytes = busWidth.id / BYTE_WIDTH
+      val reqWidthBytes = reqWidth / BYTE_WIDTH
+
       val rslt = Fragment(RdmaDataPkt(busWidth))
       rslt.last := True
       rslt.bth := bth
       rslt.data := (bth ## atomicEth).resize(busWidth.id)
       // TODO: verify endian
-      rslt.mty := (setAllBits(ackWidth) << (busWidth.id - ackWidth))
+      rslt.mty := (setAllBits(reqWidthBytes) << (busWidthBytes - reqWidthBytes))
     }.rslt
 
   def set(
@@ -2422,12 +2433,15 @@ case class AtomicResp() extends Response {
         busWidth.id >= ackWidth,
         s"busWidth=${busWidth.id} must >= Atomic ACK width=${ackWidth}"
       )
+      val busWidthBytes = busWidth.id / BYTE_WIDTH
+      val ackWidthBytes = ackWidth / BYTE_WIDTH
+
       val rslt = Fragment(RdmaDataPkt(busWidth))
       rslt.last := True
       rslt.bth := bth
       rslt.data := (bth ## atomicAckETH).resize(busWidth.id)
       // TODO: verify endian
-      rslt.mty := (setAllBits(ackWidth) << (busWidth.id - ackWidth))
+      rslt.mty := (setAllBits(ackWidthBytes) << (busWidthBytes - ackWidthBytes))
     }.rslt
 
   def set(dqpn: UInt, psn: UInt, orig: Bits): this.type = {

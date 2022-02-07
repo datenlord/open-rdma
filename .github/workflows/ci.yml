@@ -4,7 +4,7 @@ on:
     branches: [master]
   push:
     branches: [master]
-  schedule: [cron: "12 */24 * * *"]
+  schedule: [cron: "0 * * * *"]
 
 jobs:
   build-and-simulate:
