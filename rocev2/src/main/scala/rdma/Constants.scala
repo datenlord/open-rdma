@@ -91,6 +91,9 @@ object ConstantSettings {
   val MAX_MR_PER_PD = 32
   // require(MAX_PD <= (1 << PD_ID_WIDTH))
 
+  // Test related settings
+  val MATCH_CNT = 1000
+
   // Non-changeable settings
   val BYTE_WIDTH = 8
 
@@ -181,6 +184,7 @@ object BusWidth extends Enumeration {
   type BusWidth = Value
 
   // Internal bus width, must be larger than BTH width=48B
+  val W32 = Value(32) // for test only
   val W512 = Value(512)
   val W1024 = Value(1024)
 }

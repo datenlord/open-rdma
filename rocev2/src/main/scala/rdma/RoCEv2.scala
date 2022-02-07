@@ -327,8 +327,11 @@ class RoCEv2(numMaxQPs: Int, busWidth: BusWidth) extends Component {
 object RoCEv2 {
   def main(args: Array[String]): Unit = {
     new SpinalConfig(
+      defaultClockDomainFrequency = FixedFrequency(200 MHz),
       mode = SystemVerilog,
-      defaultClockDomainFrequency = FixedFrequency(200 MHz)
+      oneFilePerComponent = true,
+      targetDirectory = "./rtl",
+      verbose = true
     ).generate(new RoCEv2(numMaxQPs = 4, BusWidth.W512))
       // SpinalVerilog
       .printPruned()

@@ -273,7 +273,7 @@ class SendReqGenerator(busWidth: BusWidth) extends Component {
   val segmentStream = StreamSegment(
     io.workReqCacheRespAndDmaReadResp
       .throwWhen(io.sendQCtrl.wrongStateFlush),
-    fragmentNum = pmtuFragNum.resize(PMTU_FRAG_NUM_WIDTH)
+    segmentFragNum = pmtuFragNum.resize(PMTU_FRAG_NUM_WIDTH)
   )
   val input = cloneOf(io.workReqCacheRespAndDmaReadResp)
   input <-/< segmentStream
@@ -405,7 +405,7 @@ class SendReqGenerator(busWidth: BusWidth) extends Component {
   val headerStream = SignalEdgeDrivenStream(isFirstDataFrag)
     .throwWhen(io.sendQCtrl.wrongStateFlush)
     .translateWith {
-      val rslt = HeaderDataAndMty(BTH(), busWidth.id)
+      val rslt = HeaderDataAndMty(BTH(), busWidth)
       rslt.header := bth
       rslt.data := headerBits
       rslt.mty := headerMtyBits
@@ -415,13 +415,14 @@ class SendReqGenerator(busWidth: BusWidth) extends Component {
     input
       .throwWhen(io.sendQCtrl.wrongStateFlush)
       .translateWith {
-        val rslt = Fragment(DataAndMty(busWidth.id))
+        val rslt = Fragment(DataAndMty(busWidth))
         rslt.data := inputDmaDataFrag.data
         rslt.mty := inputDmaDataFrag.mty
         rslt.last := isLastDataFrag
         rslt
       },
-    headerStream
+    headerStream,
+    busWidth
   )
   io.txSendReq.pktFrag <-/< addHeaderStream.translateWith {
     val rslt = Fragment(RdmaDataPkt(busWidth))
@@ -456,7 +457,7 @@ class WriteReqGenerator(busWidth: BusWidth) extends Component {
   val segmentStream = StreamSegment(
     io.workReqCacheRespAndDmaReadResp
       .throwWhen(io.sendQCtrl.wrongStateFlush),
-    fragmentNum = pmtuFragNum.resize(PMTU_FRAG_NUM_WIDTH)
+    segmentFragNum = pmtuFragNum.resize(PMTU_FRAG_NUM_WIDTH)
   )
   val input = cloneOf(io.workReqCacheRespAndDmaReadResp)
   input <-/< segmentStream
@@ -581,7 +582,7 @@ class WriteReqGenerator(busWidth: BusWidth) extends Component {
   val headerStream = SignalEdgeDrivenStream(isFirstDataFrag)
     .throwWhen(io.sendQCtrl.wrongStateFlush)
     .translateWith {
-      val rslt = HeaderDataAndMty(BTH(), busWidth.id)
+      val rslt = HeaderDataAndMty(BTH(), busWidth)
       rslt.header := bth
       rslt.data := headerBits
       rslt.mty := headerMtyBits
@@ -591,13 +592,14 @@ class WriteReqGenerator(busWidth: BusWidth) extends Component {
     input
       .throwWhen(io.sendQCtrl.wrongStateFlush)
       .translateWith {
-        val rslt = Fragment(DataAndMty(busWidth.id))
+        val rslt = Fragment(DataAndMty(busWidth))
         rslt.data := inputDmaDataFrag.data
         rslt.mty := inputDmaDataFrag.mty
         rslt.last := isLastDataFrag
         rslt
       },
-    headerStream
+    headerStream,
+    busWidth
   )
   io.txWriteReq.pktFrag <-/< addHeaderStream.translateWith {
     val rslt = Fragment(RdmaDataPkt(busWidth))
