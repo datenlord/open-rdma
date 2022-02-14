@@ -12,6 +12,263 @@ object timeNumToCycleNum {
   }
 }
 
+// DMA related utilities
+
+object DmaReadRespHandler {
+  def apply[T <: Data](
+      inputReq: Stream[T],
+      dmaReadResp: DmaReadRespBus,
+      flush: Bool,
+      busWidth: BusWidth,
+      isReqZeroDmaLen: T => Bool
+  ): Stream[Fragment[ReqAndDmaReadResp[T]]] = {
+    val rslt =
+      new DmaReadRespHandler(inputReq.payloadType, busWidth, isReqZeroDmaLen)
+    rslt.io.flush := flush
+    rslt.io.inputReq << inputReq
+    rslt.io.dmaReadResp << dmaReadResp
+    rslt.io.reqAndDmaReadResp
+  }
+}
+
+class DmaReadRespHandler[T <: Data](
+    reqType: HardType[T],
+    busWidth: BusWidth,
+    isReqZeroDmaLen: T => Bool
+) extends Component {
+  val io = new Bundle {
+    val flush = in(Bool())
+    val inputReq = slave(Stream(reqType()))
+    val dmaReadResp = slave(DmaReadRespBus(busWidth))
+    val reqAndDmaReadResp = master(
+      Stream(Fragment(ReqAndDmaReadResp(reqType, busWidth)))
+    )
+  }
+
+  val dmaReadRespValid = io.dmaReadResp.resp.valid
+  val isFirstDmaReadResp = io.dmaReadResp.resp.isFirst
+  val isLastDmaReadResp = io.dmaReadResp.resp.isLast
+
+  val inputReqQueue = io.inputReq
+    .throwWhen(io.flush)
+    .queueLowLatency(DMA_READ_DELAY_CYCLE)
+  val isEmptyReadReq = isReqZeroDmaLen(inputReqQueue.payload)
+
+  val txSel = UInt(1 bits)
+  val (emptyReadIdx, nonEmptyReadIdx) = (0, 1)
+  when(isEmptyReadReq) {
+    txSel := emptyReadIdx
+  } otherwise {
+    txSel := nonEmptyReadIdx
+  }
+  val twoStreams =
+    StreamDemux(select = txSel, input = inputReqQueue, portCount = 2)
+
+  // Join inputReq with DmaReadResp
+  val joinStream = FragmentStreamJoinStream(
+    io.dmaReadResp.resp
+      .throwWhen(io.flush),
+    twoStreams(nonEmptyReadIdx)
+  )
+
+  io.reqAndDmaReadResp << StreamMux(
+    select = txSel,
+    inputs = Vec(
+      twoStreams(emptyReadIdx).translateWith {
+        val rslt =
+          cloneOf(io.reqAndDmaReadResp.payloadType)
+        rslt.dmaReadResp
+          .setDefaultVal() // TODO: dmaReadResp.lenBytes set to zero explicitly
+        rslt.req := twoStreams(emptyReadIdx).payload
+        rslt.last := True
+        rslt
+      },
+      joinStream.translateWith {
+        val rslt =
+          cloneOf(io.reqAndDmaReadResp.payloadType)
+        rslt.dmaReadResp := joinStream._1
+        rslt.req := joinStream._2
+        rslt.last := joinStream.isLast
+        rslt
+      }
+    )
+  )
+  when(txSel === emptyReadIdx) {
+    assert(
+      assertion = !joinStream.valid,
+      message =
+        L"when request has zero DMA length, it should not handle DMA read response, that joinStream.valid should be false, but joinStream.valid=${joinStream.valid}",
+      severity = FAILURE
+    )
+  } elsewhen (txSel === nonEmptyReadIdx) {
+    assert(
+      assertion = !twoStreams(emptyReadIdx).valid,
+      message =
+        L"when request has non-zero DMA length, twoStreams(emptyReadIdx).valid should be false, but twoStreams(emptyReadIdx).valid=${twoStreams(emptyReadIdx).valid}",
+      severity = FAILURE
+    )
+  }
+}
+
+object DmaReadRespSegment {
+  def apply[T <: Data](
+      input: Stream[Fragment[T]],
+      flush: Bool,
+      pmtu: Bits,
+      busWidth: BusWidth,
+      isReqZeroDmaLen: T => Bool
+  ): Stream[Fragment[T]] = {
+    val rslt =
+      new DmaReadRespSegment(input.fragmentType, busWidth, isReqZeroDmaLen)
+    rslt.io.flush := flush
+    rslt.io.pmtu := pmtu
+    rslt.io.reqAndDmaReadRespIn << input
+    rslt.io.reqAndDmaReadRespOut
+  }
+}
+
+// Handle zero DMA length request/response too
+class DmaReadRespSegment[T <: Data](
+    fragType: HardType[T],
+    busWidth: BusWidth,
+    isReqZeroDmaLen: T => Bool
+) extends Component {
+  val io = new Bundle {
+    val flush = in(Bool())
+    val pmtu = in(Bits(PMTU_WIDTH bits))
+    val reqAndDmaReadRespIn = slave(Stream(Fragment(fragType)))
+    val reqAndDmaReadRespOut = master(Stream(Fragment(fragType)))
+  }
+
+  val pmtuMaxFragNum = pmtuPktLenBytes(io.pmtu) >> log2Up(
+    busWidth.id / BYTE_WIDTH
+  )
+  val isEmptyReadReq = isReqZeroDmaLen(io.reqAndDmaReadRespIn.fragment)
+
+  val txSel = UInt(1 bits)
+  val (emptyReadIdx, nonEmptyReadIdx) = (0, 1)
+  when(isEmptyReadReq) {
+    txSel := emptyReadIdx
+  } otherwise {
+    txSel := nonEmptyReadIdx
+  }
+
+  val twoStreams = StreamDemux(
+    io.reqAndDmaReadRespIn.throwWhen(io.flush),
+    select = txSel,
+    portCount = 2
+  )
+  val segmentStream = StreamSegment(
+    twoStreams(nonEmptyReadIdx),
+    segmentFragNum = pmtuMaxFragNum.resize(PMTU_FRAG_NUM_WIDTH)
+  )
+  val output = StreamMux(
+    select = txSel,
+    inputs = Vec(twoStreams(emptyReadIdx), segmentStream)
+  )
+  io.reqAndDmaReadRespOut << output
+}
+
+object CombineHeaderAndDmaResponse {
+  def apply[T <: Data](
+      reqAndDmaReadRespSegment: Stream[Fragment[ReqAndDmaReadResp[T]]],
+      qpAttr: QpAttrData,
+      flush: Bool,
+      busWidth: BusWidth,
+//      pktNumFunc: (T, QpAttrData) => UInt,
+      headerGenFunc: (
+          T,
+          DmaReadResp,
+          UInt,
+          QpAttrData
+      ) => CombineHeaderAndDmaRespInternalRslt
+  ): RdmaDataBus = {
+    val rslt = new CombineHeaderAndDmaResponse(
+      reqAndDmaReadRespSegment.reqType,
+      busWidth,
+//      pktNumFunc,
+      headerGenFunc
+    )
+    rslt.io.qpAttr := qpAttr
+    rslt.io.flush := flush
+    rslt.io.reqAndDmaReadRespSegment << reqAndDmaReadRespSegment
+    rslt.io.tx
+  }
+}
+
+class CombineHeaderAndDmaResponse[T <: Data](
+    reqType: HardType[T],
+    busWidth: BusWidth,
+//    pktNumFunc: (T, QpAttrData) => UInt,
+    headerGenFunc: (
+        T,
+        DmaReadResp,
+        UInt,
+        QpAttrData
+    ) => CombineHeaderAndDmaRespInternalRslt
+) extends Component {
+  val io = new Bundle {
+    val qpAttr = in(QpAttrData())
+    val flush = in(Bool())
+    val reqAndDmaReadRespSegment = slave(
+      Stream(Fragment(ReqAndDmaReadResp(reqType, busWidth)))
+    )
+    val tx = master(RdmaDataBus(busWidth))
+  }
+  val input = io.reqAndDmaReadRespSegment
+
+  val bthHeaderLenBytes = widthOf(BTH()) / BYTE_WIDTH
+  val busWidthBytes = busWidth.id / BYTE_WIDTH
+
+  val inputDmaDataFrag = input.dmaReadResp
+  val inputReq = input.req
+  val isFirstDataFrag = input.isFirst
+  val isLastDataFrag = input.isLast
+
+  // Count the number of read response packet processed
+  val numPktCnt =
+    Counter(bitCount = MAX_PKT_NUM_WIDTH bits, inc = input.lastFire)
+
+  val (numPkt, bth, headerBits, headerMtyBits) =
+    headerGenFunc(inputReq, inputDmaDataFrag, numPktCnt.value, io.qpAttr).get()
+  // Handle the case that numPkt is zero.
+  // It needs to reset numPktCnt by io.flush.
+  when((numPktCnt.value + 1 >= numPkt && input.lastFire) || io.flush) {
+    numPktCnt.clear()
+  }
+
+  val headerStream = StreamSource()
+    .throwWhen(io.flush)
+    .translateWith {
+      val rslt = HeaderDataAndMty(BTH(), busWidth)
+      rslt.header := bth
+      rslt.data := headerBits
+      rslt.mty := headerMtyBits
+      rslt
+    }
+  val addHeaderStream = StreamAddHeader(
+    input
+      .throwWhen(io.flush)
+      .translateWith {
+        val rslt = Fragment(DataAndMty(busWidth))
+        rslt.data := inputDmaDataFrag.data
+        rslt.mty := inputDmaDataFrag.mty
+        rslt.last := isLastDataFrag
+        rslt
+      },
+    headerStream,
+    busWidth
+  )
+  io.tx.pktFrag << addHeaderStream.translateWith {
+    val rslt = Fragment(RdmaDataPkt(busWidth))
+    rslt.bth := addHeaderStream.header
+    rslt.data := addHeaderStream.data
+    rslt.mty := addHeaderStream.mty
+    rslt.last := addHeaderStream.last
+    rslt
+  }
+}
+
 // Stream related utilities
 
 object StreamSource {
@@ -40,11 +297,7 @@ class StreamDropHeader[T <: Data](dataType: HardType[T]) extends Component {
 
   val headerFragNumReg =
     RegNextWhen(io.headerFragNum, cond = io.inputStream.firstFire)
-  val headerFragCnt = Counter(
-    // RDMA_MAX_LEN_WIDTH >> log2Up(PMTU.U256.id) = RDMA_MAX_LEN_WIDTH / 256
-    // This is the max number of packets of a request.
-    bitCount = (RDMA_MAX_LEN_WIDTH >> log2Up(PMTU.U256.id)) bits
-  )
+  val headerFragCnt = Counter(bitCount = MAX_PKT_NUM_WIDTH bits)
   val headerFragCntVal = headerFragCnt.value
   val throwCond =
     io.inputStream.isFirst ? (headerFragCntVal < io.headerFragNum) | (headerFragCntVal < headerFragNumReg)
@@ -290,7 +543,7 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
     rslt
   }
 
-  // needHandleLastFragResidueReg is CSR, need to reset
+  // needHandleLastFragResidueReg is CSR.
   val needHandleLastFragResidueReg = RegInit(False)
   val extraLastFragStream = cloneOf(io.outputStream)
   extraLastFragStream.valid := needHandleLastFragResidueReg
@@ -856,58 +1109,70 @@ object ComponentEnrichment {
 //========== Packet validation related utilities ==========
 
 object PsnUtil {
-  def cmp(psnA: UInt, psnB: UInt, curPsn: UInt): UInt =
+  def cmp(
+      psnA: UInt,
+      psnB: UInt,
+      curPsn: UInt
+  ): SpinalEnumCraft[PsnCompResult.type] =
     new Composite(curPsn) {
-      val rslt = UInt(PSN_COMP_RESULT_WIDTH bits)
+      val rslt = PsnCompResult()
       val oldestPSN = (curPsn - HALF_MAX_PSN) & PSN_MASK
 
       when(psnA === psnB) {
-        rslt := PsnCompResult.EQUAL.id
+        rslt := PsnCompResult.EQUAL
       } elsewhen (psnA < psnB) {
         when(oldestPSN <= psnA) {
-          rslt := PsnCompResult.LESSER.id
+          rslt := PsnCompResult.LESSER
         } elsewhen (psnB <= oldestPSN) {
-          rslt := PsnCompResult.LESSER.id
+          rslt := PsnCompResult.LESSER
         } otherwise {
-          rslt := PsnCompResult.GREATER.id
+          rslt := PsnCompResult.GREATER
         }
       } otherwise { // psnA > psnB
         when(psnA <= oldestPSN) {
-          rslt := PsnCompResult.GREATER.id
+          rslt := PsnCompResult.GREATER
         } elsewhen (oldestPSN <= psnB) {
-          rslt := PsnCompResult.GREATER.id
+          rslt := PsnCompResult.GREATER
         } otherwise {
-          rslt := PsnCompResult.LESSER.id
+          rslt := PsnCompResult.LESSER
         }
       }
     }.rslt
 
-  /** psnA - psnB
+  /** psnA - psnB, always <= HALF_MAX_PSN
     */
   def diff(psnA: UInt, psnB: UInt): UInt =
     new Composite(psnA) {
-      val rslt = UInt(PSN_WIDTH bits)
-      when(psnA >= psnB) {
-        rslt := psnA - psnB
-      } elsewhen (psnA === psnB) {
-        rslt := 0
+      val min = UInt(PSN_WIDTH bits)
+      val max = UInt(PSN_WIDTH bits)
+      when(psnA > psnB) {
+        min := psnB
+        max := psnA
       } otherwise {
-        rslt := (TOTAL_PSN - (psnB - psnA)).resize(PSN_WIDTH)
+        min := psnA
+        max := psnB
+      }
+      val diff = max - min
+      val rslt = UInt(PSN_WIDTH bits)
+      when(diff > HALF_MAX_PSN) {
+        rslt := (TOTAL_PSN - diff).resize(PSN_WIDTH)
+      } otherwise {
+        rslt := diff
       }
     }.rslt
 
   def lt(psnA: UInt, psnB: UInt, curPsn: UInt): Bool =
-    cmp(psnA, psnB, curPsn) === PsnCompResult.LESSER.id
+    cmp(psnA, psnB, curPsn) === PsnCompResult.LESSER
 
   def gt(psnA: UInt, psnB: UInt, curPsn: UInt): Bool =
-    cmp(psnA, psnB, curPsn) === PsnCompResult.GREATER.id
+    cmp(psnA, psnB, curPsn) === PsnCompResult.GREATER
 
   def lte(psnA: UInt, psnB: UInt, curPsn: UInt): Bool =
-    cmp(psnA, psnB, curPsn) === PsnCompResult.LESSER.id &&
+    cmp(psnA, psnB, curPsn) === PsnCompResult.LESSER ||
       psnA === psnB
 
   def gte(psnA: UInt, psnB: UInt, curPsn: UInt): Bool =
-    cmp(psnA, psnB, curPsn) === PsnCompResult.GREATER.id &&
+    cmp(psnA, psnB, curPsn) === PsnCompResult.GREATER ||
       psnA === psnB
 }
 

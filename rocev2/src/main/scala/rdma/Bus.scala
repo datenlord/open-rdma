@@ -336,7 +336,7 @@ case class QpAttrData() extends Bundle {
   // The previous received request opcode of RQ
   val rqPreReqOpCode = Bits(OPCODE_WIDTH bits)
 
-  val retryPsnStart = UInt(PSN_WIDTH bits)
+  val retryStartPsn = UInt(PSN_WIDTH bits)
   val retryReason = RetryReason()
   val maxRetryCnt = UInt(RETRY_COUNT_WIDTH bits)
   val rnrTimeOut = Bits(RNR_TIMEOUT_WIDTH bits)
@@ -373,7 +373,7 @@ case class QpAttrData() extends Bundle {
     rqPreReqOpCode := OpCode.SEND_ONLY.id
     rnrTimeOut := 1 // 1 means 0.01ms
     respTimeOut := 17 // 17 means 536.8709ms
-    retryPsnStart := 0
+    retryStartPsn := 0
     retryReason := RetryReason.RESP_TIMEOUT
     maxRetryCnt := 3
 
@@ -605,11 +605,11 @@ case class QpStateChange() extends Bundle {
 
 case class DmaReadReq() extends Bundle {
   // opcodeStart can only be read response, send/write/atomic request
-  private val initiator = Bits(DMA_INITIATOR_WIDTH bits)
-  private val sqpn = UInt(QPN_WIDTH bits)
-  private val psnStart = UInt(PSN_WIDTH bits)
-  private val addr = UInt(MEM_ADDR_WIDTH bits)
-  private val lenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
+  val initiator = DmaInitiator()
+  val sqpn = UInt(QPN_WIDTH bits)
+  val psnStart = UInt(PSN_WIDTH bits)
+  val addr = UInt(MEM_ADDR_WIDTH bits)
+  val lenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
 //  private val hasMultiPkts = Bool()
 //  private val hasImmDt = Bool()
 //  private val immDt = Bits(LRKEY_IMM_DATA_WIDTH bits)
@@ -617,13 +617,13 @@ case class DmaReadReq() extends Bundle {
 //  private val ieth = Bits(LRKEY_IMM_DATA_WIDTH bits)
 
   def set(
-      initiator: DmaInitiator.DmaInitiator,
+      initiator: SpinalEnumCraft[DmaInitiator.type],
       sqpn: UInt,
       psnStart: UInt,
       addr: UInt,
       lenBytes: UInt
   ): this.type = {
-    this.initiator := initiator.id
+    this.initiator := initiator
     this.psnStart := psnStart
     this.sqpn := sqpn
     this.addr := addr
@@ -787,7 +787,7 @@ case class DmaReadReq() extends Bundle {
    */
   // TODO: remove this
   def setDefaultVal(): this.type = {
-    initiator := 0
+    initiator := DmaInitiator.RQ_RD
     sqpn := 0
     psnStart := 0
     addr := 0
@@ -802,7 +802,7 @@ case class DmaReadReq() extends Bundle {
 }
 
 case class DmaReadResp(busWidth: BusWidth) extends Bundle {
-  val initiator = Bits(DMA_INITIATOR_WIDTH bits)
+  val initiator = DmaInitiator()
   val sqpn = UInt(QPN_WIDTH bits)
   val psnStart = UInt(PSN_WIDTH bits)
   val data = Bits(busWidth.id bits)
@@ -816,7 +816,7 @@ case class DmaReadResp(busWidth: BusWidth) extends Bundle {
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
-    initiator := 0
+    initiator := DmaInitiator.RQ_RD
     sqpn := 0
     psnStart := 0
     data := 0
@@ -880,19 +880,19 @@ case class DmaReadBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
     val (rqReadIdx, rqDupIdx, rqAtomicReadIdx, sqReadIdx, sqDupIdx, otherIdx) =
       (0, 1, 2, 3, 4, 5)
     switch(resp.initiator) {
-      is(DmaInitiator.RQ_RD.id) {
+      is(DmaInitiator.RQ_RD) {
         txSel := rqReadIdx
       }
-      is(DmaInitiator.RQ_DUP.id) {
+      is(DmaInitiator.RQ_DUP) {
         txSel := rqDupIdx
       }
-      is(DmaInitiator.RQ_ATOMIC_RD.id) {
+      is(DmaInitiator.RQ_ATOMIC_RD) {
         txSel := rqAtomicReadIdx
       }
-      is(DmaInitiator.SQ_RD.id) {
+      is(DmaInitiator.SQ_RD) {
         txSel := sqReadIdx
       }
-      is(DmaInitiator.SQ_DUP.id) {
+      is(DmaInitiator.SQ_DUP) {
         txSel := sqDupIdx
       }
       default {
@@ -950,7 +950,7 @@ case class DmaReadBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
 }
 
 case class DmaWriteReq(busWidth: BusWidth) extends Bundle {
-  val initiator = Bits(DMA_INITIATOR_WIDTH bits)
+  val initiator = DmaInitiator()
   val sqpn = UInt(QPN_WIDTH bits)
   val psn = UInt(PSN_WIDTH bits)
   val workReqId = Bits(WR_ID_WIDTH bits)
@@ -960,7 +960,7 @@ case class DmaWriteReq(busWidth: BusWidth) extends Bundle {
   val mty = Bits((busWidth.id / BYTE_WIDTH) bits)
 
   def set(
-      initiator: DmaInitiator.DmaInitiator,
+      initiator: SpinalEnumCraft[DmaInitiator.type],
       sqpn: UInt,
       psn: UInt,
       workReqId: Bits,
@@ -968,7 +968,7 @@ case class DmaWriteReq(busWidth: BusWidth) extends Bundle {
       data: Bits,
       mty: Bits
   ): this.type = {
-    this.initiator := initiator.id
+    this.initiator := initiator
     this.sqpn := sqpn
     this.psn := psn
     this.workReqId := workReqId
@@ -980,7 +980,7 @@ case class DmaWriteReq(busWidth: BusWidth) extends Bundle {
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
-    initiator := 0
+    initiator := DmaInitiator.RQ_RD
     sqpn := 0
     psn := 0
     workReqId := 0
@@ -993,7 +993,7 @@ case class DmaWriteReq(busWidth: BusWidth) extends Bundle {
 }
 
 case class DmaWriteResp() extends Bundle {
-  val initiator = Bits(DMA_INITIATOR_WIDTH bits)
+  val initiator = DmaInitiator()
   val sqpn = UInt(QPN_WIDTH bits)
   val psn = UInt(PSN_WIDTH bits)
   val workReqId = Bits(WR_ID_WIDTH bits)
@@ -1001,7 +1001,7 @@ case class DmaWriteResp() extends Bundle {
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
-    initiator := 0
+    initiator := DmaInitiator.RQ_RD
     sqpn := 0
     psn := 0
     workReqId := 0
@@ -1080,16 +1080,16 @@ case class DmaWriteBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
     val (rqWriteIdx, rqAtomicWrIdx, sqWriteIdx, sqAtomicWrIdx, otherIdx) =
       (0, 1, 2, 3, 4)
     switch(resp.initiator) {
-      is(DmaInitiator.RQ_WR.id) {
+      is(DmaInitiator.RQ_WR) {
         txSel := rqWriteIdx
       }
-      is(DmaInitiator.RQ_ATOMIC_WR.id) {
+      is(DmaInitiator.RQ_ATOMIC_WR) {
         txSel := rqAtomicWrIdx
       }
-      is(DmaInitiator.SQ_WR.id) {
+      is(DmaInitiator.SQ_WR) {
         txSel := sqWriteIdx
       }
-      is(DmaInitiator.SQ_ATOMIC_WR.id) {
+      is(DmaInitiator.SQ_ATOMIC_WR) {
         txSel := sqAtomicWrIdx
       }
       default {
@@ -1445,12 +1445,48 @@ case class ReadAtomicResultCacheQueryBus() extends Bundle with IMasterSlave {
   }
 }
 
-/** for RQ */
-case class ReadAtomicResultCacheRespAndDmaReadResp(busWidth: BusWidth)
+case class CombineHeaderAndDmaRespInternalRslt(busWidth: BusWidth)
     extends Bundle {
-  val dmaReadResp = DmaReadResp(busWidth)
-  val resultCacheResp = ReadAtomicResultCacheResp()
+  val pktNum = UInt(PSN_WIDTH bits)
+  val bth = BTH()
+  val headerBits = Bits(busWidth.id bits)
+  val headerMtyBits = Bits((busWidth.id / BYTE_WIDTH) bits)
+
+  def set(
+      pktNum: UInt,
+      bth: BTH,
+      headerBits: Bits,
+      headerMtyBits: Bits
+  ): this.type = {
+    this.pktNum := pktNum
+    this.bth := bth
+    this.headerBits := headerBits
+    this.headerMtyBits := headerMtyBits
+    this
+  }
+
+  def get(): (UInt, BTH, Bits, Bits) = (pktNum, bth, headerBits, headerMtyBits)
 }
+
+case class ReqAndDmaReadResp[T <: Data](
+    reqType: HardType[T],
+    busWidth: BusWidth
+) extends Bundle {
+  val dmaReadResp = DmaReadResp(busWidth)
+  val req = reqType()
+}
+
+/** for RQ */
+//case class ReadAtomicResultCacheRespAndDmaReadResp(busWidth: BusWidth)
+//    extends Bundle {
+//  val dmaReadResp = DmaReadResp(busWidth)
+//  val resultCacheResp = ReadAtomicResultCacheResp()
+//}
+
+//object ABC {
+//  type ReadAtomicResultCacheDataAndDmaReadResp =
+//    ReqAndDmaReadResp[ReadAtomicResultCacheData]
+//}
 case class ReadAtomicResultCacheDataAndDmaReadResp(busWidth: BusWidth)
     extends Bundle {
   val dmaReadResp = DmaReadResp(busWidth)
@@ -1458,9 +1494,10 @@ case class ReadAtomicResultCacheDataAndDmaReadResp(busWidth: BusWidth)
 }
 
 /** for SQ */
-case class WorkReqCacheRespAndDmaReadResp(busWidth: BusWidth) extends Bundle {
+case class CachedWorkReqAndDmaReadResp(busWidth: BusWidth) extends Bundle {
   val dmaReadResp = DmaReadResp(busWidth)
-  val workReqCacheResp = WorkReqCacheResp()
+  val cachedWorkReq = CachedWorkReq()
+//  val workReqCacheResp = WorkReqCacheResp()
 }
 
 case class WorkCompAndAck() extends Bundle {

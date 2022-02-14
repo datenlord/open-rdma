@@ -107,7 +107,7 @@ class QpCtrl extends Component {
     val RETRY_FLUSH: State = new State with EntryPoint {
       onEntry {
         qpAttr.retryReason := io.sqNotifier.retry.reason
-        qpAttr.retryPsnStart := io.sqNotifier.retry.psnStart
+        qpAttr.retryStartPsn := io.sqNotifier.retry.psnStart
       }
       whenIsActive {
         // retryFlushDone just means first retry WR sent, it needs to wait for new responses, stop flushing responses

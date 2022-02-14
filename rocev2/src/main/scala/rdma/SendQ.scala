@@ -40,7 +40,7 @@ class SendQ(busWidth: BusWidth) extends Component {
   reqSender.io.workReqCacheEmpty := workReqCache.io.empty
   reqSender.io.workReq << io.workReq
   workReqCache.io.push << reqSender.io.workReqCachePush
-  workReqCache.io.queryPort4SqReqDmaRead << reqSender.io.workReqQueryPort4SqDmaReadResp
+//  workReqCache.io.queryPort4SqReqDmaRead << reqSender.io.workReqQueryPort4SqDmaReadResp
   io.addrCacheRead4Req << reqSender.io.addrCacheRead
   io.psnInc.npsn := reqSender.io.npsnInc
   io.dma.reqSender << reqSender.io.dmaRead
@@ -64,7 +64,7 @@ class SendQ(busWidth: BusWidth) extends Component {
   retryHandler.io.qpAttr := io.qpAttr
   retryHandler.io.sendQCtrl := io.sendQCtrl
   retryHandler.io.retryWorkReq << io.retryWorkReq
-  workReqCache.io.queryPort4DupReqDmaRead << retryHandler.io.workReqQueryPort4DupDmaReadResp
+//  workReqCache.io.queryPort4DupReqDmaRead << retryHandler.io.workReqQueryPort4DupDmaReadResp
   io.dma.retry << retryHandler.io.dmaRead
 
   io.notifier.nak := reqSender.io.nakNotify || respHandler.io.nakNotify
@@ -99,7 +99,7 @@ class ReqSender(busWidth: BusWidth) extends Component {
     val addrCacheRead = master(QpAddrCacheAgentReadBus())
     val sqOutPsnRangeFifoPush = master(Stream(ReqPsnRange()))
     val workReqCachePush = master(Stream(CachedWorkReq()))
-    val workReqQueryPort4SqDmaReadResp = master(WorkReqCacheQueryBus())
+//    val workReqQueryPort4SqDmaReadResp = master(WorkReqCacheQueryBus())
     val workReqHasFence = out(Bool())
     val dmaRead = master(DmaReadBus(busWidth))
     val workCompErr = master(Stream(WorkComp()))
@@ -133,20 +133,26 @@ class ReqSender(busWidth: BusWidth) extends Component {
   val sqDmaReadRespHandler = new SqDmaReadRespHandler(busWidth)
   sqDmaReadRespHandler.io.sendQCtrl := io.sendQCtrl
   sqDmaReadRespHandler.io.dmaReadResp.resp << io.dmaRead.resp
-  io.workReqQueryPort4SqDmaReadResp << sqDmaReadRespHandler.io.workReqQuery
+  sqDmaReadRespHandler.io.cachedWorkReq << workReqCachePushAndReadAtomicHandler.io.cachedWorkReqOut
+//  io.workReqQueryPort4SqDmaReadResp << sqDmaReadRespHandler.io.workReqQuery
+
+  val sendWriteReqSegment = new SendWriteReqSegment(busWidth)
+  sendWriteReqSegment.io.qpAttr := io.qpAttr
+  sendWriteReqSegment.io.sendQCtrl := io.sendQCtrl
+  sendWriteReqSegment.io.cachedWorkReqAndDmaReadResp << sqDmaReadRespHandler.io.cachedWorkReqAndDmaReadResp
 
   val sendReqGenerator = new SendReqGenerator(busWidth)
   sendReqGenerator.io.qpAttr := io.qpAttr
   sendReqGenerator.io.sendQCtrl := io.sendQCtrl
-  sendReqGenerator.io.workReqCacheRespAndDmaReadResp << sqDmaReadRespHandler.io.sendWorkReqCacheRespAndDmaReadResp
+  sendReqGenerator.io.cachedWorkReqAndDmaReadResp << sendWriteReqSegment.io.sendCachedWorkReqAndDmaReadResp
 
   val writeReqGenerator = new WriteReqGenerator(busWidth)
   writeReqGenerator.io.qpAttr := io.qpAttr
   writeReqGenerator.io.sendQCtrl := io.sendQCtrl
-  writeReqGenerator.io.workReqCacheRespAndDmaReadResp << sqDmaReadRespHandler.io.writeWorkReqCacheRespAndDmaReadResp
+  writeReqGenerator.io.cachedWorkReqAndDmaReadResp << sendWriteReqSegment.io.writeCachedWorkReqAndDmaReadResp
 
-  io.txSendReq << sendReqGenerator.io.txSendReq
-  io.txWriteReq << writeReqGenerator.io.txWriteReq
+  io.txSendReq << sendReqGenerator.io.txReq
+  io.txWriteReq << writeReqGenerator.io.txReq
   io.txAtomicReq << workReqCachePushAndReadAtomicHandler.io.txAtomicReq
   io.txReadReq << workReqCachePushAndReadAtomicHandler.io.txReadReq
 }
@@ -300,6 +306,7 @@ class WorkReqCachePushAndReadAtomicHandler extends Component {
     val workReqHasFence = out(Bool())
     val workReqCacheEmpty = in(Bool())
     val workReqCachePush = master(Stream(CachedWorkReq()))
+    val cachedWorkReqOut = master(Stream(CachedWorkReq()))
     val dmaRead = master(DmaReadReqBus())
     val txReadReq = master(Stream(ReadReq()))
     val txAtomicReq = master(Stream(AtomicReq()))
@@ -335,7 +342,7 @@ class WorkReqCachePushAndReadAtomicHandler extends Component {
 
   // Handle fence
   io.workReqHasFence := cachedWorkReqValid && cachedWorkReq.workReq.fence
-  val (workReq4CachePush, workReq4Output) = StreamFork2(
+  val (workReq4CachePush, workReq4DownStream, workReq4Output) = StreamFork3(
     io.workReqToCache
       .throwWhen(io.sendQCtrl.wrongStateFlush)
       // (cachedWorkReq.workReq.fence && !io.workReqCacheEmpty) is also FENCE state trigger condition
@@ -346,6 +353,7 @@ class WorkReqCachePushAndReadAtomicHandler extends Component {
   )
 
   io.workReqCachePush <-/< workReq4CachePush
+  io.cachedWorkReqOut <-/< workReq4DownStream
 
   val fourStreams = StreamDemux(workReq4Output, select = txSel, portCount = 4)
   // Just discard non-send/write/read/atomic WR

@@ -135,19 +135,23 @@ object ConstantSettings {
   val DMA_INITIATOR_WIDTH = 4
 }
 
-object DmaInitiator extends Enumeration {
-  type DmaInitiator = Value
-
-  val RQ_RD = Value(0)
-  val RQ_WR = Value(1)
-  val RQ_DUP = Value(2)
-  val RQ_ATOMIC_RD = Value(3)
-  val RQ_ATOMIC_WR = Value(4)
-  val SQ_RD = Value(5)
-  val SQ_WR = Value(6)
-  val SQ_ATOMIC_WR = Value(7)
-  val SQ_DUP = Value(8)
+object DmaInitiator extends SpinalEnum(binarySequential) {
+  val RQ_RD, RQ_WR, RQ_DUP, RQ_ATOMIC_RD, RQ_ATOMIC_WR, SQ_RD, SQ_WR,
+      SQ_ATOMIC_WR, SQ_DUP = newElement()
 }
+//object DmaInitiator extends Enumeration {
+//  type DmaInitiator = Value
+//
+//  val RQ_RD = Value(0)
+//  val RQ_WR = Value(1)
+//  val RQ_DUP = Value(2)
+//  val RQ_ATOMIC_RD = Value(3)
+//  val RQ_ATOMIC_WR = Value(4)
+//  val SQ_RD = Value(5)
+//  val SQ_WR = Value(6)
+//  val SQ_ATOMIC_WR = Value(7)
+//  val SQ_DUP = Value(8)
+//}
 
 object RetryReason extends SpinalEnum(binarySequential) {
   val RESP_TIMEOUT, RETRY_ACK, IMPLICIT_ACK = newElement()
@@ -161,13 +165,16 @@ object CRUD extends SpinalEnum(binarySequential) {
   val DELETE, CREATE, READ, UPDATE = newElement()
 }
 
-object PsnCompResult extends Enumeration {
-  type PsnCompResult = Value
-
-  val GREATER = Value(1)
-  val EQUAL = Value(0)
-  val LESSER = Value(2)
+object PsnCompResult extends SpinalEnum(binarySequential) {
+  val GREATER, EQUAL, LESSER = newElement()
 }
+//object PsnCompResult extends Enumeration {
+//  type PsnCompResult = Value
+//
+//  val GREATER = Value(1)
+//  val EQUAL = Value(0)
+//  val LESSER = Value(2)
+//}
 
 object AckType extends Enumeration {
   type AckType = Value
@@ -206,7 +213,11 @@ object RdmaConstants {
 
   val WR_ID_WIDTH = 64
   val PD_ID_WIDTH = 32
-  val RDMA_MAX_LEN_WIDTH = 32 // RDMA max packet length 2GB=2^31
+  val RDMA_MAX_LEN_WIDTH = 32 // RDMA max request/response length 2GB=2^31
+  // RDMA_MAX_LEN_WIDTH - log2Up(256) = RDMA_MAX_LEN_WIDTH - PMTU.U256.id = 24
+  // PMTU.U256.id = 8 is the bit width of 256.
+  // This is the max number of packets of a request or a response.
+  val MAX_PKT_NUM_WIDTH = RDMA_MAX_LEN_WIDTH - PMTU.U256.id
 
   val RESP_TIMEOUT_WIDTH = 5
   val RETRY_COUNT_WIDTH = 3

@@ -285,9 +285,9 @@ class WorkReqCache(depth: Int) extends Component {
     val occupancy = out(UInt(log2Up(depth + 1) bits))
     val empty = out(Bool())
     val scanBus = slave(CamFifoScanBus(CachedWorkReq(), depth))
-    val queryPort4SqReqDmaRead = slave(WorkReqCacheQueryBus())
+//    val queryPort4SqReqDmaRead = slave(WorkReqCacheQueryBus())
     val queryPort4SqRespDmaWrite = slave(WorkReqCacheQueryBus())
-    val queryPort4DupReqDmaRead = slave(WorkReqCacheQueryBus())
+//    val queryPort4DupReqDmaRead = slave(WorkReqCacheQueryBus())
   }
 
   val cache = new CamFifo(
@@ -298,7 +298,7 @@ class WorkReqCache(depth: Int) extends Component {
       PsnUtil.lte(v.psnStart, k.psn, v.psnStart) &&
         PsnUtil.lt(k.psn, v.psnStart + v.pktNum, v.psnStart),
     depth = depth,
-    portCount = 3,
+    portCount = 1,
     supportScan = true
   )
   cache.io.push << io.push
@@ -310,9 +310,9 @@ class WorkReqCache(depth: Int) extends Component {
   cache.io.scanBus << io.scanBus
 
   val queryPortVec = Vec(
-    io.queryPort4SqReqDmaRead,
-    io.queryPort4SqRespDmaWrite,
-    io.queryPort4DupReqDmaRead
+//    io.queryPort4SqReqDmaRead,
+    io.queryPort4SqRespDmaWrite
+//    io.queryPort4DupReqDmaRead
   )
   for ((queryPort, portIdx) <- queryPortVec.zipWithIndex) {
     cache.io.queryBusVec(portIdx).req << queryPort.req

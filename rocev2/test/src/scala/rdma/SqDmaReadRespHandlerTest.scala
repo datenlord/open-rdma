@@ -6,13 +6,13 @@ import StreamSimUtil._
 import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
 
-class RqReadDmaRespHandlerTest extends AnyFunSuite {
+class SqDmaReadRespHandlerTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
 
   def busWidthBytes: Int = busWidth.id / BYTE_WIDTH
 
   val simCfg = SimConfig.allOptimisation.withWave
-    .compile(new RqReadDmaRespHandler(busWidth))
+    .compile(new SqDmaReadRespHandler(busWidth))
 
   test("zero DMA length read response test") {
     simCfg.doSim { dut =>
@@ -21,40 +21,37 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
       val psnQueue = mutable.Queue[Int]()
       val matchQueue = mutable.Queue[Int]()
 
-      dut.io.recvQCtrl.stateErrFlush #= false
+      dut.io.sendQCtrl.wrongStateFlush #= false
 
       // Input to DUT
-      streamMasterDriver(dut.io.readResultCacheData, dut.clockDomain) {
-        dut.io.readResultCacheData.dlen #= 0
+      streamMasterDriver(dut.io.cachedWorkReq, dut.clockDomain) {
+        dut.io.cachedWorkReq.workReq.lenBytes #= 0
       }
-      onStreamFire(dut.io.readResultCacheData, dut.clockDomain) {
-        psnQueue.enqueue(dut.io.readResultCacheData.psnStart.toInt)
+      onStreamFire(dut.io.cachedWorkReq, dut.clockDomain) {
+        psnQueue.enqueue(dut.io.cachedWorkReq.psnStart.toInt)
       }
 
       // Check DUT output
       MiscUtils.checkConditionAlways(dut.clockDomain) {
         dut.io.dmaReadResp.resp.ready.toBoolean == false
       }
-      streamSlaveRandomizer(
-        dut.io.readResultCacheDataAndDmaReadResp,
-        dut.clockDomain
-      )
-      onStreamFire(dut.io.readResultCacheDataAndDmaReadResp, dut.clockDomain) {
+      streamSlaveRandomizer(dut.io.cachedWorkReqAndDmaReadResp, dut.clockDomain)
+      onStreamFire(dut.io.cachedWorkReqAndDmaReadResp, dut.clockDomain) {
 //        println(
-//          f"the read request has zero DMA length, but dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen.toLong}%X"
+//            f"the read request has zero DMA length, but dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes=${dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes.toLong}%X"
 //        )
         assert(
-          dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen.toLong == 0,
-          f"the read request has zero DMA length, but dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen.toLong}%X"
+          dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes.toLong == 0,
+          f"the read request has zero DMA length, but dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes=${dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes.toLong}%X"
         )
 
         val inputPsnStart = psnQueue.dequeue()
 //        println(
-//          f"output PSN io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt}%X not match input PSN io.readResultCacheData.psnStart=${inputPsnStart}%X"
+//            f"output PSN io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart=${dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart.toInt}%X not match input PSN io.cachedWorkReq.psnStart=${inputPsnStart}%X"
 //        )
         assert(
-          inputPsnStart == dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt,
-          f"output PSN io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt}%X not match input PSN io.readResultCacheData.psnStart=${inputPsnStart}%X"
+          inputPsnStart == dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart.toInt,
+          f"output PSN io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart=${dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart.toInt}%X not match input PSN io.cachedWorkReq.psnStart=${inputPsnStart}%X"
         )
 
         matchQueue.enqueue(inputPsnStart)
@@ -75,29 +72,29 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
       val matchQueue = mutable.Queue[Int]()
 
       val pmtuBytes = 256
-      dut.io.recvQCtrl.stateErrFlush #= false
+      dut.io.sendQCtrl.wrongStateFlush #= false
 
       // Input to DUT
       val (_, pktNumItr4CacheData, psnItr4CacheData, totalLenItr4CacheData) =
         SendWriteReqReadRespInput.getItr(pmtuBytes, busWidthBytes)
-      streamMasterDriver(dut.io.readResultCacheData, dut.clockDomain) {
+      streamMasterDriver(dut.io.cachedWorkReq, dut.clockDomain) {
         val pktNum = pktNumItr4CacheData.next()
         val psnStart = psnItr4CacheData.next()
         val totalLenBytes = totalLenItr4CacheData.next()
 
-        dut.io.readResultCacheData.dlen #= totalLenBytes
-        dut.io.readResultCacheData.psnStart #= psnStart
-        dut.io.readResultCacheData.pktNum #= pktNum
+        dut.io.cachedWorkReq.workReq.lenBytes #= totalLenBytes
+        dut.io.cachedWorkReq.psnStart #= psnStart
+        dut.io.cachedWorkReq.pktNum #= pktNum
       }
-      onStreamFire(dut.io.readResultCacheData, dut.clockDomain) {
-        println(
-          f"dut.io.readResultCacheData.psnStart=${dut.io.readResultCacheData.psnStart.toInt}, dut.io.readResultCacheData.pktNum=${dut.io.readResultCacheData.pktNum.toInt}, dut.io.readResultCacheData.dlen=${dut.io.readResultCacheData.dlen.toLong}"
-        )
+      onStreamFire(dut.io.cachedWorkReq, dut.clockDomain) {
+//        println(
+//          f"dut.io.cachedWorkReq.psnStart=${dut.io.cachedWorkReq.psnStart.toInt}, dut.io.cachedWorkReq.pktNum=${dut.io.cachedWorkReq.pktNum.toInt}, dut.io.cachedWorkReq.workReq.lenBytes=${dut.io.cachedWorkReq.workReq.lenBytes.toLong}"
+//        )
         cacheDataQueue.enqueue(
           (
-            dut.io.readResultCacheData.psnStart.toInt,
-            dut.io.readResultCacheData.pktNum.toInt,
-            dut.io.readResultCacheData.dlen.toLong
+            dut.io.cachedWorkReq.psnStart.toInt,
+            dut.io.cachedWorkReq.pktNum.toInt,
+            dut.io.cachedWorkReq.workReq.lenBytes.toLong
           )
         )
       }
@@ -117,9 +114,9 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
         dut.io.dmaReadResp.resp.last #= (fragIdx == fragNum - 1)
       }
       onStreamFire(dut.io.dmaReadResp.resp, dut.clockDomain) {
-//        println(
-//          f"dut.io.dmaReadResp.resp.psnStart=${dut.io.dmaReadResp.resp.psnStart.toInt}, dut.io.dmaReadResp.resp.lenBytes=${dut.io.dmaReadResp.resp.lenBytes.toLong}, dut.io.dmaReadResp.resp.last=${dut.io.dmaReadResp.resp.last.toBoolean}"
-//        )
+        println(
+          f"dut.io.dmaReadResp.resp.psnStart=${dut.io.dmaReadResp.resp.psnStart.toInt}, dut.io.dmaReadResp.resp.lenBytes=${dut.io.dmaReadResp.resp.lenBytes.toLong}, dut.io.dmaReadResp.resp.last=${dut.io.dmaReadResp.resp.last.toBoolean}"
+        )
         dmaRespQueue.enqueue(
           (
             dut.io.dmaReadResp.resp.data.toBigInt,
@@ -130,20 +127,17 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
         )
       }
 
-      streamSlaveRandomizer(
-        dut.io.readResultCacheDataAndDmaReadResp,
-        dut.clockDomain
-      )
-      onStreamFire(dut.io.readResultCacheDataAndDmaReadResp, dut.clockDomain) {
+      streamSlaveRandomizer(dut.io.cachedWorkReqAndDmaReadResp, dut.clockDomain)
+      onStreamFire(dut.io.cachedWorkReqAndDmaReadResp, dut.clockDomain) {
         outputQueue.enqueue(
           (
-            dut.io.readResultCacheDataAndDmaReadResp.dmaReadResp.data.toBigInt,
-            dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt,
-            dut.io.readResultCacheDataAndDmaReadResp.dmaReadResp.psnStart.toInt,
-            dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen.toLong,
-            dut.io.readResultCacheDataAndDmaReadResp.dmaReadResp.lenBytes.toLong,
-            dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.pktNum.toInt,
-            dut.io.readResultCacheDataAndDmaReadResp.last.toBoolean
+            dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.data.toBigInt,
+            dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart.toInt,
+            dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.psnStart.toInt,
+            dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes.toLong,
+            dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.lenBytes.toLong,
+            dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.pktNum.toInt,
+            dut.io.cachedWorkReqAndDmaReadResp.last.toBoolean
           )
         )
       }
@@ -179,7 +173,7 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
             )
 
 //          println(
-//            f"output packet num=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.pktNum.toInt} not match input packet num=${pktNumIn}%X"
+//            f"output packet num=${dut.io.cachedWorkReqAndDmaReadResp.resultCacheData.pktNum.toInt} not match input packet num=${pktNumIn}%X"
 //          )
             assert(
               pktNumIn == pktNumOut,
@@ -197,16 +191,16 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
             )
 
 //          println(
-//            f"output response data io.readResultCacheDataAndDmaReadResp.dmaReadResp.data=${dut.io.readResultCacheDataAndDmaReadResp.dmaReadResp.data.toBigInt}%X not match input response data io.dmaReadResp.resp.data=${dataIn}%X"
+//            f"output response data io.cachedWorkReqAndDmaReadResp.dmaReadResp.data=${dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.data.toBigInt}%X not match input response data io.dmaReadResp.resp.data=${dataIn}%X"
 //          )
             assert(
               dmaRespDataIn.toString(16) == dmaRespDataOut.toString(16),
-              f"output response data io.readResultCacheDataAndDmaReadResp.dmaReadResp.data=${dmaRespDataOut}%X not match input response data io.dmaReadResp.resp.data=${dmaRespDataIn}%X"
+              f"output response data io.cachedWorkReqAndDmaReadResp.dmaReadResp.data=${dmaRespDataOut}%X not match input response data io.dmaReadResp.resp.data=${dmaRespDataIn}%X"
             )
 
             assert(
               isLastIn == isLastOut,
-              f"output dut.io.readResultCacheDataAndDmaReadResp.last=${isLastOut} not match input dut.io.dmaReadResp.resp.last=${isLastIn}"
+              f"output dut.io.cachedWorkReqAndDmaReadResp.last=${isLastOut} not match input dut.io.dmaReadResp.resp.last=${isLastIn}"
             )
 
             matchQueue.enqueue(psnStartInDmaResp)
