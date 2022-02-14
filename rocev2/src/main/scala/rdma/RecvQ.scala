@@ -241,14 +241,14 @@ class ReqCommCheck(busWidth: BusWidth) extends Component {
       curPsn = io.qpAttr.epsn
     )
     switch(epsnCmpRslt) {
-      is(PsnCompResult.GREATER.id) {
+      is(PsnCompResult.GREATER) {
         isPsnCheckPass := False
         isDupReq := False
       }
-      is(PsnCompResult.LESSER.id) {
+      is(PsnCompResult.LESSER) {
         isPsnCheckPass := inputValid
-        isDupPendingReq := inputValid && opsnCmpRslt === PsnCompResult.GREATER.id
-        isDupReq := inputValid && (opsnCmpRslt === PsnCompResult.LESSER.id || opsnCmpRslt === PsnCompResult.EQUAL.id)
+        isDupPendingReq := inputValid && opsnCmpRslt === PsnCompResult.GREATER
+        isDupReq := inputValid && (opsnCmpRslt === PsnCompResult.LESSER || opsnCmpRslt === PsnCompResult.EQUAL)
       }
       default { // PsnCompResult.EQUAL
         isPsnCheckPass := inputValid
@@ -1515,6 +1515,22 @@ class RqReadDmaRespHandler(busWidth: BusWidth) extends Component {
     )
   }
 
+  val handlerOutput = DmaReadRespHandler(
+    io.readResultCacheData,
+    io.dmaReadResp,
+    io.recvQCtrl.stateErrFlush,
+    busWidth,
+    isReqZeroDmaLen = (req: ReadAtomicResultCacheData) => req.dlen === 0
+  )
+
+  io.readResultCacheDataAndDmaReadResp <-/< handlerOutput.translateWith {
+    val rslt = cloneOf(io.readResultCacheDataAndDmaReadResp.payloadType)
+    rslt.dmaReadResp := handlerOutput.dmaReadResp
+    rslt.resultCacheData := handlerOutput.req
+    rslt.last := handlerOutput.last
+    rslt
+  }
+  /*
   val dmaReadRespValid = io.dmaReadResp.resp.valid
   val isFirstDmaReadResp = io.dmaReadResp.resp.isFirst
   val isLastDmaReadResp = io.dmaReadResp.resp.isLast
@@ -1522,6 +1538,15 @@ class RqReadDmaRespHandler(busWidth: BusWidth) extends Component {
   val readResultCacheDataQueue = io.readResultCacheData
     .throwWhen(io.recvQCtrl.stateErrFlush)
     .queueLowLatency(DMA_READ_DELAY_CYCLE)
+  // TODO: enable following assert to make sure readResultCacheDataQueue is valid before DMA response returned
+//  when(io.dmaReadResp.resp.valid) {
+//    assert(
+//      assertion = readResultCacheDataQueue.valid,
+//      message =
+//        L"io.dmaReadResp.resp.valid is true, but readResultCacheDataQueue.valid is false",
+//      severity = FAILURE
+//    )
+//  }
   val isEmptyReadReq = readResultCacheDataQueue.dlen === 0
 
   val txSel = UInt(1 bits)
@@ -1534,7 +1559,7 @@ class RqReadDmaRespHandler(busWidth: BusWidth) extends Component {
   val twoStreams =
     StreamDemux(select = txSel, input = readResultCacheDataQueue, portCount = 2)
 
-  // Join ReadAtomicResultCache query response with DmaReadResp
+  // Join ReadAtomicResultCache with DmaReadResp
   val joinStream = FragmentStreamJoinStream(
     io.dmaReadResp.resp
       .throwWhen(io.recvQCtrl.stateErrFlush),
@@ -1578,6 +1603,7 @@ class RqReadDmaRespHandler(busWidth: BusWidth) extends Component {
       severity = FAILURE
     )
   }
+   */
 }
 
 class ReadRespSegment(busWidth: BusWidth) extends Component {
@@ -1592,35 +1618,46 @@ class ReadRespSegment(busWidth: BusWidth) extends Component {
     )
   }
 
-  val pmtuMaxFragNum = pmtuPktLenBytes(io.qpAttr.pmtu) >> log2Up(
-    busWidth.id / BYTE_WIDTH
+  val segmentOut = DmaReadRespSegment(
+    io.readResultCacheDataAndDmaReadResp,
+    io.recvQCtrl.stateErrFlush,
+    io.qpAttr.pmtu,
+    busWidth,
+    isReqZeroDmaLen =
+      (reqAndDmaReadResp: ReadAtomicResultCacheDataAndDmaReadResp) =>
+        reqAndDmaReadResp.resultCacheData.dlen === 0
   )
-
-  val isEmptyReadReq =
-    io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen === 0 // TODO: handle zero read request
-  val txSel = UInt(1 bits)
-  val (emptyReadIdx, nonEmptyReadIdx) = (0, 1)
-  when(isEmptyReadReq) {
-    txSel := emptyReadIdx
-  } otherwise {
-    txSel := nonEmptyReadIdx
-  }
-
-  val twoStreams = StreamDemux(
-    io.readResultCacheDataAndDmaReadResp
-      .throwWhen(io.recvQCtrl.stateErrFlush),
-    select = txSel,
-    portCount = 2
-  )
-  val segmentStream = StreamSegment(
-    twoStreams(nonEmptyReadIdx),
-    segmentFragNum = pmtuMaxFragNum.resize(PMTU_FRAG_NUM_WIDTH)
-  )
-  val output = StreamMux(
-    select = txSel,
-    inputs = Vec(twoStreams(emptyReadIdx), segmentStream)
-  )
-  io.readResultCacheDataAndDmaReadRespSegment <-/< output
+  io.readResultCacheDataAndDmaReadRespSegment <-/< segmentOut
+//
+//  val pmtuMaxFragNum = pmtuPktLenBytes(io.qpAttr.pmtu) >> log2Up(
+//    busWidth.id / BYTE_WIDTH
+//  )
+//
+//  val isEmptyReadReq =
+//    io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen === 0 // TODO: handle zero read request
+//  val txSel = UInt(1 bits)
+//  val (emptyReadIdx, nonEmptyReadIdx) = (0, 1)
+//  when(isEmptyReadReq) {
+//    txSel := emptyReadIdx
+//  } otherwise {
+//    txSel := nonEmptyReadIdx
+//  }
+//
+//  val twoStreams = StreamDemux(
+//    io.readResultCacheDataAndDmaReadResp
+//      .throwWhen(io.recvQCtrl.stateErrFlush),
+//    select = txSel,
+//    portCount = 2
+//  )
+//  val segmentStream = StreamSegment(
+//    twoStreams(nonEmptyReadIdx),
+//    segmentFragNum = pmtuMaxFragNum.resize(PMTU_FRAG_NUM_WIDTH)
+//  )
+//  val output = StreamMux(
+//    select = txSel,
+//    inputs = Vec(twoStreams(emptyReadIdx), segmentStream)
+//  )
+//  io.readResultCacheDataAndDmaReadRespSegment <-/< output
 }
 
 class ReadRespGenerator(busWidth: BusWidth) extends Component {
@@ -1632,6 +1669,115 @@ class ReadRespGenerator(busWidth: BusWidth) extends Component {
     )
     val txReadResp = master(RdmaDataBus(busWidth))
   }
+
+  val busWidthBytes = busWidth.id / BYTE_WIDTH
+
+  val input = io.readResultCacheDataAndDmaReadRespSegment
+  when(input.valid) {
+    assert(
+      assertion = input.resultCacheData.dlen === input.dmaReadResp.lenBytes,
+      message =
+        L"input.resultCacheData.dlen=${input.resultCacheData.dlen} should equal input.dmaReadResp.lenBytes=${input.dmaReadResp.lenBytes}",
+      severity = FAILURE
+    )
+  }
+
+  val reqAndDmaReadRespSegment = input.translateWith {
+    val rslt =
+      Fragment(ReqAndDmaReadResp(ReadAtomicResultCacheData(), busWidth))
+    rslt.dmaReadResp := input.dmaReadResp
+    rslt.req := input.resultCacheData
+    rslt.last := input.isLast
+    rslt
+  }
+
+  val combinerOutput = CombineHeaderAndDmaResponse(
+    reqAndDmaReadRespSegment,
+    io.qpAttr,
+    io.recvQCtrl.stateErrFlush,
+    busWidth,
+//    pktNumFunc = (req: ReadAtomicResultCacheData, _: QpAttrData) => req.pktNum,
+    headerGenFunc = (
+        inputResultCacheData: ReadAtomicResultCacheData,
+        inputDmaDataFrag: DmaReadResp,
+        curReadRespPktCntVal: UInt,
+        qpAttr: QpAttrData
+    ) =>
+      new Composite(this) {
+        val numReadRespPkt = inputResultCacheData.pktNum
+        val lastOrOnlyReadRespPktLenBytes =
+          moduloByPmtu(inputDmaDataFrag.lenBytes, qpAttr.pmtu)
+
+        val isFromFirstResp =
+          inputDmaDataFrag.psnStart === inputResultCacheData.psnStart
+        val curPsn = inputDmaDataFrag.psnStart + curReadRespPktCntVal
+        val opcode = Bits(OPCODE_WIDTH bits)
+        val padcount = U(0, PADCOUNT_WIDTH bits)
+
+        val bth = BTH().set(
+          opcode = opcode,
+          padcount = padcount,
+          dqpn = qpAttr.dqpn,
+          psn = curPsn
+        )
+        val aeth = AETH().set(AckType.NORMAL)
+        val bthMty = Bits(widthOf(bth) / BYTE_WIDTH bits).setAll()
+        val aethMty = Bits(widthOf(aeth) / BYTE_WIDTH bits).setAll()
+
+        val headerBits = Bits(busWidth.id bits)
+        val headerMtyBits = Bits(busWidthBytes bits)
+        when(numReadRespPkt > 1) {
+          when(curReadRespPktCntVal === 0) {
+            when(isFromFirstResp) {
+              opcode := OpCode.RDMA_READ_RESPONSE_FIRST.id
+
+              // TODO: verify endian
+              headerBits := (bth ## aeth).resize(busWidth.id)
+              headerMtyBits := (bthMty ## aethMty).resize(busWidthBytes)
+            } otherwise {
+              opcode := OpCode.RDMA_READ_RESPONSE_MIDDLE.id
+
+              // TODO: verify endian
+              headerBits := bth.asBits.resize(busWidth.id)
+              headerMtyBits := bthMty.resize(busWidthBytes)
+            }
+          } elsewhen (curReadRespPktCntVal === numReadRespPkt - 1) {
+            opcode := OpCode.RDMA_READ_RESPONSE_LAST.id
+            padcount := (PADCOUNT_FULL -
+              lastOrOnlyReadRespPktLenBytes(0, PADCOUNT_WIDTH bits))
+              .resize(PADCOUNT_WIDTH)
+
+            // TODO: verify endian
+            headerBits := (bth ## aeth).resize(busWidth.id)
+            headerMtyBits := (bthMty ## aethMty).resize(busWidthBytes)
+          } otherwise {
+            opcode := OpCode.RDMA_READ_RESPONSE_MIDDLE.id
+
+            // TODO: verify endian
+            headerBits := bth.asBits.resize(busWidth.id)
+            headerMtyBits := bthMty.resize(busWidthBytes)
+          }
+        } otherwise {
+          when(isFromFirstResp) {
+            opcode := OpCode.RDMA_READ_RESPONSE_ONLY.id
+          } otherwise {
+            opcode := OpCode.RDMA_READ_RESPONSE_LAST.id
+          }
+          padcount := (PADCOUNT_FULL -
+            lastOrOnlyReadRespPktLenBytes(0, PADCOUNT_WIDTH bits))
+            .resize(PADCOUNT_WIDTH)
+
+          // TODO: verify endian
+          headerBits := (bth ## aeth).resize(busWidth.id)
+          headerMtyBits := (bthMty ## aethMty).resize(busWidthBytes)
+        }
+
+        val rslt = CombineHeaderAndDmaRespInternalRslt(busWidth)
+          .set(inputResultCacheData.pktNum, bth, headerBits, headerMtyBits)
+      }.rslt
+  )
+  io.txReadResp.pktFrag <-/< combinerOutput.pktFrag
+  /*
   val input = io.readResultCacheDataAndDmaReadRespSegment
 
   val bthHeaderLenBytes = widthOf(BTH()) / BYTE_WIDTH
@@ -1664,7 +1810,8 @@ class ReadRespGenerator(busWidth: BusWidth) extends Component {
 //    divideByPmtuUp(inputDmaDataFrag.lenBytes, io.qpAttr.pmtu)
   val lastOrOnlyReadRespPktLenBytes =
     moduloByPmtu(inputDmaDataFrag.lenBytes, io.qpAttr.pmtu)
-  // Handle the case that numReadRespPkt is zero
+  // Handle the case that numReadRespPkt is zero.
+  // It needs to reset readRespPktCnt by stateErrFlush.
   when(
     (readRespPktCnt.value + 1 >= numReadRespPkt && input.lastFire) || io.recvQCtrl.stateErrFlush
   ) {
@@ -1766,6 +1913,7 @@ class ReadRespGenerator(busWidth: BusWidth) extends Component {
     rslt.last := addHeaderStream.last
     rslt
   }
+   */
 }
 
 // pp. 286 spec 1.4

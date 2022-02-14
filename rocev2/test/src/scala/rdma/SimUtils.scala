@@ -8,16 +8,25 @@ import scala.collection.mutable
 
 import ConstantSettings._
 
-//object SimUtils {
-//  def randomizeSignalAndWaitUntilTrue(signal: Bool, clockDomain: ClockDomain) =
-//    new Area {
-//      while (!signal.toBoolean) {
-//        clockDomain.waitSampling()
-//        signal.randomize()
-//        sleep(0) // To make signal random assignment take effect
-//      }
-//    }
-//}
+object SendWriteReqReadRespInput {
+  def getItr(pmtuBytes: Int, busWidthBytes: Int) = {
+    val dmaRespIdxGen = NaturalNumber.from(0)
+    val fragNumGen = dmaRespIdxGen.map(_ * 2 + 1)
+    val totalLenGen =
+      fragNumGen.map(_ * busWidthBytes.toLong) // Assume all bits are valid
+    val pktNumGen = totalLenGen.map(MiscUtils.dividedByUp(_, pmtuBytes))
+    val psnGen = pktNumGen.scan(0L)(_ + _)
+    val fragNumItr = fragNumGen.iterator
+    val pktNumItr = pktNumGen.iterator
+    val psnItr = psnGen.iterator
+    val totalLenItr = totalLenGen.iterator
+    //    for (idx <- 0 until 3) {
+    //      println(f"idx=$idx, fragNum=${fragNumItr.next()}, pktNum=${pktNumItr
+    //        .next()}, psnStart=${psnItr.next()}, totalLenBytes=${totalLenItr.next()}")
+    //    }
+    (fragNumItr, pktNumItr, psnItr, totalLenItr)
+  }
+}
 
 object StreamSimUtil {
   def streamMasterDriver[T <: Data](
@@ -168,7 +177,7 @@ object MiscUtils {
     queue.dequeue()
   }
 
-  def dividedByUp(dividend: Int, divisor: Int): Int = {
+  def dividedByUp(dividend: Long, divisor: Int): Long = {
     require(
       dividend >= 0 && divisor > 0,
       f"dividend=${dividend} should >= 0, and divisor=${divisor} should > 0"
@@ -249,7 +258,7 @@ object MiscUtils {
   def checkConditionAlways(clockDomain: ClockDomain)(cond: => Boolean) = fork {
     while (true) {
       clockDomain.waitSampling()
-      assert(cond, f"condition=${cond} not satisfied")
+      assert(cond, f"always condition=${cond} not satisfied")
     }
   }
 
@@ -262,6 +271,87 @@ object MiscUtils {
       clockDomain.waitSampling()
       assert(cond, f"condition=${cond} not satisfied @ cycleIdx=${cycleIdx}")
     }
+  }
+
+  def checkSendWriteReqReadResp(
+      clockDomain: ClockDomain,
+      inputDataQueue: mutable.Queue[(BigInt, BigInt, Int, Int, Long, Boolean)],
+      outputDataQueue: mutable.Queue[(BigInt, BigInt, Int, Boolean)],
+      busWidth: BusWidth.BusWidth
+  ) = {
+    val mtyWidth = busWidth.id / BYTE_WIDTH
+    val matchPsnQueue = mutable.Queue[Boolean]()
+
+    fork {
+      var nextPsn = 0
+      while (true) {
+        var (dataIn, mtyIn, pktNum, psnStart, totalLenBytes, isLastIn) =
+          (BigInt(0), BigInt(0), 0, 0, 0L, false)
+        do {
+          val inputData =
+            MiscUtils.safeDeQueue(inputDataQueue, clockDomain)
+          dataIn = inputData._1
+          mtyIn = inputData._2
+          pktNum = inputData._3
+          psnStart = inputData._4
+          totalLenBytes = inputData._5
+          isLastIn = inputData._6
+        } while (!isLastIn)
+
+        var (dataOut, mtyOut, psnOut, isLastOut) =
+          (BigInt(0), BigInt(0), 0, false)
+        do {
+          val outputData =
+            MiscUtils.safeDeQueue(outputDataQueue, clockDomain)
+          dataOut = outputData._1
+          mtyOut = outputData._2
+          psnOut = outputData._3
+          isLastOut = outputData._4
+
+//            println(
+//              f"pktNum=${pktNum}, psnStart=${psnStart}, totalLenBytes=${totalLenBytes}, isLastIn=${isLastIn}, psnOut=${psnOut}, isLastOut=${isLastOut}"
+//            )
+          matchPsnQueue.enqueue(isLastOut)
+        } while (!isLastOut)
+
+        val lastFragMtyInValidBytesNum = MiscUtils.countOnes(mtyIn, mtyWidth)
+        val lastFragMtyOutValidBytesNum =
+          MiscUtils.countOnes(mtyOut, mtyWidth)
+        val lastFragMtyMinimumByteNum =
+          lastFragMtyInValidBytesNum.min(lastFragMtyOutValidBytesNum)
+        val lastFragMtyMinimumBitNum = lastFragMtyMinimumByteNum * BYTE_WIDTH
+        val dataInLastFragRightShiftBitAmt =
+          busWidth.id - (lastFragMtyInValidBytesNum * BYTE_WIDTH)
+        val dataOutLastFragRightShiftBitAmt =
+          busWidth.id - (lastFragMtyOutValidBytesNum * BYTE_WIDTH)
+
+        val lastFragDataInValidBits = dataIn >> dataInLastFragRightShiftBitAmt
+        val lastFragDataOutValidBits =
+          dataOut >> dataOutLastFragRightShiftBitAmt
+        val lastFragMtyMinimumBits = setAllBits(lastFragMtyMinimumBitNum)
+
+//          println(
+//            f"last fragment data=${lastFragDataOutValidBits}%X not match last fragment input data=${lastFragDataInValidBits}%X with minimum last fragment MTY=(${lastFragMtyMinimumByteNum}*BYTE_WIDTH)"
+//          )
+        assert(
+          (lastFragDataOutValidBits & lastFragMtyMinimumBits)
+            .toString(16) == (lastFragDataInValidBits & lastFragMtyMinimumBits)
+            .toString(16),
+          f"last fragment data=${lastFragDataOutValidBits}%X not match last fragment input data=${lastFragDataInValidBits}%X with minimum last fragment out MTY=(${lastFragMtyMinimumByteNum}*BYTE_WIDTH)"
+        )
+
+//          println(
+//            f"expected output PSN=${nextPsn} not match output PSN=${psnOut}"
+//          )
+        assert(
+          psnOut == nextPsn,
+          f"expected output PSN=${nextPsn} not match output PSN=${psnOut}"
+        )
+        nextPsn += 1
+      }
+    }
+
+    waitUntil(matchPsnQueue.size > MATCH_CNT)
   }
 
   def countOnes(num: BigInt, width: Int): Int = {

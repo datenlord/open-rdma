@@ -336,5 +336,6 @@ object RoCEv2 {
       // SpinalVerilog
       .printPruned()
       .printPrunedIo()
+    // .printZeroWidth()
   }
 }
