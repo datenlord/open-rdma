@@ -107,7 +107,7 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
       assertion =
         isSendWorkReq || isWriteWorkReq || isReadWorkReq || isAtomicWorkReq,
       message =
-        L"the work request to retry is not send/write/read/atomic, WR opcode=${retryWorkReq.workReq.opcode}",
+        L"${REPORT_TIME} time: the work request to retry is not send/write/read/atomic, WR opcode=${retryWorkReq.workReq.opcode}",
       severity = FAILURE
     )
   }
@@ -118,7 +118,7 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
 
   io.txAtomicReqRetry <-/< fourStreams(atomicWorkReqIdx).translateWith {
     val isCompSwap =
-      retryWorkReq.workReq.opcode === WorkReqOpCode.ATOMIC_CMP_AND_SWP.id
+      retryWorkReq.workReq.opcode === WorkReqOpCode.ATOMIC_CMP_AND_SWP
     val rslt = AtomicReq().set(
       isCompSwap,
       dqpn = io.qpAttr.dqpn,
@@ -154,7 +154,7 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
           io.qpAttr.npsn
         ),
       message =
-        L"io.qpAttr.retryStartPsn=${io.qpAttr.retryStartPsn} should < retryWorkReq.psnStart=${retryWorkReq.psnStart} + retryWorkReq.pktNum=${retryWorkReq.pktNum} = ${retryWorkReq.psnStart + retryWorkReq.pktNum} in PSN order",
+        L"${REPORT_TIME} time: io.qpAttr.retryStartPsn=${io.qpAttr.retryStartPsn} should < retryWorkReq.psnStart=${retryWorkReq.psnStart} + retryWorkReq.pktNum=${retryWorkReq.pktNum} = ${retryWorkReq.psnStart + retryWorkReq.pktNum} in PSN order",
       severity = FAILURE
     )
     val retryDmaReadOffset =
@@ -162,6 +162,7 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
 
     // Support partial retry
     retryStartPsn := io.qpAttr.retryStartPsn
+    // TODO: handle PA offset with scatter-gather
     retryDmaReadStartAddr := retryWorkReq.pa + retryDmaReadOffset
     retryReadReqStartAddr := retryWorkReq.workReq.raddr + retryDmaReadOffset
     retryDmaReadLenBytes := retryWorkReq.workReq.lenBytes - retryDmaReadOffset
@@ -170,7 +171,7 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
     assert(
       assertion = psnDiff < pktNum,
       message =
-        L"psnDiff=${psnDiff} should < pktNum=${pktNum}, io.qpAttr.retryStartPsn=${io.qpAttr.retryStartPsn}, retryWorkReq.psnStart=${retryWorkReq.psnStart}, io.qpAttr.npsn=${io.qpAttr.npsn}, io.retryWorkReq.workReq.opcode=${io.retryWorkReq.workReq.opcode}",
+        L"${REPORT_TIME} time: psnDiff=${psnDiff} should < pktNum=${pktNum}, io.qpAttr.retryStartPsn=${io.qpAttr.retryStartPsn}, retryWorkReq.psnStart=${retryWorkReq.psnStart}, io.qpAttr.npsn=${io.qpAttr.npsn}, io.retryWorkReq.workReq.opcode=${io.retryWorkReq.workReq.opcode}",
       severity = FAILURE
     )
   }
@@ -223,40 +224,6 @@ class SqDmaReadRespHandler(busWidth: BusWidth) extends Component {
     rslt.last := handlerOutput.isLast
     rslt
   }
-  /*
-  val dmaReadRespValid = io.dmaReadResp.resp.valid
-  val isFirstDmaReadResp = io.dmaReadResp.resp.isFirst
-  val isLastDmaReadResp = io.dmaReadResp.resp.isLast
-
-//  // Send out WorkReqCache query request
-//  io.workReqQuery.req <-/< SignalEdgeDrivenStream(
-//    dmaReadRespValid && isFirstDmaReadResp
-//  ).throwWhen(io.sendQCtrl.wrongStateFlush)
-//    .translateWith {
-//      val rslt = cloneOf(io.workReqQuery.req.payloadType)
-//      rslt.psn := io.dmaReadResp.resp.psnStart
-//      rslt
-//    }
-  val cachedWorkReqQueue = io.cachedWorkReq
-    .throwWhen(io.sendQCtrl.wrongStateFlush)
-    .queueLowLatency(DMA_READ_DELAY_CYCLE)
-  when(io.dmaReadResp.resp.valid) {
-    assert(
-      assertion = cachedWorkReqQueue.valid,
-      message =
-        L"io.dmaReadResp.resp.valid is true, but retryWorkReqQueue.valid is false",
-      severity = FAILURE
-    )
-  }
-  val isEmptyReq = cachedWorkReqQueue.workReq.lenBytes === 0
-
-//  val dmaReadRespQueue =
-//    io.dmaReadResp.resp.queueLowLatency(WORK_REQ_CACHE_QUERY_DELAY_CYCLE)
-  // Join ReadAtomicResultCache query response with DmaReadResp
-  val joinStream =
-    FragmentStreamJoinStream(io.dmaReadResp.resp, cachedWorkReqQueue)
-  val cachedWorkReq = joinStream._2
-   */
 }
 
 class SendWriteReqSegment(busWidth: BusWidth) extends Component {
@@ -300,7 +267,7 @@ class SendWriteReqSegment(busWidth: BusWidth) extends Component {
     assert(
       assertion = isSendWorkReq || isWriteWorkReq,
       message =
-        L"the WR for retry here should be send/write, but WR opcode=${cachedWorkReq.workReq.opcode}",
+        L"${REPORT_TIME} time: the WR for retry here should be send/write, but WR opcode=${cachedWorkReq.workReq.opcode}",
       severity = FAILURE
     )
   }
@@ -347,7 +314,7 @@ abstract class SendWriteReqGenerator(busWidth: BusWidth) extends Component {
       assertion =
         input.cachedWorkReq.workReq.lenBytes === input.dmaReadResp.lenBytes,
       message =
-        L"input.cachedWorkReq.workReq.lenBytes=${input.cachedWorkReq.workReq.lenBytes} should equal input.dmaReadResp.lenBytes=${input.dmaReadResp.lenBytes}",
+        L"${REPORT_TIME} time: input.cachedWorkReq.workReq.lenBytes=${input.cachedWorkReq.workReq.lenBytes} should equal input.dmaReadResp.lenBytes=${input.dmaReadResp.lenBytes}",
       severity = FAILURE
     )
   }
@@ -387,7 +354,7 @@ class SendReqGenerator(busWidth: BusWidth)
     assert(
       assertion = isSendReq,
       message =
-        L"the WR opcode=${io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode} should be send request",
+        L"${REPORT_TIME} time: the WR opcode=${io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode} should be send request",
       severity = FAILURE
     )
   }
@@ -519,7 +486,7 @@ class WriteReqGenerator(busWidth: BusWidth)
     assert(
       assertion = isWriteReq,
       message =
-        L"the WR opcode=${io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode} should be write request",
+        L"${REPORT_TIME} time: the WR opcode=${io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode} should be write request",
       severity = FAILURE
     )
   }

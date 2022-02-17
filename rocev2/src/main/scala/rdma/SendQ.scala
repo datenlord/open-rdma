@@ -54,7 +54,7 @@ class SendQ(busWidth: BusWidth) extends Component {
   respHandler.io.rx << io.rxResp
   workReqCache.io.queryPort4SqRespDmaWrite << respHandler.io.workReqQuery
   respHandler.io.cachedWorkReqPop << workReqCache.io.pop
-  io.notifier.retry := respHandler.io.retryNotify
+  io.notifier.retry := respHandler.io.retryNotifier
   io.addrCacheRead4Resp << respHandler.io.addrCacheRead
   io.workComp << respHandler.io.workComp
   io.dma.readResp << respHandler.io.readRespDmaWrite
@@ -67,7 +67,7 @@ class SendQ(busWidth: BusWidth) extends Component {
 //  workReqCache.io.queryPort4DupReqDmaRead << retryHandler.io.workReqQueryPort4DupDmaReadResp
   io.dma.retry << retryHandler.io.dmaRead
 
-  io.notifier.nak := reqSender.io.nakNotify || respHandler.io.nakNotify
+  io.notifier.nak := reqSender.io.nakNotifier || respHandler.io.nakNotifier
   io.notifier.coalesceAckDone := respHandler.io.coalesceAckDone
 
   val sqOut = new SqOut(busWidth)
@@ -94,7 +94,7 @@ class ReqSender(busWidth: BusWidth) extends Component {
     val sendQCtrl = in(SendQCtrl())
     val workReqCacheEmpty = in(Bool())
     val npsnInc = out(NPsnInc())
-    val nakNotify = out(SqNakNotifier())
+    val nakNotifier = out(SqErrNotifier())
     val workReq = slave(Stream(WorkReq()))
     val addrCacheRead = master(QpAddrCacheAgentReadBus())
     val sqOutPsnRangeFifoPush = master(Stream(ReqPsnRange()))
@@ -117,7 +117,7 @@ class ReqSender(busWidth: BusWidth) extends Component {
   io.workCompErr << workReqValidator.io.workCompErr
   io.sqOutPsnRangeFifoPush << workReqValidator.io.sqOutPsnRangeFifoPush
   io.npsnInc := workReqValidator.io.npsnInc
-  io.nakNotify := workReqValidator.io.nakNotify
+  io.nakNotifier := workReqValidator.io.nakNotifier
 
   val workReqCachePushAndReadAtomicHandler =
     new WorkReqCachePushAndReadAtomicHandler
@@ -162,7 +162,7 @@ class WorkReqValidator extends Component {
     val qpAttr = in(QpAttrData())
     val sendQCtrl = in(SendQCtrl())
     val npsnInc = out(NPsnInc())
-    val nakNotify = out(SqNakNotifier())
+    val nakNotifier = out(SqErrNotifier())
     val workReq = slave(Stream(WorkReq()))
     val addrCacheRead = master(QpAddrCacheAgentReadBus())
     val workReqToCache = master(Stream(CachedWorkReq()))
@@ -172,7 +172,11 @@ class WorkReqValidator extends Component {
   val addrCacheQueryBuilder = new Area {
     val workReq = io.workReq.payload
 
-    val (workReq4Queue, sqOutPsnRangeFifoPush) = StreamFork2(io.workReq)
+    val (workReq4Queue, sqOutPsnRangeFifoPush) = StreamFork2(
+      io.workReq
+        .throwWhen(io.sendQCtrl.wrongStateFlush)
+        .haltWhen(io.sendQCtrl.fenceOrRetry)
+    )
     // Update nPSN each time io.workReq fires
     val numReqPkt = divideByPmtuUp(workReq.lenBytes, io.qpAttr.pmtu)
     val psnEnd = io.qpAttr.npsn + numReqPkt - 1
@@ -180,7 +184,7 @@ class WorkReqValidator extends Component {
     io.npsnInc.inc := io.workReq.fire
 
     io.sqOutPsnRangeFifoPush <-/< sqOutPsnRangeFifoPush
-      .throwWhen(io.sendQCtrl.wrongStateFlush)
+//      .throwWhen(io.sendQCtrl.wrongStateFlush)
       .translateWith {
         val rslt = cloneOf(io.sqOutPsnRangeFifoPush.payloadType)
         rslt.opcode := workReq.opcode
@@ -192,8 +196,6 @@ class WorkReqValidator extends Component {
     // To query AddCache, it needs several cycle delay.
     // In order to not block pipeline, use a FIFO to cache incoming data.
     val inputWorkReqQueue = workReq4Queue
-      .throwWhen(io.sendQCtrl.wrongStateFlush)
-      .haltWhen(io.sendQCtrl.fenceOrRetry)
       .translateWith {
         val rslt = CachedWorkReq()
         rslt.workReq := workReq
@@ -213,7 +215,7 @@ class WorkReqValidator extends Component {
         addrCacheReadReq.key := workReq.lkey // Local read does not need key
         addrCacheReadReq.pdId := io.qpAttr.pdId
         addrCacheReadReq.setKeyTypeRemoteOrLocal(isRemoteKey = False)
-        addrCacheReadReq.accessType := AccessType.LOCAL_READ.id
+        addrCacheReadReq.accessType := AccessType.LOCAL_READ
         addrCacheReadReq.va := workReq.laddr
         addrCacheReadReq.dataLenBytes := workReq.lenBytes
         addrCacheReadReq
@@ -232,7 +234,7 @@ class WorkReqValidator extends Component {
       assert(
         assertion = inputCachedWorkReq.psnStart === io.addrCacheRead.resp.psn,
         message =
-          L"addrCacheReadResp.resp has PSN=${io.addrCacheRead.resp.psn} not match input PSN=${inputCachedWorkReq.psnStart}",
+          L"${REPORT_TIME} time: addrCacheReadResp.resp has PSN=${io.addrCacheRead.resp.psn} not match input PSN=${inputCachedWorkReq.psnStart}",
         severity = FAILURE
       )
     }
@@ -256,17 +258,17 @@ class WorkReqValidator extends Component {
     }
     val twoStreams = StreamDemux(joinStream, select = txSel, portCount = 2)
 
-    val workCompErrStatus = Bits(WC_STATUS_WIDTH bits)
+    val workCompErrStatus = WorkCompStatus() // Bits(WC_STATUS_WIDTH bits)
     when(bufLenErr) {
-      workCompErrStatus := WorkCompStatus.LOC_LEN_ERR.id
+      workCompErrStatus := WorkCompStatus.LOC_LEN_ERR
     } elsewhen (keyErr || accessErr) {
       // TODO: what status should WC have if keyErr, LOC_ACCESS_ERR or LOC_PROT_ERR
-      workCompErrStatus := WorkCompStatus.LOC_ACCESS_ERR.id
+      workCompErrStatus := WorkCompStatus.LOC_ACCESS_ERR
     } elsewhen (io.sendQCtrl.wrongStateFlush) {
       // Set WC status to flush if QP is in error state and flushed
-      workCompErrStatus := WorkCompStatus.WR_FLUSH_ERR.id
+      workCompErrStatus := WorkCompStatus.WR_FLUSH_ERR
     } otherwise {
-      workCompErrStatus := WorkCompStatus.SUCCESS.id
+      workCompErrStatus := WorkCompStatus.SUCCESS
     }
 
     io.workCompErr <-/< twoStreams(errIdx).translateWith {
@@ -279,14 +281,14 @@ class WorkReqValidator extends Component {
       )
       rslt
     }
-    io.nakNotify.setNoErr()
+    io.nakNotifier.setNoErr()
     when(twoStreams(errIdx).fire) {
-      io.nakNotify.setLocalErr()
+      io.nakNotifier.setLocalErr()
 
       assert(
-        assertion = workCompErrStatus =/= WorkCompStatus.SUCCESS.id,
+        assertion = workCompErrStatus =/= WorkCompStatus.SUCCESS,
         message =
-          L"workCompErrStatus=${workCompErrStatus} should not be success, checkPass=${checkPass}, io.sendQCtrl.wrongStateFlush=${io.sendQCtrl.wrongStateFlush}",
+          L"${REPORT_TIME} time: workCompErrStatus=${workCompErrStatus} should not be success, checkPass=${checkPass}, io.sendQCtrl.wrongStateFlush=${io.sendQCtrl.wrongStateFlush}",
         severity = FAILURE
       )
     }
@@ -335,7 +337,7 @@ class WorkReqCachePushAndReadAtomicHandler extends Component {
       assertion =
         isSendWorkReq || isWriteWorkReq || isReadWorkReq || isAtomicWorkReq,
       message =
-        L"the WR is not send/write/read/atomic, WR opcode=${cachedWorkReq.workReq.opcode}",
+        L"${REPORT_TIME} time: the WR is not send/write/read/atomic, WR opcode=${cachedWorkReq.workReq.opcode}",
       severity = FAILURE
     )
   }
@@ -361,7 +363,7 @@ class WorkReqCachePushAndReadAtomicHandler extends Component {
 
   io.txAtomicReq <-/< fourStreams(atomicWorkReqIdx).translateWith {
     val isCompSwap =
-      cachedWorkReq.workReq.opcode === WorkReqOpCode.ATOMIC_CMP_AND_SWP.id
+      cachedWorkReq.workReq.opcode === WorkReqOpCode.ATOMIC_CMP_AND_SWP
     val rslt = AtomicReq().set(
       isCompSwap,
       dqpn = io.qpAttr.dqpn,
@@ -448,7 +450,7 @@ class SqOut(busWidth: BusWidth) extends Component {
           req.bth.opcode
         ),
         message =
-          L"WR opcode=${psnOutRangeFifo.io.pop.opcode} does not match request opcode=${req.bth.opcode}",
+          L"${REPORT_TIME} time: WR opcode=${psnOutRangeFifo.io.pop.opcode} does not match request opcode=${req.bth.opcode}",
         severity = FAILURE
       )
     }
@@ -459,7 +461,7 @@ class SqOut(busWidth: BusWidth) extends Component {
     // TODO: no output in OutPsnRange should be normal case
     report(
       message =
-        L"no output packet in OutPsnRange: startPsn=${psnOutRangeFifo.io.pop.start}, endPsn=${psnOutRangeFifo.io.pop.end}, psnOutRangeFifo.io.pop.valid=${psnOutRangeFifo.io.pop.valid}",
+        L"${REPORT_TIME} time: no output packet in OutPsnRange: startPsn=${psnOutRangeFifo.io.pop.start}, endPsn=${psnOutRangeFifo.io.pop.end}, psnOutRangeFifo.io.pop.valid=${psnOutRangeFifo.io.pop.valid}",
       severity = FAILURE
     )
   }

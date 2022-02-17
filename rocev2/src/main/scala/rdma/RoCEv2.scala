@@ -43,7 +43,7 @@ class HeadVerifier(numMaxQPs: Int, busWidth: BusWidth) extends Component {
     val dqpAttr = io.qpAttrVec.oneHotAccess(dqpIdxOH)
     val dqpState = dqpAttr.state
     report(
-      L"HeadVerifier dropped one packet, psn=${rdmaData.bth.psn}, opcode=${rdmaData.bth.opcode}, dqpn=${rdmaData.bth.dqpn}, dqpIdxOH=${dqpIdxOH}, dqpState=${dqpState}"
+      L"${REPORT_TIME} time: HeadVerifier dropped one packet, psn=${rdmaData.bth.psn}, opcode=${rdmaData.bth.opcode}, dqpn=${rdmaData.bth.dqpn}, dqpIdxOH=${dqpIdxOH}, dqpState=${dqpState}"
     )
   }
   io.tx.pktFrag <-/< io.rx.pktFrag.throwWhen(cond).translateWith(rdmaData)
@@ -76,14 +76,14 @@ class AllQpCtrl(numMaxQPs: Int) extends Component {
     when(isQpCreation) {
       assert(
         assertion = foundQpAvailable,
-        message = L"failed to create QP, no QP available",
+        message = L"${REPORT_TIME} time: failed to create QP, no QP available",
         severity = FAILURE
       )
     } otherwise {
       assert(
         assertion = foundQpModify,
         message =
-          L"failed to find QP with QPN=${io.qpCreateOrModify.req.qpAttr.sqpn} to modify",
+          L"${REPORT_TIME} time: failed to find QP with QPN=${io.qpCreateOrModify.req.qpAttr.sqpn} to modify",
         severity = FAILURE
       )
     }
@@ -151,7 +151,7 @@ class AllAddrCache(numMaxPDs: Int, numMaxMRsPerPD: Int) extends Component {
       assert(
         assertion = foundPdAddrCreateOrDeleteIdx,
         message =
-          L"failed to find PD with ID=${io.pdAddrCreateOrDelete.req.pdId}",
+          L"${REPORT_TIME} time: failed to find PD with ID=${io.pdAddrCreateOrDelete.req.pdId}",
         severity = FAILURE
       )
     }
@@ -171,7 +171,8 @@ class AllAddrCache(numMaxPDs: Int, numMaxMRsPerPD: Int) extends Component {
     when(io.pdAddrCreateOrDelete.req.valid) {
       assert(
         assertion = foundPdAddrCacheQueryIdx,
-        message = L"failed to find PD with ID=${io.query.req.pdId}",
+        message =
+          L"${REPORT_TIME} time: failed to find PD with ID=${io.query.req.pdId}",
         severity = FAILURE
       )
     }
@@ -333,9 +334,8 @@ object RoCEv2 {
       targetDirectory = "./rtl",
       verbose = true
     ).generate(new RoCEv2(numMaxQPs = 4, BusWidth.W512))
-      // SpinalVerilog
-      .printPruned()
-      .printPrunedIo()
-    // .printZeroWidth()
+//      .printPruned()
+//      .printPrunedIo()
+//      .printZeroWidth()
   }
 }

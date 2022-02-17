@@ -103,6 +103,116 @@ class QpCtrl extends Component {
     }
   }
 
+  val errFsm = errStateFsm()
+  // QP FSM
+  // https://www.rdmamojo.com/2012/05/05/qp-state-machine/
+  // TODO: modify QP attributes according to state change requirements
+  // https://www.rdmamojo.com/2013/01/12/ibv_modify_qp/
+  val mainFsm = new StateMachine {
+    val RESET = new State with EntryPoint
+    val INIT = new State
+    val ERR = new StateFsm(fsm = errFsm)
+    val RTR = new State
+    // TODO: how to stop internal state FSM?
+    val RTS = new State // ParallelFsm(sqFsm, rqFsm)
+    // SQD needs to handle retry
+    val SQD = new StateFsm(fsm = drainStateFsm())
+    // val SQE = new State // Not used in RC
+
+    // TODO: clear WR queue
+    RESET
+      .onEntry {
+        qpAttr.state := QpState.RESET.id
+      }
+      .whenIsActive {
+        when(
+          io.qpCreateOrModify.req.valid &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.state === QpState.INIT.id
+        ) {
+          goto(INIT)
+        }
+      }
+
+    INIT
+      .onEntry {
+        qpAttr.state := QpState.INIT.id
+      }
+      .whenIsActive {
+        when(
+          io.qpCreateOrModify.req.valid &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.state === QpState.RTR.id
+        ) {
+          goto(RTR)
+        }
+
+        when(io.rqNotifier.hasFatalNak() || io.sqNotifier.hasFatalErr()) {
+          goto(ERR)
+        }
+      }
+
+    RTR
+      .onEntry {
+        qpAttr.state := QpState.RTR.id
+      }
+      .whenIsActive {
+        when(
+          io.qpCreateOrModify.req.valid &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.state === QpState.RTS.id
+        ) {
+          goto(RTS)
+        }
+
+        when(io.rqNotifier.hasFatalNak() || io.sqNotifier.hasFatalErr()) {
+          goto(ERR)
+        }
+      }
+
+    RTS
+      .onEntry {
+        qpAttr.state := QpState.RTS.id
+      }
+      .whenIsActive {
+        when(
+          io.qpCreateOrModify.req.valid &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.state === QpState.SQD.id
+        ) {
+          // TODO: verify that transfer to SQD without quit internal FSMs
+          goto(SQD)
+        }
+
+        when(io.rqNotifier.hasFatalNak() || io.sqNotifier.hasFatalErr()) {
+          // RTS.fsms.foreach(_.exitFsm()) // Exit internal FSMs
+          goto(ERR)
+        }
+      }
+
+    SQD
+      .onEntry {
+        qpAttr.state := QpState.SQD.id
+      }
+      .whenIsActive {
+        when(io.rqNotifier.hasFatalNak() || io.sqNotifier.hasFatalErr()) {
+          SQD.fsm.exitFsm() // Exit internal FSM
+          goto(ERR)
+        }
+      }
+      .whenCompleted {
+        goto(RTS)
+      }
+
+    ERR
+      .onEntry {
+        qpAttr.state := QpState.ERR.id
+      }
+      .whenCompleted {
+        goto(RESET)
+      }
+  }
+
   def sqRetryStateFsm() = new StateMachine {
     val RETRY_FLUSH: State = new State with EntryPoint {
       onEntry {
@@ -144,6 +254,7 @@ class QpCtrl extends Component {
   }
 
   // TODO: does SQD need to handle retry?
+  // Currently no new WR or retry handled in SQD
   def drainStateFsm() = new StateMachine {
     val DRAINING: State = new State with EntryPoint {
       whenIsActive {
@@ -171,7 +282,19 @@ class QpCtrl extends Component {
     // MIN_RNR_TIMER = 0.01ms, freq = 200MHz, timer count = 2000
     val rnrTimer = Timeout(time = 0.01 ms)
 
-    val NORMAL: State = new State with EntryPoint {
+    val isRqWorking =
+      mainFsm.isActive(mainFsm.RTR) || mainFsm
+        .isActive(mainFsm.RTS) || mainFsm.isActive(mainFsm.SQD)
+
+    val WAITING: State = new State with EntryPoint {
+      whenIsActive {
+        when(isRqWorking) {
+          goto(NORMAL)
+        }
+      }
+    }
+
+    val NORMAL: State = new State {
       whenIsActive {
         when(io.rqNotifier.nak.seqErr.pulse) {
           qpAttr.rqPreReqOpCode := io.rqNotifier.nak.seqErr.preOpCode
@@ -181,6 +304,8 @@ class QpCtrl extends Component {
           qpAttr.rqPreReqOpCode := io.rqNotifier.nak.rnr.preOpCode
           qpAttr.epsn := io.rqNotifier.nak.rnr.psn
           goto(RNR_TIMEOUT)
+        } elsewhen (!isRqWorking) {
+          goto(WAITING)
         }
       }
     }
@@ -189,6 +314,8 @@ class QpCtrl extends Component {
       whenIsActive {
         when(io.rqNotifier.clearRnrOrNakSeq.pulse) {
           goto(NORMAL)
+        } elsewhen (!isRqWorking) {
+          goto(WAITING)
         }
       }
     }
@@ -200,6 +327,8 @@ class QpCtrl extends Component {
       whenIsActive {
         when(rnrTimer.state) {
           goto(RNR)
+        } elsewhen (!isRqWorking) {
+          goto(WAITING)
         }
       }
     }
@@ -208,6 +337,8 @@ class QpCtrl extends Component {
       whenIsActive {
         when(io.rqNotifier.clearRnrOrNakSeq.pulse) {
           goto(NORMAL)
+        } elsewhen (!isRqWorking) {
+          goto(WAITING)
         }
       }
     }
@@ -216,7 +347,7 @@ class QpCtrl extends Component {
       assert(
         assertion = !io.rqNotifier.nak.rnr.pulse,
         message =
-          L"there's already a NAK SQK sent PSN=${qpAttr.epsn}, but there's another RNR NAK to send: io.rqNotifier.nak.rnr.pulse=${io.rqNotifier.nak.rnr.pulse}, io.rqNotifier.nak.rnr.psn=${io.rqNotifier.nak.rnr.psn}",
+          L"${REPORT_TIME} time: there's already a NAK SQK sent PSN=${qpAttr.epsn}, but there's another RNR NAK to send: io.rqNotifier.nak.rnr.pulse=${io.rqNotifier.nak.rnr.pulse}, io.rqNotifier.nak.rnr.psn=${io.rqNotifier.nak.rnr.psn}",
         severity = FAILURE
       )
     }
@@ -224,7 +355,7 @@ class QpCtrl extends Component {
       assert(
         assertion = !io.rqNotifier.nak.rnr.pulse,
         message =
-          L"there's already a RNR NAK sent PSN=${qpAttr.epsn}, but there's another RNR NAK to send: io.rqNotifier.nak.rnr.pulse=${io.rqNotifier.nak.rnr.pulse}, io.rqNotifier.nak.rnr.psn=${io.rqNotifier.nak.rnr.psn}",
+          L"${REPORT_TIME} time: there's already a RNR NAK sent PSN=${qpAttr.epsn}, but there's another RNR NAK to send: io.rqNotifier.nak.rnr.pulse=${io.rqNotifier.nak.rnr.pulse}, io.rqNotifier.nak.rnr.psn=${io.rqNotifier.nak.rnr.psn}",
         severity = FAILURE
       )
     }
@@ -232,148 +363,104 @@ class QpCtrl extends Component {
       assert(
         assertion = Formal.stable(io.rqNotifier.clearRnrOrNakSeq.pulse),
         message =
-          L"rnr timer is not out but receive rnr clear pulse, rnrTimer.state=${rnrTimer.state}, io.rqNotifier.clearRnrOrNakSeq.pulse=${io.rqNotifier.clearRnrOrNakSeq.pulse}",
+          L"${REPORT_TIME} time: rnr timer is not out but receive rnr clear pulse, rnrTimer.state=${rnrTimer.state}, io.rqNotifier.clearRnrOrNakSeq.pulse=${io.rqNotifier.clearRnrOrNakSeq.pulse}",
         severity = FAILURE
       )
     }
   }
 
+//  def respHandleFsm() = new StateMachine {
+//    def isWorkingState(): Bool =
+//      mainFsm.isActive(mainFsm.RTR) || mainFsm
+//        .isActive(mainFsm.RTS) || mainFsm.isActive(mainFsm.SQD)
+//
+//    val WAITING: State = new State with EntryPoint {
+//      whenIsActive {
+//        when(isWorkingState()) {
+//          goto(NORMAL)
+//        }
+//      }
+//    }
+//
+//    val NORMAL: State = new State {
+//      whenIsActive {
+//        //
+//      }
+//    }
+//
+//    val COALESCE: State = new State {
+//      whenIsActive {
+//        //
+//      }
+//    }
+//
+//    val RETRY_TRIGGER: State = new State {
+//      whenIsActive {
+//        //
+//      }
+//    }
+//  }
+
   val sqRetryFsm = sqRetryStateFsm()
   val fenceFsm = fenceStateFsm()
   def sqInternalFsm() = new StateMachine {
-    val NORMAL: State = new State with EntryPoint {
+    val isSqWorking = mainFsm.isActive(mainFsm.RTS)
+
+    val WAITING: State = new State with EntryPoint {
+      whenIsActive {
+        when(isSqWorking) {
+          goto(NORMAL)
+        }
+      }
+    }
+
+    val NORMAL: State = new State {
       whenIsActive {
         when(io.sqNotifier.retry.pulse) {
           goto(RETRY)
         } elsewhen (io.sqNotifier.workReqHasFence && !io.sqNotifier.workReqCacheEmpty) {
           goto(FENCE)
+        } elsewhen (!isSqWorking) {
+          goto(WAITING)
         }
       }
     }
 
     val RETRY: State = new StateFsm(fsm = sqRetryFsm) {
+      whenIsActive {
+        when(!isSqWorking) {
+          sqRetryFsm.exitFsm()
+          goto(WAITING)
+        }
+      }
       whenCompleted {
-        goto(NORMAL)
+        when(!isSqWorking) {
+          goto(WAITING)
+        } otherwise {
+          goto(NORMAL)
+        }
       }
     }
 
     val FENCE: State = new StateFsm(fsm = fenceFsm) {
+      whenIsActive {
+        when(!isSqWorking) {
+          fenceFsm.exitFsm()
+          goto(WAITING)
+        }
+      }
       whenCompleted {
-        goto(NORMAL)
+        when(!isSqWorking) {
+          goto(WAITING)
+        } otherwise {
+          goto(NORMAL)
+        }
       }
     }
   }
 
   val sqFsm = sqInternalFsm()
   val rqFsm = rqInternalFsm()
-  val errFsm = errStateFsm()
-  // QP FSM
-  // https://www.rdmamojo.com/2012/05/05/qp-state-machine/
-  // TODO: modify QP attributes according to state change requirements
-  // https://www.rdmamojo.com/2013/01/12/ibv_modify_qp/
-  val fsm = new StateMachine {
-    val RESET = new State with EntryPoint
-    val INIT = new State
-    val ERR = new StateFsm(fsm = errFsm)
-    val RTR = new State
-    // TODO: how to stop internal state FSM?
-    val RTS = new StateParallelFsm(sqFsm, rqFsm)
-    // TODO: SQD needs to handle retry?
-    val SQD = new StateFsm(fsm = drainStateFsm())
-    // val SQE = new State // Not used in RC
-
-    // TODO: clear WR queue
-    RESET
-      .onEntry {
-        qpAttr.state := QpState.RESET.id
-      }
-      .whenIsActive {
-        when(
-          io.qpCreateOrModify.req.valid &&
-            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
-            io.qpCreateOrModify.req.qpAttr.state === QpState.INIT.id
-        ) {
-          goto(INIT)
-        }
-      }
-
-    INIT
-      .onEntry {
-        qpAttr.state := QpState.INIT.id
-      }
-      .whenIsActive {
-        when(
-          io.qpCreateOrModify.req.valid &&
-            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
-            io.qpCreateOrModify.req.qpAttr.state === QpState.RTR.id
-        ) {
-          goto(RTR)
-        }
-
-        when(io.rqNotifier.hasFatalNak() || io.sqNotifier.hasFatalNak()) {
-          goto(ERR)
-        }
-      }
-
-    RTR
-      .onEntry {
-        qpAttr.state := QpState.RTR.id
-      }
-      .whenIsActive {
-        when(
-          io.qpCreateOrModify.req.valid &&
-            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
-            io.qpCreateOrModify.req.qpAttr.state === QpState.RTS.id
-        ) {
-          goto(RTS)
-        }
-
-        when(io.rqNotifier.hasFatalNak() || io.sqNotifier.hasFatalNak()) {
-          goto(ERR)
-        }
-      }
-
-    RTS
-      .onEntry {
-        qpAttr.state := QpState.RTS.id
-      }
-      .whenIsActive {
-        when(
-          io.qpCreateOrModify.req.valid &&
-            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
-            io.qpCreateOrModify.req.qpAttr.state === QpState.SQD.id
-        ) {
-          goto(SQD)
-        }
-
-        when(io.rqNotifier.hasFatalNak() || io.sqNotifier.hasFatalNak()) {
-          RTS.fsms.foreach(_.exitFsm()) // Exit internal FSMs
-          goto(ERR)
-        }
-      }
-
-    SQD
-      .onEntry {
-        qpAttr.state := QpState.SQD.id
-      }
-      .whenIsActive {
-        when(io.rqNotifier.hasFatalNak() || io.sqNotifier.hasFatalNak()) {
-          SQD.fsm.exitFsm() // Exit internal FSM
-          goto(ERR)
-        }
-      }
-      .whenCompleted {
-        goto(RTS)
-      }
-
-    ERR
-      .onEntry {
-        qpAttr.state := QpState.ERR.id
-      }
-      .whenCompleted {
-        goto(RESET)
-      }
-  }
 
   val psnCtrl = new Area {
     // Increase PSN
@@ -392,6 +479,7 @@ class QpCtrl extends Component {
       qpAttr.sqOutPsn := io.psnInc.sq.opsn.psnVal
     }
   }
+
   val sqRetryCtrl = new Area {
     // TODO: consider better setup instead of PENDING_REQ_NUM + 1
     val curPtr = Counter(PENDING_REQ_NUM)
@@ -411,7 +499,7 @@ class QpCtrl extends Component {
     when(io.sendQCtrl.retry) {
       assert(
         assertion = Formal.stable(io.workReqCacheScanBus.pushPtr),
-        message = L"during retry, no new WR can be added",
+        message = L"${REPORT_TIME} time: during retry, no new WR can be added",
         severity = FAILURE
       )
     }
@@ -433,7 +521,7 @@ class QpCtrl extends Component {
     when(io.sqNotifier.retry.pulse && io.workReqCacheScanBus.empty) {
       report(
         message =
-          L"received retry ACK with PSN=${io.sqNotifier.retry.psnStart}, but no WR to retry",
+          L"${REPORT_TIME} time: received retry ACK with PSN=${io.sqNotifier.retry.psnStart}, but no WR to retry",
         severity = FAILURE
       )
     }
@@ -457,7 +545,7 @@ class QpCtrl extends Component {
           io.qpAttr.npsn
         ),
         message =
-          L"io.retryNotify.psnStart=${io.sqNotifier.retry.psnStart} should > curWorkReqToRetry.psnStart=${io.workReqCacheScanBus.value.psnStart} in PSN order",
+          L"${REPORT_TIME} time: io.sqNotifier.retry.psnStart=${io.sqNotifier.retry.psnStart} should > curWorkReqToRetry.psnStart=${io.workReqCacheScanBus.value.psnStart} in PSN order",
         severity = FAILURE
       )
 
@@ -467,7 +555,7 @@ class QpCtrl extends Component {
           io.qpAttr.pmtu
         ),
         message =
-          L"psnDiff=${psnDiff} should < packet num=${computePktNum(io.workReqCacheScanBus.value.workReq.lenBytes, io.qpAttr.pmtu)}",
+          L"${REPORT_TIME} time: psnDiff=${psnDiff} should < packet num=${computePktNum(io.workReqCacheScanBus.value.workReq.lenBytes, io.qpAttr.pmtu)}",
         severity = FAILURE
       )
       retryWorkReqPop.psnStart := io.sqNotifier.retry.psnStart
@@ -478,13 +566,17 @@ class QpCtrl extends Component {
   }
 
   // Flush RQ if state error or RNR sent in next cycle
-  val isQpStateWrong = fsm.isActive(fsm.ERR) || fsm.isActive(fsm.RESET) ||
-    fsm.isActive(fsm.INIT)
+  val isQpStateWrong = mainFsm.isActive(mainFsm.ERR) || mainFsm.isActive(
+    mainFsm.RESET
+  ) ||
+    mainFsm.isActive(mainFsm.INIT)
   io.sendQCtrl.errorFlush := errFsm.isActive(errFsm.ERR_FLUSH)
   io.sendQCtrl.retryFlush := sqRetryCtrl.retryFlushState
   io.sendQCtrl.retry := sqRetryCtrl.fsmInRetryState
-  io.sendQCtrl.fencePulse := False
-  io.sendQCtrl.fence := fsm.isActive(fsm.SQD) || sqFsm.isActive(sqFsm.FENCE)
+  io.sendQCtrl.fencePulse := False // TODO: currently no use, remote it?
+  io.sendQCtrl.fence := mainFsm.isActive(mainFsm.SQD) || sqFsm.isActive(
+    sqFsm.FENCE
+  )
   io.sendQCtrl.fenceOrRetry := io.sendQCtrl.fence || io.sendQCtrl.retry
   io.sendQCtrl.wrongStateFlush := isQpStateWrong
 

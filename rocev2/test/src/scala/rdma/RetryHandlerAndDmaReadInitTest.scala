@@ -3,74 +3,16 @@ package rdma
 import ConstantSettings._
 import RdmaConstants._
 import StreamSimUtil._
-
 import spinal.core.sim._
-import scala.collection.mutable
 
+import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
+import spinal.core.SpinalEnumElement
 
 class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
 
-  def busWidthBytes: Int = busWidth.id / BYTE_WIDTH
-
-  val workReqSend = Seq(
-    WorkReqOpCode.SEND.id,
-    WorkReqOpCode.SEND_WITH_IMM.id,
-    WorkReqOpCode.SEND_WITH_INV.id
-  )
-  val workReqWrite =
-    Seq(WorkReqOpCode.RDMA_WRITE.id, WorkReqOpCode.RDMA_WRITE_WITH_IMM.id)
-  val workReqRead = Seq(WorkReqOpCode.RDMA_READ.id)
-  val workReqAtomic = Seq(
-    WorkReqOpCode.ATOMIC_CMP_AND_SWP.id,
-    WorkReqOpCode.ATOMIC_FETCH_AND_ADD.id
-  )
-
-  def isSendReq(workReqOpCode: Int): Boolean = {
-    workReqSend.contains(workReqOpCode)
-  }
-
-  def isWriteReq(workReqOpCode: Int): Boolean = {
-    workReqWrite.contains(workReqOpCode)
-  }
-
-  def isReadReq(workReqOpCode: Int): Boolean = {
-    workReqRead.contains(workReqOpCode)
-  }
-
-  def isAtomicReq(workReqOpCode: Int): Boolean = {
-    workReqAtomic.contains(workReqOpCode)
-  }
-
-  def randomReadAtomicOpCode(): Int = {
-    val opCodes = WorkReqOpCode.RDMA_READ.id +: workReqAtomic
-    val randIdx = scala.util.Random.nextInt(opCodes.size)
-    val rslt = opCodes(randIdx)
-    assert(opCodes.contains(rslt))
-    rslt
-  }
-
-  def randomSendWriteOpCode(): Int = {
-    val opCodes = workReqSend ++ workReqWrite
-    val randIdx = scala.util.Random.nextInt(opCodes.size)
-    val rslt = opCodes(randIdx)
-    assert(opCodes.contains(rslt))
-    rslt
-  }
-
-  def randomSendWriteReadOpCode(): Int = {
-    val opCodes = WorkReqOpCode.RDMA_READ.id +: (workReqSend ++ workReqWrite)
-    val randIdx = scala.util.Random.nextInt(opCodes.size)
-    val rslt = opCodes(randIdx)
-    assert(opCodes.contains(rslt))
-    rslt
-  }
-
-  def randomDmaLength(): Long = {
-    // RDMA max packet length 2GB=2^31
-    scala.util.Random.nextLong(1L << (RDMA_MAX_LEN_WIDTH - 1))
-  }
+//  def busWidthBytes: Int = busWidth.id / BYTE_WIDTH
 
   def randomRetryStartPsn(psnStart: Int, pktNum: Int): Int = {
     // RDMA max packet length 2GB=2^31
@@ -85,14 +27,24 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       dut.clockDomain.forkStimulus(10)
 
       val inputQueue =
-        mutable.Queue[(Int, BigInt, Int, Long, Int, BigInt, Long)]()
+        mutable.Queue[
+          (
+              Int,
+              BigInt,
+              Int,
+              Long,
+              SpinalEnumElement[WorkReqOpCode.type],
+              BigInt,
+              Long
+          )
+        ]()
       val outputReadQueue = mutable.Queue[(Int, Long, Long, BigInt)]()
       val outputDmaReqQueue = mutable.Queue[(BigInt, Int, Long)]()
       val matchQueue = mutable.Queue[Int]()
 
       var nextPsn = 0
-      val pmtuBytes = 256
-      dut.io.qpAttr.pmtu #= PMTU.U256.id
+      val pmtuLen = PMTU.U1024
+      dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.qpAttr.retryReason #= RetryReason.RETRY_ACK
       dut.io.sendQCtrl.wrongStateFlush #= false
 
@@ -100,18 +52,18 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       streamMasterDriver(dut.io.retryWorkReq, dut.clockDomain) {
         val curPsn = nextPsn
         dut.io.retryWorkReq.psnStart #= curPsn
-        val workReqOpCode = randomSendWriteReadOpCode()
+        val workReqOpCode = WorkReqSim.randomSendWriteReadOpCode()
         dut.io.retryWorkReq.workReq.opcode #= workReqOpCode
-        val pktLen = randomDmaLength()
+        val pktLen = WorkReqSim.randomDmaLength()
         dut.io.retryWorkReq.workReq.lenBytes #= pktLen
-        val pktNum = MiscUtils.computePktNum(pktLen, pmtuBytes)
+        val pktNum = MiscUtils.computePktNum(pktLen, pmtuLen)
         dut.io.retryWorkReq.pktNum #= pktNum
         val retryStartPsn = randomRetryStartPsn(curPsn, pktNum)
         dut.io.qpAttr.retryStartPsn #= retryStartPsn
         nextPsn = MiscUtils.psnAdd(nextPsn, pktNum)
         dut.io.qpAttr.npsn #= nextPsn
 //        println(
-//          f"the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, retryStartPsn=${retryStartPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
+//          f"${simTime()} time: the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, retryStartPsn=${retryStartPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
 //        )
       }
       onStreamFire(dut.io.retryWorkReq, dut.clockDomain) {
@@ -121,7 +73,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
             dut.io.retryWorkReq.pa.toBigInt,
             dut.io.retryWorkReq.psnStart.toInt,
             dut.io.retryWorkReq.workReq.lenBytes.toLong,
-            dut.io.retryWorkReq.workReq.opcode.toInt,
+            dut.io.retryWorkReq.workReq.opcode.toEnum,
             dut.io.retryWorkReq.workReq.raddr.toBigInt,
             dut.io.retryWorkReq.workReq.rkey.toLong
           )
@@ -160,7 +112,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
         while (true) {
           val (retryStartPsnIn, paIn, psnIn, lenIn, opCodeIn, vaIn, rKeyIn) =
             MiscUtils.safeDeQueue(inputQueue, dut.clockDomain)
-          if (isReadReq(opCodeIn)) {
+          if (WorkReqSim.isReadReq(opCodeIn)) {
             val outReadReq =
               MiscUtils.safeDeQueue(outputReadQueue, dut.clockDomain)
             psnOut = outReadReq._1
@@ -176,39 +128,39 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
           }
           assert(
             MiscUtils.psnCmp(retryStartPsnIn, psnIn, curPsn = psnIn) >= 0,
-            f"retryStartPsnIn=${retryStartPsnIn}%X should >= psnIn=${psnIn}%X in PSN order"
+            f"${simTime()} time: retryStartPsnIn=${retryStartPsnIn}%X should >= psnIn=${psnIn}%X in PSN order"
           )
           val psnDiff = MiscUtils.psnDiff(retryStartPsnIn, psnIn)
-          val dmaReadOffset = psnDiff * pmtuBytes
+          val dmaReadOffset = psnDiff << pmtuLen.id
 //        println(
-//            f"output PSN=${psnOut}%X not match input retryStartPsnIn=${retryStartPsnIn}%X"
+//            f"${simTime()} time: output PSN=${psnOut}%X not match input retryStartPsnIn=${retryStartPsnIn}%X"
 //        )
           assert(
             psnOut == retryStartPsnIn,
-            f"output PSN=${psnOut}%X not match input retryStartPsnIn=${retryStartPsnIn}%X"
+            f"${simTime()} time: output PSN=${psnOut}%X not match input retryStartPsnIn=${retryStartPsnIn}%X"
           )
 
 //        println(
-//            f"output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
+//            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
 //        )
           assert(
             lenOut == lenIn - dmaReadOffset,
-            f"output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X - dmaReadOffset=${dmaReadOffset}%X"
+            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X - dmaReadOffset=${dmaReadOffset}%X"
           )
 
-          if (isReadReq(opCodeIn)) {
+          if (WorkReqSim.isReadReq(opCodeIn)) {
             assert(
               rKeyOut == rKeyIn,
-              f"output rkey=${rKeyOut}%X not match input rkey=${rKeyIn}%X"
+              f"${simTime()} time: output rkey=${rKeyOut}%X not match input rkey=${rKeyIn}%X"
             )
             assert(
               vaOut == vaIn + dmaReadOffset,
-              f"output remote VA=${vaOut}%X not match input remote VA=${vaIn}%X + dmaReadOffset=${dmaReadOffset}%X"
+              f"${simTime()} time: output remote VA=${vaOut}%X not match input remote VA=${vaIn}%X + dmaReadOffset=${dmaReadOffset}%X"
             )
           } else {
             assert(
               paOut == paIn + dmaReadOffset,
-              f"output local PA=${paOut}%X not match input local PA=${paIn}%X + dmaReadOffset=${dmaReadOffset}%X"
+              f"${simTime()} time: output local PA=${paOut}%X not match input local PA=${paIn}%X + dmaReadOffset=${dmaReadOffset}%X"
             )
           }
           matchQueue.enqueue(psnOut)
@@ -223,14 +175,16 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
-      val inputQueue = mutable.Queue[(Int, Long, Int, BigInt, Long)]()
+      val inputQueue = mutable.Queue[
+        (Int, Long, SpinalEnumElement[WorkReqOpCode.type], BigInt, Long)
+      ]()
       val outputReadQueue = mutable.Queue[(Int, Long, Long, BigInt)]()
       val outputAtomicQueue = mutable.Queue[(Int, Long, BigInt)]()
       val matchQueue = mutable.Queue[Int]()
 
       var nextPsn = 0
-      val pmtuBytes = 256
-      dut.io.qpAttr.pmtu #= PMTU.U256.id
+      val pmtuLen = PMTU.U1024
+      dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.qpAttr.retryReason #= RetryReason.RETRY_ACK
       dut.io.sendQCtrl.wrongStateFlush #= false
 
@@ -239,22 +193,22 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
         val curPsn = nextPsn
         dut.io.qpAttr.retryStartPsn #= curPsn
         dut.io.retryWorkReq.psnStart #= curPsn
-        val workReqOpCode = randomReadAtomicOpCode()
+        val workReqOpCode = WorkReqSim.randomReadAtomicOpCode()
         dut.io.retryWorkReq.workReq.opcode #= workReqOpCode
-        val pktLen = if (isAtomicReq(workReqOpCode)) {
+        val pktLen = if (WorkReqSim.isAtomicReq(workReqOpCode)) {
           dut.io.retryWorkReq.workReq.lenBytes #= ATOMIC_DATA_LEN
           ATOMIC_DATA_LEN.toLong
         } else {
-          val randomPktLen = randomDmaLength()
+          val randomPktLen = WorkReqSim.randomDmaLength()
           dut.io.retryWorkReq.workReq.lenBytes #= randomPktLen
           randomPktLen
         }
-        val pktNum = MiscUtils.computePktNum(pktLen, pmtuBytes)
+        val pktNum = MiscUtils.computePktNum(pktLen, pmtuLen)
         dut.io.retryWorkReq.pktNum #= pktNum
         nextPsn = MiscUtils.psnAdd(nextPsn, pktNum)
         dut.io.qpAttr.npsn #= nextPsn
 //        println(
-//          f"the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
+//          f"${simTime()} time: the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
 //        )
       }
       onStreamFire(dut.io.retryWorkReq, dut.clockDomain) {
@@ -262,7 +216,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
           (
             dut.io.retryWorkReq.psnStart.toInt,
             dut.io.retryWorkReq.workReq.lenBytes.toLong,
-            dut.io.retryWorkReq.workReq.opcode.toInt,
+            dut.io.retryWorkReq.workReq.opcode.toEnum,
             dut.io.retryWorkReq.workReq.raddr.toBigInt,
             dut.io.retryWorkReq.workReq.rkey.toLong
           )
@@ -300,7 +254,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
         while (true) {
           val (psnIn, lenIn, opCodeIn, vaIn, rKeyIn) =
             MiscUtils.safeDeQueue(inputQueue, dut.clockDomain)
-          if (isReadReq(opCodeIn)) {
+          if (WorkReqSim.isReadReq(opCodeIn)) {
             val outReadReq =
               MiscUtils.safeDeQueue(outputReadQueue, dut.clockDomain)
             psnOut = outReadReq._1
@@ -316,28 +270,28 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
             lenOut = ATOMIC_DATA_LEN.toLong
           }
 //        println(
-//            f"output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
+//            f"${simTime()} time: output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
 //        )
           assert(
             psnOut == psnIn,
-            f"output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
+            f"${simTime()} time: output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
           )
 
 //        println(
-//            f"output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
+//            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
 //        )
           assert(
             lenOut == lenIn,
-            f"output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
+            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
           )
 
           assert(
             rKeyOut == rKeyIn,
-            f"output rkey=${rKeyOut}%X not match input rkey=${rKeyIn}%X"
+            f"${simTime()} time: output rkey=${rKeyOut}%X not match input rkey=${rKeyIn}%X"
           )
           assert(
             vaOut == vaIn,
-            f"output remote VA=${vaOut}%X not match input remote VA=${vaIn}%X"
+            f"${simTime()} time: output remote VA=${vaOut}%X not match input remote VA=${vaIn}%X"
           )
 
           matchQueue.enqueue(psnOut)
@@ -357,8 +311,8 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       val matchQueue = mutable.Queue[Int]()
 
       var nextPsn = 0
-      val pmtuBytes = 256
-      dut.io.qpAttr.pmtu #= PMTU.U256.id
+      val pmtuLen = PMTU.U1024
+      dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.qpAttr.retryReason #= RetryReason.RETRY_ACK
       dut.io.sendQCtrl.wrongStateFlush #= false
 
@@ -367,16 +321,16 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
         val curPsn = nextPsn
         dut.io.qpAttr.retryStartPsn #= curPsn
         dut.io.retryWorkReq.psnStart #= curPsn
-        val workReqOpCode = randomSendWriteOpCode()
+        val workReqOpCode = WorkReqSim.randomSendWriteOpCode()
         dut.io.retryWorkReq.workReq.opcode #= workReqOpCode
-        val pktLen = randomDmaLength()
+        val pktLen = WorkReqSim.randomDmaLength()
         dut.io.retryWorkReq.workReq.lenBytes #= pktLen
-        val pktNum = MiscUtils.computePktNum(pktLen, pmtuBytes)
+        val pktNum = MiscUtils.computePktNum(pktLen, pmtuLen)
         dut.io.retryWorkReq.pktNum #= pktNum
         nextPsn = MiscUtils.psnAdd(nextPsn, pktNum)
         dut.io.qpAttr.npsn #= nextPsn
 //        println(
-//          f"the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
+//          f"${simTime()} time: the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
 //        )
       }
       onStreamFire(dut.io.retryWorkReq, dut.clockDomain) {
@@ -413,28 +367,28 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
           val (paOut, psnOut, lenOut, sqpnOut) =
             MiscUtils.safeDeQueue(outputQueue, dut.clockDomain)
 //        println(
-//            f"output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
+//            f"${simTime()} time: output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
 //        )
           assert(
             psnOut == psnIn,
-            f"output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
+            f"${simTime()} time: output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
           )
 
 //        println(
-//            f"output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
+//            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
 //        )
           assert(
             lenOut == lenIn,
-            f"output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
+            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
           )
 
           assert(
             sqpnOut == sqpnIn,
-            f"output sqpnOut=${sqpnOut}%X not match input sqpnIn=${sqpnIn}%X"
+            f"${simTime()} time: output sqpnOut=${sqpnOut}%X not match input sqpnIn=${sqpnIn}%X"
           )
           assert(
             paOut == paIn,
-            f"output local PA=${paOut}%X not match input local PA=${paIn}%X"
+            f"${simTime()} time: output local PA=${paOut}%X not match input local PA=${paIn}%X"
           )
 
           matchQueue.enqueue(psnOut)

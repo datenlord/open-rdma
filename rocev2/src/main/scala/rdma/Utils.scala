@@ -97,14 +97,14 @@ class DmaReadRespHandler[T <: Data](
     assert(
       assertion = !joinStream.valid,
       message =
-        L"when request has zero DMA length, it should not handle DMA read response, that joinStream.valid should be false, but joinStream.valid=${joinStream.valid}",
+        L"${REPORT_TIME} time: when request has zero DMA length, it should not handle DMA read response, that joinStream.valid should be false, but joinStream.valid=${joinStream.valid}",
       severity = FAILURE
     )
   } elsewhen (txSel === nonEmptyReadIdx) {
     assert(
       assertion = !twoStreams(emptyReadIdx).valid,
       message =
-        L"when request has non-zero DMA length, twoStreams(emptyReadIdx).valid should be false, but twoStreams(emptyReadIdx).valid=${twoStreams(emptyReadIdx).valid}",
+        L"${REPORT_TIME} time: when request has non-zero DMA length, twoStreams(emptyReadIdx).valid should be false, but twoStreams(emptyReadIdx).valid=${twoStreams(emptyReadIdx).valid}",
       severity = FAILURE
     )
   }
@@ -284,6 +284,118 @@ object StreamSink {
     Stream(payloadType).freeRun()
 }
 
+// Zip two streams and fire by conditions.
+// If bothFireCond satisfied, fire both streams together,
+// Otherwise if either fire condition satisfied, fire them separately.
+// bothFireCond, leftFireCond, rightFireCond are mutually exclusive.
+object StreamZipByCondition {
+  def apply[T1 <: Data, T2 <: Data](
+      leftInputStream: Stream[T1],
+      rightInputStream: Stream[T2],
+      leftFireCond: Bool,
+      rightFireCond: Bool,
+      bothFireCond: Bool
+  ): Stream[TupleBundle4[Bool, T1, Bool, T2]] = {
+    //  ): (Stream[T1], Stream[T2]) = {
+    val streamZipByCondition = new StreamZipByCondition(
+      leftInputStream.payloadType,
+      rightInputStream.payloadType
+    )
+
+    streamZipByCondition.io.leftInputStream << leftInputStream
+    streamZipByCondition.io.rightInputStream << rightInputStream
+    streamZipByCondition.io.leftFireCond := leftFireCond
+    streamZipByCondition.io.rightFireCond := rightFireCond
+    streamZipByCondition.io.bothFireCond := bothFireCond
+    streamZipByCondition.io.zipOutputStream
+    //    (
+    //      streamZipByCondition.io.leftOutputStream,
+    //      streamZipByCondition.io.rightOutputStream
+    //    )
+  }
+}
+
+class StreamZipByCondition[T1 <: Data, T2 <: Data](
+    leftPayloadType: HardType[T1],
+    rightPayloadType: HardType[T2]
+) extends Component {
+  val io = new Bundle {
+    val leftInputStream = slave(Stream(leftPayloadType()))
+    val rightInputStream = slave(Stream(rightPayloadType()))
+    val leftFireCond = in(Bool())
+    val rightFireCond = in(Bool())
+    val bothFireCond = in(Bool())
+    val zipOutputStream = master(
+      Stream(TupleBundle(Bool(), leftPayloadType(), Bool(), rightPayloadType()))
+    )
+    //    val leftOutputStream = master(Stream(leftPayloadType()))
+    //    val rightOutputStream = master(Stream(rightPayloadType()))
+  }
+
+  when(io.leftFireCond || io.rightFireCond || io.bothFireCond) {
+    assert(
+      assertion = CountOne(
+        io.leftFireCond ## io.rightFireCond ## io.bothFireCond
+      ) === 1,
+      message =
+        L"${REPORT_TIME} time: bothFireCond=${io.bothFireCond}, leftFireCond=${io.leftFireCond}, rightFireCond=${io.rightFireCond} should be mutually exclusive",
+      severity = FAILURE
+    )
+  }
+
+  val bothValid = io.leftInputStream.valid && io.rightInputStream.valid
+
+  io.zipOutputStream.valid := False
+  io.zipOutputStream._1 := False
+  io.zipOutputStream._2 := io.leftInputStream.payload
+  io.zipOutputStream._3 := False
+  io.zipOutputStream._4 := io.rightInputStream.payload
+  io.leftInputStream.ready := False
+  io.rightInputStream.ready := False
+
+  when(bothValid && io.bothFireCond) {
+    io.zipOutputStream.valid := io.leftInputStream.fire
+    io.zipOutputStream._1 := io.leftInputStream.valid
+    io.zipOutputStream._3 := io.rightInputStream.valid
+    io.leftInputStream.ready := io.zipOutputStream.ready
+    io.rightInputStream.ready := io.zipOutputStream.ready
+
+    assert(
+      assertion =
+        io.zipOutputStream.fire === io.leftInputStream.fire && io.leftInputStream.fire === io.rightInputStream.fire,
+      message =
+        L"${REPORT_TIME} time: zipOutputStream.fire=${io.zipOutputStream.fire} should fire with leftInputStream.fire=${io.leftInputStream.fire} and rightInputStream.fire=${io.rightInputStream.fire}",
+      severity = FAILURE
+    )
+  } otherwise {
+    when(io.leftFireCond) {
+      io.zipOutputStream.valid := io.leftInputStream.valid
+      io.zipOutputStream._1 := io.leftInputStream.valid
+      io.leftInputStream.ready := io.zipOutputStream.ready
+
+      assert(
+        assertion = io.zipOutputStream.fire === io.leftInputStream.fire,
+        message =
+          L"${REPORT_TIME} time: zipOutputStream.fire=${io.zipOutputStream.fire} should fire with leftInputStream.fire=${io.leftInputStream.fire}",
+        severity = FAILURE
+      )
+    }
+
+    when(io.rightFireCond) {
+      io.zipOutputStream.valid := io.rightInputStream.valid
+      io.zipOutputStream._3 := io.rightInputStream.valid
+      io.rightInputStream.ready := io.zipOutputStream.ready
+
+      assert(
+        assertion = io.zipOutputStream.fire === io.rightInputStream.fire,
+        message =
+          L"${REPORT_TIME} time: zipOutputStream.fire=${io.zipOutputStream.fire} should fire with rightInputStream.fire=${io.rightInputStream.fire}",
+        severity = FAILURE
+      )
+    }
+  }
+}
+
 /** Throw the first several fragments of the inputStream.
   * The number of fragments to throw is specified by headerFragNum.
   * Note, headerFragNum should keep stable during the first fragment of inputStream.
@@ -331,6 +443,7 @@ object StreamDropHeader {
 class StreamSegment[T <: Data](dataType: HardType[T]) extends Component {
   val io = new Bundle {
     val inputStream = slave(Stream(Fragment(dataType())))
+    // TODO: Stream(UInt())
     val segmentFragNum = in(UInt(PMTU_FRAG_NUM_WIDTH bits))
     val outputStream = master(Stream(Fragment(dataType())))
   }
@@ -343,7 +456,8 @@ class StreamSegment[T <: Data](dataType: HardType[T]) extends Component {
   when(inputValid) {
     assert(
       assertion = CountOne(io.segmentFragNum) > 0,
-      message = L"segmentFragNum=${io.segmentFragNum} should be larger than 0",
+      message =
+        L"${REPORT_TIME} time: segmentFragNum=${io.segmentFragNum} should be larger than 0",
       severity = FAILURE
     )
   }
@@ -425,7 +539,7 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
     assert(
       assertion = inputHeaderMty === headerMtyComp.resize(inputMtyWidth),
       message =
-        L"invalid inputHeaderMty=${inputHeaderMty} with headerMtyWidth=${inputHeaderMtyWidth}, should be ${headerMtyComp}",
+        L"${REPORT_TIME} time: invalid inputHeaderMty=${inputHeaderMty} with headerMtyWidth=${inputHeaderMtyWidth}, should be ${headerMtyComp}",
       severity = FAILURE
     )
     when(inputHeaderMty.orR) {
@@ -433,7 +547,7 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
         // OHMasking.first() return an OH indicate the right most 1 bit.
         assertion = OHMasking.first(inputHeaderMty) === 1,
         message =
-          L"the inputHeaderMty=${inputHeaderMty} should have consecutive valid bits from LSB side",
+          L"${REPORT_TIME} time: the inputHeaderMty=${inputHeaderMty} should have consecutive valid bits from LSB side",
         severity = FAILURE
       )
     }
@@ -442,7 +556,7 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
       assert(
         assertion = inputMty.andR,
         message =
-          L"the first or middle fragment should have MTY all set, but MTY=${inputMty}",
+          L"${REPORT_TIME} time: the first or middle fragment should have MTY all set, but MTY=${inputMty}",
         severity = FAILURE
       )
     } otherwise { // Last fragment
@@ -451,7 +565,7 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
         assert(
           assertion = inputMty.orR,
           message =
-            L"the last fragment should have MTY=/=0, but MTY=${inputMty}",
+            L"${REPORT_TIME} time: the last fragment should have MTY=/=0, but MTY=${inputMty}",
           severity = FAILURE
         )
       }
@@ -527,7 +641,7 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
       when(inputValid) {
         report(
           message =
-            L"invalid inputHeaderMty=${inputHeaderMty} with MTY width=${inputHeaderMtyWidth} and inputHeaderData=${inputHeaderData}",
+            L"${REPORT_TIME} time: invalid inputHeaderMty=${inputHeaderMty} with MTY width=${inputHeaderMtyWidth} and inputHeaderData=${inputHeaderData}",
           severity = FAILURE
         )
       }
@@ -592,6 +706,7 @@ object StreamAddHeader {
 class StreamRemoveHeader(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val inputStream = slave(Stream(Fragment(DataAndMty(busWidth))))
+    // Stream()
     val headerLenBytes = in(UInt(log2Up(busWidth.id / BYTE_WIDTH) + 1 bits))
     val outputStream = master(Stream(Fragment(DataAndMty(busWidth))))
   }
@@ -613,7 +728,7 @@ class StreamRemoveHeader(busWidth: BusWidth) extends Component {
   assert(
     assertion = 0 < io.headerLenBytes && io.headerLenBytes < inputWidthBytes,
     message =
-      L"must have 0 < headerLenBytes=${io.headerLenBytes} < inputWidthBytes=${U(inputWidthBytes, widthOf(io.headerLenBytes) bits)}",
+      L"${REPORT_TIME} time: must have 0 < headerLenBytes=${io.headerLenBytes} < inputWidthBytes=${U(inputWidthBytes, widthOf(io.headerLenBytes) bits)}",
     severity = FAILURE
   )
 
@@ -689,69 +804,7 @@ object StreamRemoveHeader {
   }
 }
 
-/** Join a stream A of fragments with a stream B,
-  * that B will fire only when the last fragment of A fires.
-  */
-class FragmentStreamJoinStream[T1 <: Data, T2 <: Data](
-    dataType1: HardType[T1],
-    dataType2: HardType[T2]
-) extends Component {
-  val io = new Bundle {
-    val inputFragmentStream = slave(Stream(Fragment(dataType1)))
-    val inputStream = slave(Stream(dataType2))
-    val outputJoinStream = master(
-      Stream(Fragment(TupleBundle2(dataType1, dataType2)))
-    )
-  }
-
-  io.inputStream.ready := io.inputFragmentStream.lastFire
-  when(io.inputStream.valid) {
-    assert(
-      assertion = io.inputFragmentStream.lastFire === io.inputStream.fire,
-      message =
-        L"during each first beat, inputFragmentStream and inputStream should fire together",
-      severity = FAILURE
-    )
-  }
-//  when(io.inputFragmentStream.valid) {
-//    assert(
-//      assertion = io.inputFragmentStream.valid === io.inputStream.valid,
-//      message =
-//        L"io.inputFragmentStream is waiting for io.inputStream, that io.inputFragmentStream.valid=${io.inputFragmentStream.valid} but io.inputStream.valid=${io.inputStream.valid}",
-//      severity = FAILURE
-//    )
-//  }
-
-  io.outputJoinStream << io.inputFragmentStream
-    .continueWhen(io.inputStream.valid)
-    .translateWith {
-      val rslt = cloneOf(io.outputJoinStream.payloadType)
-      rslt._1 := io.inputFragmentStream.fragment
-      rslt._2 := io.inputStream.payload
-      rslt.last := io.inputFragmentStream.isLast
-      rslt
-    }
-}
-
-object FragmentStreamJoinStream {
-  def apply[T1 <: Data, T2 <: Data](
-      inputFragmentStream: Stream[Fragment[T1]],
-      inputStream: Stream[T2]
-  ): Stream[Fragment[TupleBundle2[T1, T2]]] = {
-    val join = new FragmentStreamJoinStream(
-      inputFragmentStream.fragmentType,
-      inputStream.payloadType
-    )
-    join.io.inputFragmentStream << inputFragmentStream
-    join.io.inputStream << inputStream
-    join.io.outputJoinStream
-  }
-}
-
-/** Send a payload at each signal rise edge,
-  * clear the payload after fire.
-  * No more than one signal rise before fire.
-  */
+// TODO: remove this
 object SignalEdgeDrivenStream {
   def apply(signal: Bool): Stream[NoData] =
     new Composite(signal) {
@@ -764,12 +817,129 @@ object SignalEdgeDrivenStream {
         assert(
           assertion = !signalRiseEdge,
           message =
-            L"previous signal edge triggered stream data hasn't fired yet, validReg=${validReg}, signalRiseEdge=${signalRiseEdge}",
+            L"${REPORT_TIME} time: previous signal edge triggered stream data hasn't fired yet, validReg=${validReg}, signalRiseEdge=${signalRiseEdge}",
           severity = FAILURE
         )
       }
       rslt.valid := signal.rise(initAt = False) || validReg
     }.rslt
+}
+
+/** Join a stream A of fragments with a stream B,
+  * that B will fire only when the last fragment of A fires.
+  */
+object FragmentStreamJoinStream {
+  def apply[T1 <: Data, T2 <: Data](
+      inputFragmentStream: Stream[Fragment[T1]],
+      inputStream: Stream[T2]
+  ): Stream[Fragment[TupleBundle2[T1, T2]]] = {
+    FragmentStreamConditionalJoinStream(
+      inputFragmentStream,
+      inputStream,
+      joinCond = True
+    )
+  }
+}
+
+/** Join a stream A of fragments with a stream B only when condition is satisfied.
+  * When B will fire if condition satisfied, it only fires when the last fragment of A fires.
+  */
+class FragmentStreamConditionalJoinStream[T1 <: Data, T2 <: Data](
+    dataType1: HardType[T1],
+    dataType2: HardType[T2]
+) extends Component {
+  val io = new Bundle {
+    val inputFragmentStream = slave(Stream(Fragment(dataType1)))
+    val inputStream = slave(Stream(dataType2))
+    val joinCond = in(Bool())
+    val outputJoinStream = master(
+      Stream(Fragment(TupleBundle2(dataType1, dataType2)))
+    )
+  }
+
+  io.inputStream.ready := io.inputFragmentStream.lastFire && io.joinCond
+  when(io.inputStream.valid && io.joinCond) {
+    assert(
+      assertion = io.inputFragmentStream.lastFire === io.inputStream.fire,
+      message =
+        L"${REPORT_TIME} time: when joinCond=${io.joinCond} is true, during each last beat, inputFragmentStream and inputStream should fire together",
+      severity = FAILURE
+    )
+  }
+
+  io.outputJoinStream << io.inputFragmentStream
+    .continueWhen(io.inputStream.valid)
+    .translateWith {
+      val rslt = cloneOf(io.outputJoinStream.payloadType)
+      rslt._1 := io.inputFragmentStream.fragment
+      rslt._2 := io.inputStream.payload
+      rslt.last := io.inputFragmentStream.isLast
+      rslt
+    }
+}
+
+object FragmentStreamConditionalJoinStream {
+  def apply[T1 <: Data, T2 <: Data](
+      inputFragmentStream: Stream[Fragment[T1]],
+      inputStream: Stream[T2],
+      joinCond: Bool
+  ): Stream[Fragment[TupleBundle2[T1, T2]]] = {
+    val join = new FragmentStreamConditionalJoinStream(
+      inputFragmentStream.fragmentType,
+      inputStream.payloadType
+    )
+    join.io.inputFragmentStream << inputFragmentStream
+    join.io.inputStream << inputStream
+    join.io.joinCond := joinCond
+    join.io.outputJoinStream
+  }
+}
+
+/** ConditionalStreamFork will fork the input based on the condition.
+  * If condition is true, then fork the input, otherwise not fork.
+  * So the return streams have the last one as the original input stream.
+  */
+object ConditionalStreamFork {
+  def apply[T <: Data](
+      inputStream: Stream[T],
+      forkCond: Bool,
+      portCount: Int
+  ): Vec[Stream[T]] = {
+    val rslt = Vec(Stream(inputStream.payloadType), portCount + 1)
+    val forkStreams = StreamFork(inputStream, portCount + 1)
+    rslt(portCount) << forkStreams(portCount)
+    for (idx <- 0 until portCount) {
+      rslt(idx) << forkStreams(idx).takeWhen(forkCond)
+    }
+    rslt
+  }
+}
+
+object ConditionalStreamFork2 {
+  def apply[T <: Data](
+      inputStream: Stream[T],
+      forkCond: Bool
+  ): (Stream[T], Stream[T]) = {
+    val forkStreams =
+      ConditionalStreamFork(inputStream, forkCond, portCount = 1)
+    (forkStreams(0), forkStreams(1))
+  }
+}
+
+class ConditionalStreamFork[T <: Data](payloadType: HardType[T], portCount: Int)
+    extends Component {
+  val io = new Bundle {
+    val input = slave(Stream(payloadType()))
+    val longOutStream = master(Stream(payloadType()))
+    val shortOutStreams = Vec(master(Stream(payloadType())), portCount)
+    val forkCond = in(Bool())
+  }
+
+  val forkStreams = StreamFork(io.input, portCount + 1)
+  io.longOutStream << forkStreams(portCount)
+  for (idx <- 0 until portCount) {
+    io.shortOutStreams(idx) << forkStreams(idx).takeWhen(io.forkCond)
+  }
 }
 
 /** Build an arbiter tree to arbitrate on many inputs.
@@ -858,7 +1028,7 @@ object StreamOneHotDeMux {
     when(input.valid) {
       assert(
         assertion = CountOne(select) <= 1,
-        message = L"select=${select} should be one hot",
+        message = L"${REPORT_TIME} time: select=${select} should be one hot",
         severity = FAILURE
       )
     }
@@ -881,7 +1051,7 @@ class StreamOneHotDeMux[T <: Data](dataType: HardType[T], portCount: Int)
   when(io.input.valid) {
     assert(
       assertion = CountOne(io.select) <= 1,
-      message = L"io.select=${io.select} is not one hot",
+      message = L"${REPORT_TIME} time: io.select=${io.select} is not one hot",
       severity = FAILURE
     )
   }
@@ -957,6 +1127,10 @@ object StreamForkTree {
   }
 }
 
+// Add ID
+// FIFO
+// 1024 req -> 1 resp
+// 1 resp -> 1 out of 1024 req, timing issue
 class StreamForkTree[T <: Data](
     dataType: HardType[T],
     outputPortCount: Int,
@@ -1083,28 +1257,28 @@ object IPv4Addr {
   }
 }
 
-// TODO: remove this once Spinal HDL upgraded to 1.6.2
-object ComponentEnrichment {
-  implicit class ComponentExt[T <: Component](val that: T) {
-    def stub(): T = that.rework {
-      // step1: First remove all we don't want
-      that.children.clear()
-      that.dslBody.foreachStatements {
-        case bt: BaseType if !bt.isDirectionLess =>
-        case s                                   => s.removeStatement()
-      }
-      // step2: remove output and assign zero
-      // this step can't merge into step1
-      that.dslBody.foreachStatements {
-        case bt: BaseType if bt.isOutput | bt.isInOut =>
-          bt.removeAssignments()
-          bt := bt.getZero
-        case _ =>
-      }
-      that
-    }
-  }
-}
+//// TODO: remove this once Spinal HDL upgraded to 1.6.2
+//object ComponentEnrichment {
+//  implicit class ComponentExt[T <: Component](val that: T) {
+//    def stub(): T = that.rework {
+//      // step1: First remove all we don't want
+//      that.children.clear()
+//      that.dslBody.foreachStatements {
+//        case bt: BaseType if !bt.isDirectionLess =>
+//        case s                                   => s.removeStatement()
+//      }
+//      // step2: remove output and assign zero
+//      // this step can't merge into step1
+//      that.dslBody.foreachStatements {
+//        case bt: BaseType if bt.isOutput | bt.isInOut =>
+//          bt.removeAssignments()
+//          bt := bt.getZero
+//        case _ =>
+//      }
+//      that
+//    }
+//  }
+//}
 
 //========== Packet validation related utilities ==========
 
@@ -1115,28 +1289,52 @@ object PsnUtil {
       curPsn: UInt
   ): SpinalEnumCraft[PsnCompResult.type] =
     new Composite(curPsn) {
+      // TODO: check timing, maybe too many logic level here
+      // TODO: check bugs
       val rslt = PsnCompResult()
-      val oldestPSN = (curPsn - HALF_MAX_PSN) & PSN_MASK
-
       when(psnA === psnB) {
         rslt := PsnCompResult.EQUAL
+      } elsewhen (psnA === curPsn) {
+        rslt := PsnCompResult.GREATER
+      } elsewhen (psnB === curPsn) {
+        rslt := PsnCompResult.LESSER
       } elsewhen (psnA < psnB) {
-        when(oldestPSN <= psnA) {
+        when(curPsn <= psnA) {
           rslt := PsnCompResult.LESSER
-        } elsewhen (psnB <= oldestPSN) {
+        } elsewhen (psnB <= curPsn) {
           rslt := PsnCompResult.LESSER
         } otherwise {
           rslt := PsnCompResult.GREATER
         }
       } otherwise { // psnA > psnB
-        when(psnA <= oldestPSN) {
+        when(psnA <= curPsn) {
           rslt := PsnCompResult.GREATER
-        } elsewhen (oldestPSN <= psnB) {
+        } elsewhen (curPsn <= psnB) {
           rslt := PsnCompResult.GREATER
         } otherwise {
           rslt := PsnCompResult.LESSER
         }
       }
+//      val oldestPSN = (curPsn - HALF_MAX_PSN) & PSN_MASK
+//      when(psnA === psnB) {
+//        rslt := PsnCompResult.EQUAL
+//      } elsewhen (psnA < psnB) {
+//        when(oldestPSN <= psnA) {
+//          rslt := PsnCompResult.LESSER
+//        } elsewhen (psnB <= oldestPSN) {
+//          rslt := PsnCompResult.LESSER
+//        } otherwise {
+//          rslt := PsnCompResult.GREATER
+//        }
+//      } otherwise { // psnA > psnB
+//        when(psnA <= oldestPSN) {
+//          rslt := PsnCompResult.GREATER
+//        } elsewhen (oldestPSN <= psnB) {
+//          rslt := PsnCompResult.GREATER
+//        } otherwise {
+//          rslt := PsnCompResult.LESSER
+//        }
+//      }
     }.rslt
 
   /** psnA - psnB, always <= HALF_MAX_PSN
@@ -1372,7 +1570,7 @@ object ePsnIncrease {
         assert(
           assertion = OpCode.isReqPkt(pktFrag.bth.opcode),
           message =
-            L"ePsnIncrease() expects requests, but opcode=${pktFrag.bth.opcode} is not of request",
+            L"${REPORT_TIME} time: ePsnIncrease() expects requests, but opcode=${pktFrag.bth.opcode} is not of request",
           severity = FAILURE
         )
       }
@@ -1414,7 +1612,8 @@ object computePktNum {
           residue := 0
 
           report(
-            message = L"computePktNum encounters invalid PMTU=${pmtu}",
+            message =
+              L"${REPORT_TIME} time: computePktNum encounters invalid PMTU=${pmtu}",
             severity = FAILURE
           )
         }
@@ -1451,7 +1650,8 @@ object pmtuPktLenBytes {
       default {
         rslt := 0
         report(
-          message = L"pmtuPktLenBytes encounters invalid PMTU=${pmtu}",
+          message =
+            L"${REPORT_TIME} time: pmtuPktLenBytes encounters invalid PMTU=${pmtu}",
           severity = FAILURE
         )
       }
@@ -1483,7 +1683,8 @@ object pmtuLenMask {
       default {
         rslt := 0
         report(
-          message = L"pmtuLenMask encounters invalid PMTU=${pmtu}",
+          message =
+            L"${REPORT_TIME} time: pmtuLenMask encounters invalid PMTU=${pmtu}",
           severity = FAILURE
         )
       }
@@ -1514,7 +1715,7 @@ object moduloByPmtu {
 //    )
 //    assert(
 //      assertion = CountOne(divisor) === 1,
-//      message = L"divisor=${divisor} should be power of 2",
+//      message = L"${REPORT_TIME} time: divisor=${divisor} should be power of 2",
 //      severity = FAILURE
 //    )
     val mask = pmtuLenMask(pmtu)
@@ -1523,7 +1724,10 @@ object moduloByPmtu {
 }
 
 object checkWorkReqOpCodeMatch {
-  def apply(workReqOpCode: Bits, reqOpCode: Bits): Bool =
+  def apply(
+      workReqOpCode: SpinalEnumCraft[WorkReqOpCode.type],
+      reqOpCode: Bits
+  ): Bool =
     new Composite(reqOpCode) {
       val rslt = (WorkReqOpCode.isSendReq(workReqOpCode) &&
         OpCode.isSendReqPkt(reqOpCode)) ||
@@ -1551,7 +1755,7 @@ object checkRespOpCodeMatch {
       } otherwise {
         report(
           message =
-            L"reqOpCode=${reqOpCode} should be request opcode, respOpCode=${respOpCode}",
+            L"${REPORT_TIME} time: reqOpCode=${reqOpCode} should be request opcode, respOpCode=${respOpCode}",
           severity = FAILURE
         )
         rslt := False
@@ -1561,321 +1765,7 @@ object checkRespOpCodeMatch {
 
 //========== TupleBundle related utilities ==========
 
-//object asTuple {
-//  def apply[T1 <: Data, T2 <: Data](t2: TupleBundle2[T1, T2]) =
-//    (t2._1, t2._2)
-//
-//  def apply[T1 <: Data, T2 <: Data, T3 <: Data](t3: TupleBundle3[T1, T2, T3]) =
-//    (t3._1, t3._2, t3._3)
-//
-//  def apply[T1 <: Data, T2 <: Data, T3 <: Data, T4 <: Data](
-//    t4: TupleBundle4[T1, T2, T3, T4]
-//  ) =
-//    (t4._1, t4._2, t4._3, t4._4)
-//
-//  def apply[T1 <: Data, T2 <: Data, T3 <: Data, T4 <: Data, T5 <: Data](
-//    t5: TupleBundle5[T1, T2, T3, T4, T5]
-//  ) =
-//    (t5._1, t5._2, t5._3, t5._4, t5._5)
-//
-//  def apply[T1 <: Data,
-//            T2 <: Data,
-//            T3 <: Data,
-//            T4 <: Data,
-//            T5 <: Data,
-//            T6 <: Data](t6: TupleBundle6[T1, T2, T3, T4, T5, T6]) =
-//    (t6._1, t6._2, t6._3, t6._4, t6._5, t6._6)
-//
-//  def apply[T1 <: Data,
-//            T2 <: Data,
-//            T3 <: Data,
-//            T4 <: Data,
-//            T5 <: Data,
-//            T6 <: Data,
-//            T7 <: Data](t7: TupleBundle7[T1, T2, T3, T4, T5, T6, T7]) =
-//    (t7._1, t7._2, t7._3, t7._4, t7._5, t7._6, t7._7)
-//
-//  def apply[T1 <: Data,
-//            T2 <: Data,
-//            T3 <: Data,
-//            T4 <: Data,
-//            T5 <: Data,
-//            T6 <: Data,
-//            T7 <: Data,
-//            T8 <: Data](t8: TupleBundle8[T1, T2, T3, T4, T5, T6, T7, T8]) =
-//    (t8._1, t8._2, t8._3, t8._4, t8._5, t8._6, t8._7, t8._8)
-//
-//  def apply[T1 <: Data,
-//            T2 <: Data,
-//            T3 <: Data,
-//            T4 <: Data,
-//            T5 <: Data,
-//            T6 <: Data,
-//            T7 <: Data,
-//            T8 <: Data,
-//            T9 <: Data](t9: TupleBundle9[T1, T2, T3, T4, T5, T6, T7, T8, T9]) =
-//    (t9._1, t9._2, t9._3, t9._4, t9._5, t9._6, t9._7, t9._8, t9._9)
-//
-//  def apply[T1 <: Data,
-//            T2 <: Data,
-//            T3 <: Data,
-//            T4 <: Data,
-//            T5 <: Data,
-//            T6 <: Data,
-//            T7 <: Data,
-//            T8 <: Data,
-//            T9 <: Data,
-//            T10 <: Data](
-//    t10: TupleBundle10[T1, T2, T3, T4, T5, T6, T7, T8, T9, T10]
-//  ) =
-//    (
-//      t10._1,
-//      t10._2,
-//      t10._3,
-//      t10._4,
-//      t10._5,
-//      t10._6,
-//      t10._7,
-//      t10._8,
-//      t10._9,
-//      t10._10
-//    )
-//
-//  def apply[T1 <: Data,
-//            T2 <: Data,
-//            T3 <: Data,
-//            T4 <: Data,
-//            T5 <: Data,
-//            T6 <: Data,
-//            T7 <: Data,
-//            T8 <: Data,
-//            T9 <: Data,
-//            T10 <: Data,
-//            T11 <: Data](
-//    t11: TupleBundle11[T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11]
-//  ) =
-//    (
-//      t11._1,
-//      t11._2,
-//      t11._3,
-//      t11._4,
-//      t11._5,
-//      t11._6,
-//      t11._7,
-//      t11._8,
-//      t11._9,
-//      t11._10,
-//      t11._11
-//    )
-//
-//  def apply[T1 <: Data,
-//            T2 <: Data,
-//            T3 <: Data,
-//            T4 <: Data,
-//            T5 <: Data,
-//            T6 <: Data,
-//            T7 <: Data,
-//            T8 <: Data,
-//            T9 <: Data,
-//            T10 <: Data,
-//            T11 <: Data,
-//            T12 <: Data](
-//    t12: TupleBundle12[T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12]
-//  ) =
-//    (
-//      t12._1,
-//      t12._2,
-//      t12._3,
-//      t12._4,
-//      t12._5,
-//      t12._6,
-//      t12._7,
-//      t12._8,
-//      t12._9,
-//      t12._10,
-//      t12._11,
-//      t12._12
-//    )
-//
-//  def apply[T1 <: Data,
-//            T2 <: Data,
-//            T3 <: Data,
-//            T4 <: Data,
-//            T5 <: Data,
-//            T6 <: Data,
-//            T7 <: Data,
-//            T8 <: Data,
-//            T9 <: Data,
-//            T10 <: Data,
-//            T11 <: Data,
-//            T12 <: Data,
-//            T13 <: Data](
-//    t13: TupleBundle13[T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13]
-//  ) =
-//    (
-//      t13._1,
-//      t13._2,
-//      t13._3,
-//      t13._4,
-//      t13._5,
-//      t13._6,
-//      t13._7,
-//      t13._8,
-//      t13._9,
-//      t13._10,
-//      t13._11,
-//      t13._12,
-//      t13._13
-//    )
-//
-//  def apply[T1 <: Data,
-//            T2 <: Data,
-//            T3 <: Data,
-//            T4 <: Data,
-//            T5 <: Data,
-//            T6 <: Data,
-//            T7 <: Data,
-//            T8 <: Data,
-//            T9 <: Data,
-//            T10 <: Data,
-//            T11 <: Data,
-//            T12 <: Data,
-//            T13 <: Data,
-//            T14 <: Data](
-//    t14: TupleBundle14[T1,
-//                       T2,
-//                       T3,
-//                       T4,
-//                       T5,
-//                       T6,
-//                       T7,
-//                       T8,
-//                       T9,
-//                       T10,
-//                       T11,
-//                       T12,
-//                       T13,
-//                       T14]
-//  ) =
-//    (
-//      t14._1,
-//      t14._2,
-//      t14._3,
-//      t14._4,
-//      t14._5,
-//      t14._6,
-//      t14._7,
-//      t14._8,
-//      t14._9,
-//      t14._10,
-//      t14._11,
-//      t14._12,
-//      t14._13,
-//      t14._14
-//    )
-//
-//  def apply[T1 <: Data,
-//            T2 <: Data,
-//            T3 <: Data,
-//            T4 <: Data,
-//            T5 <: Data,
-//            T6 <: Data,
-//            T7 <: Data,
-//            T8 <: Data,
-//            T9 <: Data,
-//            T10 <: Data,
-//            T11 <: Data,
-//            T12 <: Data,
-//            T13 <: Data,
-//            T14 <: Data,
-//            T15 <: Data](
-//    t15: TupleBundle15[T1,
-//                       T2,
-//                       T3,
-//                       T4,
-//                       T5,
-//                       T6,
-//                       T7,
-//                       T8,
-//                       T9,
-//                       T10,
-//                       T11,
-//                       T12,
-//                       T13,
-//                       T14,
-//                       T15]
-//  ) =
-//    (
-//      t15._1,
-//      t15._2,
-//      t15._3,
-//      t15._4,
-//      t15._5,
-//      t15._6,
-//      t15._7,
-//      t15._8,
-//      t15._9,
-//      t15._10,
-//      t15._11,
-//      t15._12,
-//      t15._13,
-//      t15._14,
-//      t15._15
-//    )
-//
-//  def apply[T1 <: Data,
-//            T2 <: Data,
-//            T3 <: Data,
-//            T4 <: Data,
-//            T5 <: Data,
-//            T6 <: Data,
-//            T7 <: Data,
-//            T8 <: Data,
-//            T9 <: Data,
-//            T10 <: Data,
-//            T11 <: Data,
-//            T12 <: Data,
-//            T13 <: Data,
-//            T14 <: Data,
-//            T15 <: Data,
-//            T16 <: Data](
-//    t16: TupleBundle16[T1,
-//                       T2,
-//                       T3,
-//                       T4,
-//                       T5,
-//                       T6,
-//                       T7,
-//                       T8,
-//                       T9,
-//                       T10,
-//                       T11,
-//                       T12,
-//                       T13,
-//                       T14,
-//                       T15,
-//                       T16]
-//  ) =
-//    (
-//      t16._1,
-//      t16._2,
-//      t16._3,
-//      t16._4,
-//      t16._5,
-//      t16._6,
-//      t16._7,
-//      t16._8,
-//      t16._9,
-//      t16._10,
-//      t16._11,
-//      t16._12,
-//      t16._13,
-//      t16._14,
-//      t16._15,
-//      t16._16
-//    )
-//}
-
+// TODO: remove TupleBundle, once SpinalHDL updated
 object TupleBundle {
   def apply[T1 <: Data, T2 <: Data](input1: T1, input2: T2) = {
     val t2 = TupleBundle2(HardType(input1), HardType(input2))
