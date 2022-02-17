@@ -3,15 +3,17 @@ package rdma
 import spinal.core.sim._
 import ConstantSettings._
 import StreamSimUtil._
+
 import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
+import spinal.core.SpinalEnumElement
 
 abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
     extends AnyFunSuite {
   val busWidth = BusWidth.W512
 
   def simCfg: SimCompiled[T]
-  def workReqOpCode: Int
+  def workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
 
   test("zero DMA length send/write request test") {
     simCfg.doSim { dut =>
@@ -21,7 +23,8 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
       val outputPsnQueue = mutable.Queue[Int]()
       val naturalNumItr = NaturalNumber.from(1).iterator
 
-      dut.io.qpAttr.pmtu #= PMTU.U256.id
+      val pmtuLen = PMTU.U1024
+      dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.sendQCtrl.wrongStateFlush #= false
 
       // Input to DUT
@@ -61,22 +64,23 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
-      val pmtuBytes = 256
-      val mtyWidth = busWidth.id / BYTE_WIDTH
-      val fragNumPerPkt = pmtuBytes / mtyWidth
+      val pmtuLen = PMTU.U1024
+      val mtyWidth = SendWriteReqReadRespInputGen.busWidthBytes(busWidth)
+      val fragNumPerPkt =
+        SendWriteReqReadRespInputGen.maxFragNumPerPkt(pmtuLen, busWidth)
 
       val inputDataQueue =
         mutable.Queue[(BigInt, BigInt, Int, Int, Long, Boolean)]()
       val outputDataQueue = mutable.Queue[(BigInt, BigInt, Int, Boolean)]()
 
-      dut.io.qpAttr.pmtu #= PMTU.U256.id
+      dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.sendQCtrl.wrongStateFlush #= false
       dut.io.cachedWorkReqAndDmaReadResp.valid #= false
       dut.clockDomain.waitSampling()
 
       // Input to DUT
       val (fragNumItr, pktNumItr, psnItr, totalLenItr) =
-        SendWriteReqReadRespInput.getItr(pmtuBytes, busWidthBytes = mtyWidth)
+        SendWriteReqReadRespInputGen.getItr(pmtuLen, busWidth)
       fragmentStreamMasterDriver(
         dut.io.cachedWorkReqAndDmaReadResp,
         dut.clockDomain
@@ -104,7 +108,7 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
           setAllBits(mtyWidth)
         }
 //        println(
-//          f"fragIdx=${fragIdx}, fragNum=${fragNum}, isLastInputFrag=${isLastInputFrag}, isLastFragPerPkt=${isLastFragPerPkt}, isLast=${isLast}, totalLenBytes=${totalLenBytes}, pktNum=${pktNum}, mtyWidth=${mtyWidth}, residue=${totalLenBytes % mtyWidth}, mty=${mty}%X"
+//          f"${simTime()} time: fragIdx=${fragIdx}, fragNum=${fragNum}, isLastInputFrag=${isLastInputFrag}, isLastFragPerPkt=${isLastFragPerPkt}, isLast=${isLast}, totalLenBytes=${totalLenBytes}, pktNum=${pktNum}, mtyWidth=${mtyWidth}, residue=${totalLenBytes % mtyWidth}, mty=${mty}%X"
 //        )
 
         dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.psnStart #= psnStart
@@ -155,12 +159,12 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
 class SendReqGeneratorTest extends SendWriteReqGeneratorTest[SendReqGenerator] {
   override val simCfg = SimConfig.allOptimisation.withWave
     .compile(new SendReqGenerator(busWidth))
-  override val workReqOpCode = WorkReqOpCode.SEND_WITH_INV.id
+  override val workReqOpCode = WorkReqOpCode.SEND_WITH_INV
 }
 
 class WriteReqGeneratorTest
     extends SendWriteReqGeneratorTest[WriteReqGenerator] {
   override val simCfg = SimConfig.allOptimisation.withWave
     .compile(new WriteReqGenerator(busWidth))
-  override val workReqOpCode = WorkReqOpCode.RDMA_WRITE_WITH_IMM.id
+  override val workReqOpCode = WorkReqOpCode.RDMA_WRITE_WITH_IMM
 }

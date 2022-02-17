@@ -430,7 +430,8 @@ class PdInternalAddrCache(depth: Int) extends Component {
     } otherwise {
       pa := 0 // Invalid
     }
-    val accessValid = (originalReq.accessType | cacheResp.accessType).orR
+    val accessValid =
+      (originalReq.accessType.asBits | cacheResp.accessType.asBits).orR
     io.query.resp << joinStream
       .translateWith {
         val rslt = cloneOf(io.query.resp.payloadType)
@@ -499,7 +500,7 @@ class QpAddrCacheAgent extends Component {
 //    default {
 //      report(
 //        message =
-//          L"unknown AddrQueryInitiator=${io.pdAddrCacheQuery.resp.initiator}",
+//          L"${REPORT_TIME} time: unknown AddrQueryInitiator=${io.pdAddrCacheQuery.resp.initiator}",
 //        severity = FAILURE
 //      )
 //      txSel := otherIdx

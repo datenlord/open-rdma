@@ -124,7 +124,7 @@ class RecvQ(busWidth: BusWidth) extends Component {
     rqDmaReqInitiatorAndNakGen.io.rx << reqValidateLogic.pktLenCheck.io.tx
     io.dma.read.req << rqDmaReqInitiatorAndNakGen.io.readDmaReq.req
     io.dma.sendWrite.req << rqDmaReqInitiatorAndNakGen.io.sendWriteDmaReq.req
-    io.notifier.nak := rqDmaReqInitiatorAndNakGen.io.nakNotify
+    io.notifier.nak := rqDmaReqInitiatorAndNakGen.io.nakNotifier
 
     val readAtomicReqExtractor = new ReadAtomicReqExtractor(busWidth)
     readAtomicReqExtractor.io.qpAttr := io.qpAttr
@@ -208,7 +208,7 @@ class ReqCommCheck(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val epsnInc = out(EPsnInc())
-//    val nakNotify = out(NakNotifier())
+//    val nakNotifier = out(NakNotifier())
     val clearRnrOrNakSeq = out(RnrNakSeqClear())
     val recvQCtrl = in(RecvQCtrl())
     val rx = slave(RdmaDataBus(busWidth))
@@ -281,7 +281,7 @@ class ReqCommCheck(busWidth: BusWidth) extends Component {
     when(isDupPendingReq) {
       report(
         message =
-          L"duplicated pending request received with PSN=${inputPktFrag.bth.psn} and opcode=${inputPktFrag.bth.opcode}, RQ opsn=${io.qpAttr.rqOutPsn}, epsn=${io.qpAttr.epsn}, maybe it should increase SQ timeout threshold",
+          L"${REPORT_TIME} time: duplicated pending request received with PSN=${inputPktFrag.bth.psn} and opcode=${inputPktFrag.bth.opcode}, RQ opsn=${io.qpAttr.rqOutPsn}, epsn=${io.qpAttr.epsn}, maybe it should increase SQ timeout threshold",
         severity = FAILURE
       )
     }
@@ -309,12 +309,12 @@ class ReqCommCheck(busWidth: BusWidth) extends Component {
     // Clear RNR or NAK SEQ if any
     io.clearRnrOrNakSeq.pulse := (io.recvQCtrl.rnrFlush || io.recvQCtrl.nakSeqTrigger) && isExpectedPkt
 //    // NAK notification
-//    io.nakNotify.setNoErr()
+//    io.nakNotifier.setNoErr()
 //    when(output.fire) {
 //      when(!isPsnCheckPass) {
-//        io.nakNotify.setSeqErr()
+//        io.nakNotifier.setSeqErr()
 //      } elsewhen isInvReq {
-//        io.nakNotify.setInvReq()
+//        io.nakNotifier.setInvReq()
 //      }
 //    }
   }
@@ -382,8 +382,8 @@ class ReqRnrCheck(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     //val epsnInc = out(EPsnInc())
-    //val nakNotify = out(NakNotifier())
-//    val rnrNotify = out(RetryNak())
+    //val nakNotifier = out(NakNotifier())
+//    val rnrNotifier = out(RetryNak())
     val recvQCtrl = in(RecvQCtrl())
     val recvWorkReq = slave(Stream(RecvWorkReq()))
     val rx = slave(RqReqCommCheckStageOutputBus(busWidth))
@@ -413,7 +413,7 @@ class ReqRnrCheck(busWidth: BusWidth) extends Component {
     assert(
       assertion = io.rx.checkOutput.fire,
       message =
-        L"io.rx.checkOutput.fire=${io.rx.checkOutput.fire} should fire at the same cycle as io.recvWorkReq.fire=${io.recvWorkReq.fire} when needRecvBuffer=${needRecvBuffer}",
+        L"${REPORT_TIME} time: io.rx.checkOutput.fire=${io.rx.checkOutput.fire} should fire at the same cycle as io.recvWorkReq.fire=${io.recvWorkReq.fire} when needRecvBuffer=${needRecvBuffer}",
       severity = FAILURE
     )
   }
@@ -492,7 +492,7 @@ class DupSendWriteReqHandlerAndDupReadAtomicResultCacheQueryBuilder(
       txSel := otherReqIdx
       report(
         message =
-          L"invalid opcode=${inputPktFrag.bth.opcode}, should be send/write/read/atomic requests",
+          L"${REPORT_TIME} time: invalid opcode=${inputPktFrag.bth.opcode}, should be send/write/read/atomic requests",
         severity = FAILURE
       )
     }
@@ -546,7 +546,7 @@ class DupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator
     txSel := otherReqResultCacheIdx
     report(
       message =
-        L"invalid opcode=${readAtomicResultCacheRespData.opcode}, should be read/atomic requests",
+        L"${REPORT_TIME} time: invalid opcode=${readAtomicResultCacheRespData.opcode}, should be read/atomic requests",
       severity = FAILURE
     )
   }
@@ -583,13 +583,13 @@ class DupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator
     assert(
       assertion = readAtomicResultCacheRespFound,
       message =
-        L"duplicated atomic request with PSN=${io.readAtomicResultCacheResp.resp.query.psn} not found, readAtomicResultCacheRespValid=${readAtomicResultCacheRespValid}, but readAtomicResultCacheRespFound=${readAtomicResultCacheRespFound}",
+        L"${REPORT_TIME} time: duplicated atomic request with PSN=${io.readAtomicResultCacheResp.resp.query.psn} not found, readAtomicResultCacheRespValid=${readAtomicResultCacheRespValid}, but readAtomicResultCacheRespFound=${readAtomicResultCacheRespFound}",
       severity = FAILURE
     )
     assert(
       assertion = readAtomicRequestNotDone,
       message =
-        L"duplicated atomic request with PSN=${io.readAtomicResultCacheResp.resp.query.psn} not done yet, readAtomicResultCacheRespValid=${readAtomicResultCacheRespValid}, readAtomicResultCacheRespFound=${readAtomicResultCacheRespFound}, but readAtomicResultCacheRespData=${readAtomicResultCacheRespData.done}",
+        L"${REPORT_TIME} time: duplicated atomic request with PSN=${io.readAtomicResultCacheResp.resp.query.psn} not done yet, readAtomicResultCacheRespValid=${readAtomicResultCacheRespValid}, readAtomicResultCacheRespFound=${readAtomicResultCacheRespFound}, but readAtomicResultCacheRespData=${readAtomicResultCacheRespData.done}",
       severity = FAILURE
     )
   }
@@ -607,7 +607,7 @@ class DupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator
       assertion =
         io.readAtomicResultCacheResp.resp.query.psn > readAtomicResultCacheRespData.psnStart,
       message =
-        L"io.readAtomicResultCacheResp.resp.query.psn=${io.readAtomicResultCacheResp.resp.query.psn} should > readAtomicResultCacheRespData.psnStart=${readAtomicResultCacheRespData.psnStart}",
+        L"${REPORT_TIME} time: io.readAtomicResultCacheResp.resp.query.psn=${io.readAtomicResultCacheResp.resp.query.psn} should > readAtomicResultCacheRespData.psnStart=${readAtomicResultCacheRespData.psnStart}",
       severity = FAILURE
     )
 
@@ -617,7 +617,7 @@ class DupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator
         io.qpAttr.pmtu
       ),
       message =
-        L"psnDiff=${psnDiff} should < packet num=${computePktNum(readAtomicResultCacheRespData.dlen, io.qpAttr.pmtu)}",
+        L"${REPORT_TIME} time: psnDiff=${psnDiff} should < packet num=${computePktNum(readAtomicResultCacheRespData.dlen, io.qpAttr.pmtu)}",
       severity = FAILURE
     )
   }
@@ -678,7 +678,7 @@ class ReqDmaCommHeaderExtractor(busWidth: BusWidth) extends Component {
       assertion =
         (inputValid && isFirstFrag) === io.rx.reqWithRecvBuf.recvBufValid,
       message =
-        L"invalid RecvWorkReq, it should be valid for the first send request fragment",
+        L"${REPORT_TIME} time: invalid RecvWorkReq, it should be valid for the first send request fragment",
       severity = FAILURE
     )
   } elsewhen (
@@ -763,7 +763,7 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
     val accessKey = inputHeader.lrkey
     val va = inputHeader.va
 
-    val accessType = Bits(ACCESS_TYPE_WIDTH bits)
+    val accessType = AccessType() // Bits(ACCESS_TYPE_WIDTH bits)
     val pdId = io.qpAttr.pdId
     val remoteOrLocalKey = True // True: remote, False: local
     val dataLenBytes = inputHeader.dlen
@@ -771,19 +771,19 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
     val invalidQpAddrCacheAgentQuery =
       !io.rx.reqWithRecvBufAndDmaInfo.dmaHeaderValid
     when(OpCode.isSendReqPkt(inputPktFrag.bth.opcode)) {
-      accessType := AccessType.LOCAL_WRITE.id
+      accessType := AccessType.LOCAL_WRITE
     } elsewhen (OpCode.isWriteReqPkt(inputPktFrag.bth.opcode)) {
-      accessType := AccessType.REMOTE_WRITE.id
+      accessType := AccessType.REMOTE_WRITE
     } elsewhen (OpCode.isReadReqPkt(inputPktFrag.bth.opcode)) {
-      accessType := AccessType.REMOTE_READ.id
+      accessType := AccessType.REMOTE_READ
     } elsewhen (OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode)) {
-      accessType := AccessType.REMOTE_ATOMIC.id
+      accessType := AccessType.REMOTE_ATOMIC
     } otherwise {
       invalidQpAddrCacheAgentQuery := True
-      accessType := 0 // 0 is invalid AccessType
+      accessType := AccessType.LOCAL_READ // AccessType LOCAL_READ is not defined in spec. 1.4
       report(
         message =
-          L"invalid opcode=${inputPktFrag.bth.opcode}, should be send/write/read/atomic",
+          L"${REPORT_TIME} time: invalid opcode=${inputPktFrag.bth.opcode}, should be send/write/read/atomic",
         severity = FAILURE
       )
     }
@@ -813,7 +813,7 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
       assert(
         assertion = inputReqQueue.ready,
         message =
-          L"when receive first request, inputReqQueue must have space to accept the first request, try increase ADDR_CACHE_QUERY_DELAY_CYCLE",
+          L"${REPORT_TIME} time: when receive first request, inputReqQueue must have space to accept the first request, try increase ADDR_CACHE_QUERY_DELAY_CYCLE",
         severity = FAILURE
       )
     }
@@ -832,7 +832,7 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
       assert(
         assertion = inputPktFrag.bth.psn === io.addrCacheRead.resp.psn,
         message =
-          L"addrCacheReadResp.resp has PSN=${io.addrCacheRead.resp.psn} not match input PSN=${inputPktFrag.bth.psn}",
+          L"${REPORT_TIME} time: addrCacheReadResp.resp has PSN=${io.addrCacheRead.resp.psn} not match input PSN=${inputPktFrag.bth.psn}",
         severity = FAILURE
       )
     }
@@ -920,7 +920,7 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
     assert(
       assertion = OpCode.isSendReqPkt(inputPktFrag.bth.opcode),
       message =
-        L"it should be send requests that require receive buffer, but opcode=${inputPktFrag.bth.opcode}",
+        L"${REPORT_TIME} time: it should be send requests that require receive buffer, but opcode=${inputPktFrag.bth.opcode}",
       severity = FAILURE
     )
   } elsewhen (io.rx.reqWithRecvBufAndDmaInfo.dmaHeaderValid) {
@@ -929,7 +929,7 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
     assert(
       assertion = isFirstFrag,
       message =
-        L"only first fragment can have dmaCommHeader, but dmaHeaderValid={io.rx.reqWithRecvBufAndDmaInfo.dmaHeaderValid}, isFirstFrag=${isFirstFrag}",
+        L"${REPORT_TIME} time: only first fragment can have dmaCommHeader, but dmaHeaderValid={io.rx.reqWithRecvBufAndDmaInfo.dmaHeaderValid}, isFirstFrag=${isFirstFrag}",
       severity = FAILURE
     )
   }
@@ -938,7 +938,7 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
       assertion =
         io.rx.reqWithRecvBufAndDmaInfo.dmaHeaderValid === io.rx.reqWithRecvBufAndDmaInfo.recvBufValid,
       message =
-        L"dmaHeaderValid=${io.rx.reqWithRecvBufAndDmaInfo.dmaHeaderValid} should equal recvBufValid=${io.rx.reqWithRecvBufAndDmaInfo.recvBufValid}",
+        L"${REPORT_TIME} time: dmaHeaderValid=${io.rx.reqWithRecvBufAndDmaInfo.dmaHeaderValid} should equal recvBufValid=${io.rx.reqWithRecvBufAndDmaInfo.recvBufValid}",
       severity = FAILURE
     )
   }
@@ -1075,7 +1075,7 @@ class RqDmaReqInitiatorAndNakGen(busWidth: BusWidth) extends Component {
     val readDmaReq = master(DmaReadReqBus())
     val sendWriteDmaReq = master(DmaWriteReqBus(busWidth))
 //    val dma = master(DmaBus(busWidth))
-    val nakNotify = out(RqNakNotifier())
+    val nakNotifier = out(RqNakNotifier())
     val txErrResp = master(Stream(Acknowledge()))
     val sendWriteWorkCompAndNak = master(Stream(WorkCompAndAck()))
   }
@@ -1104,7 +1104,7 @@ class RqDmaReqInitiatorAndNakGen(busWidth: BusWidth) extends Component {
   } otherwise {
     report(
       message =
-        L"invalid opcode=${inputPktFrag.bth.opcode}, should be send/write/read/atomic requests",
+        L"${REPORT_TIME} time: invalid opcode=${inputPktFrag.bth.opcode}, should be send/write/read/atomic requests",
       severity = FAILURE
     )
     txSel := otherIdx
@@ -1186,7 +1186,7 @@ class RqDmaReqInitiatorAndNakGen(busWidth: BusWidth) extends Component {
       rslt
     }
 
-  io.nakNotify.setFromAeth(
+  io.nakNotifier.setFromAeth(
     aeth = io.rx.reqWithRecvBufAndDmaInfo.nakAeth,
     pulse = fourStreams(errRespIdx).fire,
     preOpCode = io.rx.reqWithRecvBufAndDmaInfo.preOpCode,
@@ -1230,7 +1230,7 @@ class RqDmaReqInitiatorAndNakGen(busWidth: BusWidth) extends Component {
 //  assert(
 //    assertion = OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode),
 //    message =
-//      L"AtomicReqExtractor can only handle atomic request, but opcode=${inputPktFrag.bth.opcode}",
+//      L"${REPORT_TIME} time: AtomicReqExtractor can only handle atomic request, but opcode=${inputPktFrag.bth.opcode}",
 //    severity = FAILURE
 //  )
 //
@@ -1336,7 +1336,7 @@ class ReadAtomicReqExtractor(busWidth: BusWidth) extends Component {
     assert(
       assertion = isReadReq ^ isReadReq,
       message =
-        L"ReadAtomicReqExtractor can only handle read/atomic request, but opcode=${inputPktFrag.bth.opcode}",
+        L"${REPORT_TIME} time: ReadAtomicReqExtractor can only handle read/atomic request, but opcode=${inputPktFrag.bth.opcode}",
       severity = FAILURE
     )
   }
@@ -1401,7 +1401,7 @@ class ReadAtomicReqExtractor(busWidth: BusWidth) extends Component {
   } otherwise {
     report(
       message =
-        L"invalid opcode=${inputPktFrag.bth.opcode}, should be read/atomic request",
+        L"${REPORT_TIME} time: invalid opcode=${inputPktFrag.bth.opcode}, should be read/atomic request",
       severity = FAILURE
     )
     txSel := otherIdx
@@ -1443,7 +1443,7 @@ class SendWriteRespGenerator(busWidth: BusWidth) extends Component {
     assert(
       assertion = io.rx.reqWithRecvBufAndDmaInfo.recvBufValid,
       message =
-        L"both inputShouldHaveRecvWorkReq=${inputShouldHaveRecvWorkReq} and io.rx.reqWithRecvBufAndDmaInfo.recvBufValid=${io.rx.reqWithRecvBufAndDmaInfo.recvBufValid} should be true",
+        L"${REPORT_TIME} time: both inputShouldHaveRecvWorkReq=${inputShouldHaveRecvWorkReq} and io.rx.reqWithRecvBufAndDmaInfo.recvBufValid=${io.rx.reqWithRecvBufAndDmaInfo.recvBufValid} should be true",
       severity = FAILURE
     )
   }
@@ -1453,7 +1453,7 @@ class SendWriteRespGenerator(busWidth: BusWidth) extends Component {
       assertion = OpCode.isSendReqPkt(inputPktFrag.bth.opcode) ||
         OpCode.isWriteReqPkt(inputPktFrag.bth.opcode),
       message =
-        L"invalid opcode=${inputPktFrag.bth.opcode}, should be send/write requests",
+        L"${REPORT_TIME} time: invalid opcode=${inputPktFrag.bth.opcode}, should be send/write requests",
       severity = FAILURE
     )
   }
@@ -1468,7 +1468,7 @@ class SendWriteRespGenerator(busWidth: BusWidth) extends Component {
       assert(
         assertion = io.rx.reqWithRecvBufAndDmaInfo.dmaHeaderValid,
         message =
-          L"io.rx.dmaHeaderValid=${io.rx.reqWithRecvBufAndDmaInfo.dmaHeaderValid} should be true for the first fragment of a request",
+          L"${REPORT_TIME} time: io.rx.dmaHeaderValid=${io.rx.reqWithRecvBufAndDmaInfo.dmaHeaderValid} should be true for the first fragment of a request",
         severity = FAILURE
       )
     }
@@ -1573,7 +1573,7 @@ class ReadRespGenerator(busWidth: BusWidth) extends Component {
     assert(
       assertion = input.resultCacheData.dlen === input.dmaReadResp.lenBytes,
       message =
-        L"input.resultCacheData.dlen=${input.resultCacheData.dlen} should equal input.dmaReadResp.lenBytes=${input.dmaReadResp.lenBytes}",
+        L"${REPORT_TIME} time: input.resultCacheData.dlen=${input.resultCacheData.dlen} should equal input.dmaReadResp.lenBytes=${input.dmaReadResp.lenBytes}",
       severity = FAILURE
     )
   }
@@ -1820,7 +1820,7 @@ class RqOut(busWidth: BusWidth) extends Component {
         assertion =
           checkRespOpCodeMatch(psnOutRangeFifo.io.pop.opcode, resp.bth.opcode),
         message =
-          L"request opcode=${psnOutRangeFifo.io.pop.opcode} and response opcode=${resp.bth.opcode} not match",
+          L"${REPORT_TIME} time: request opcode=${psnOutRangeFifo.io.pop.opcode} and response opcode=${resp.bth.opcode} not match",
         severity = FAILURE
       )
     }
@@ -1831,7 +1831,7 @@ class RqOut(busWidth: BusWidth) extends Component {
     // TODO: no output in OutPsnRange should be normal case
     report(
       message =
-        L"no output packet in OutPsnRange: startPsn=${psnOutRangeFifo.io.pop.start}, endPsn=${psnOutRangeFifo.io.pop.end}, psnOutRangeFifo.io.pop.valid=${psnOutRangeFifo.io.pop.valid}",
+        L"${REPORT_TIME} time: no output packet in OutPsnRange: startPsn=${psnOutRangeFifo.io.pop.start}, endPsn=${psnOutRangeFifo.io.pop.end}, psnOutRangeFifo.io.pop.valid=${psnOutRangeFifo.io.pop.valid}",
       severity = FAILURE
     )
   }
@@ -1853,13 +1853,13 @@ class RqOut(busWidth: BusWidth) extends Component {
     assert(
       assertion = isReadReq || isAtomicReq,
       message =
-        L"the output should correspond to read/atomic resp, io.readAtomicResultCachePop.fire=${io.readAtomicResultCachePop.fire}, but psnOutRangeFifo.io.pop.opcode=${psnOutRangeFifo.io.pop.opcode}",
+        L"${REPORT_TIME} time: the output should correspond to read/atomic resp, io.readAtomicResultCachePop.fire=${io.readAtomicResultCachePop.fire}, but psnOutRangeFifo.io.pop.opcode=${psnOutRangeFifo.io.pop.opcode}",
       severity = FAILURE
     )
     assert(
       assertion = psnOutRangeFifo.io.pop.fire,
       message =
-        L"io.readAtomicResultCachePop.fire=${io.readAtomicResultCachePop.fire} and psnOutRangeFifo.io.pop.fire=${psnOutRangeFifo.io.pop.fire} should fire at the same time",
+        L"${REPORT_TIME} time: io.readAtomicResultCachePop.fire=${io.readAtomicResultCachePop.fire} and psnOutRangeFifo.io.pop.fire=${psnOutRangeFifo.io.pop.fire} should fire at the same time",
       severity = FAILURE
     )
   }

@@ -103,15 +103,15 @@ object ConstantSettings {
   val TOTAL_PSN = (1 << PSN_WIDTH)
   val HALF_MAX_PSN = 1 << (PSN_WIDTH - 1)
   val PSN_MASK = (1 << PSN_WIDTH) - 1
-  val PSN_COMP_RESULT_WIDTH = 2
+//  val PSN_COMP_RESULT_WIDTH = 2
 
   val ACK_TYPE_WIDTH = 3
 
-  val WR_OPCODE_WIDTH = log2Up(11) // 11 is the max WR opcode
+//  val WR_OPCODE_WIDTH = log2Up(11) // 11 is the max WR opcode
   val WR_FLAG_WIDTH = log2Up(16) + 1 // 16 is the max WR flag
-  val WC_OPCODE_WIDTH = log2Up(135) // 135 is the max WC opcode
-  val WC_FLAG_WIDTH = log2Up(64) + 1 // 64 is the max WC flag
-  val WC_STATUS_WIDTH = log2Up(23) // 23 is the max WC status
+//  val WC_OPCODE_WIDTH = log2Up(135) // 135 is the max WC opcode
+//  val WC_FLAG_WIDTH = log2Up(64) + 1 // 64 is the max WC flag
+//  val WC_STATUS_WIDTH = log2Up(23) // 23 is the max WC status
 
 //  val ETH_WIDTH = 28 * 8 // AtomicEth is the largest ETH
 
@@ -122,17 +122,17 @@ object ConstantSettings {
 
   val QP_ATTR_MASK_WIDTH = 32
 
-  val ACCESS_TYPE_WIDTH = 20
+//  val ACCESS_TYPE_WIDTH = 20
 
-  val PKT_SEQ_TYPE_WIDTH = 3
+//  val PKT_SEQ_TYPE_WIDTH = 3
 
   val MAX_HEADER_LEN_WIDTH = log2Up(widthOf(BTH()) + widthOf(AtomicEth()))
 
   val INVALID_SG_NEXT_ADDR = 0x0
 
-  val RETRY_REASON_WIDTH = 2
+//  val RETRY_REASON_WIDTH = 2
 
-  val DMA_INITIATOR_WIDTH = 4
+//  val DMA_INITIATOR_WIDTH = 4
 }
 
 object DmaInitiator extends SpinalEnum(binarySequential) {
@@ -176,15 +176,23 @@ object PsnCompResult extends SpinalEnum(binarySequential) {
 //  val LESSER = Value(2)
 //}
 
-object AckType extends Enumeration {
-  type AckType = Value
+object AckType extends SpinalEnum(binarySequential) {
+  val NORMAL, NAK_SEQ, NAK_INV, NAK_RMT_ACC, NAK_RMT_OP, NAK_RNR = newElement()
+}
+//object AckType extends Enumeration {
+//  type AckType = Value
+//
+//  val NORMAL = Value(0)
+//  val NAK_SEQ = Value(1)
+//  val NAK_INV = Value(2)
+//  val NAK_RMT_ACC = Value(3)
+//  val NAK_RMT_OP = Value(4)
+//  val NAK_RNR = Value(5)
+//}
 
-  val NORMAL = Value(0)
-  val NAK_SEQ = Value(1)
-  val NAK_INV = Value(2)
-  val NAK_RMT_ACC = Value(3)
-  val NAK_RMT_OP = Value(4)
-  val NAK_RNR = Value(5)
+object SqErrType extends SpinalEnum(binarySequential) {
+  val NO_ERR, INV_REQ, RMT_ACC, RMT_OP, LOC_ERR, RETRY_EXC, RNR_EXC =
+    newElement()
 }
 
 object BusWidth extends Enumeration {
@@ -232,6 +240,8 @@ object RdmaConstants {
   val PMTU_FRAG_NUM_WIDTH = 13 // PMTU max 4096
 
   val MAX_RESP_TIMEOUT = 8800 sec
+
+  val INFINITE_RESP_TIMEOUT = 0
 }
 
 object QpAttrMask extends Enumeration {
@@ -956,37 +966,67 @@ object NakCode extends Enumeration {
     }.rslt
 }
 
-object WorkReqSendFlags extends Enumeration {
-  type WorkReqSendFlags = Value
+object WorkReqSendFlags extends SpinalEnum {
+  val FENCE, SIGNALED, SOLICITED, INLINE, IP_CSUM = newElement()
 
-  val FENCE = Value(1)
-  val SIGNALED = Value(2)
-  val SOLICITED = Value(4)
-  val INLINE = Value(8)
-  val IP_CSUM = Value(16)
+  defaultEncoding = SpinalEnumEncoding("opt")(
+    FENCE -> 1,
+    SIGNALED -> 2,
+    SOLICITED -> 4,
+    INLINE -> 8,
+    IP_CSUM -> 16
+  )
 }
+//object WorkReqSendFlags extends Enumeration {
+//  type WorkReqSendFlags = Value
+//
+//  val FENCE = Value(1)
+//  val SIGNALED = Value(2)
+//  val SOLICITED = Value(4)
+//  val INLINE = Value(8)
+//  val IP_CSUM = Value(16)
+//}
 
-object WorkReqOpCode extends Enumeration {
-  type WorkReqOpCode = Value
+object WorkReqOpCode extends SpinalEnum {
+  val RDMA_WRITE, RDMA_WRITE_WITH_IMM, SEND, SEND_WITH_IMM, RDMA_READ,
+      ATOMIC_CMP_AND_SWP, ATOMIC_FETCH_AND_ADD, LOCAL_INV, BIND_MW,
+      SEND_WITH_INV, TSO, DRIVER1 = newElement()
 
-  val RDMA_WRITE = Value(0)
-  val RDMA_WRITE_WITH_IMM = Value(1)
-  val SEND = Value(2)
-  val SEND_WITH_IMM = Value(3)
-  val RDMA_READ = Value(4)
-  val ATOMIC_CMP_AND_SWP = Value(5)
-  val ATOMIC_FETCH_AND_ADD = Value(6)
-  val LOCAL_INV = Value(7)
-  val BIND_MW = Value(8)
-  val SEND_WITH_INV = Value(9)
-  val TSO = Value(10)
-  val DRIVER1 = Value(11)
+  defaultEncoding = SpinalEnumEncoding("opt")(
+    RDMA_WRITE -> 0,
+    RDMA_WRITE_WITH_IMM -> 1,
+    SEND -> 2,
+    SEND_WITH_IMM -> 3,
+    RDMA_READ -> 4,
+    ATOMIC_CMP_AND_SWP -> 5,
+    ATOMIC_FETCH_AND_ADD -> 6,
+    LOCAL_INV -> 7,
+    BIND_MW -> 8,
+    SEND_WITH_INV -> 9,
+    TSO -> 10,
+    DRIVER1 -> 11
+  )
+//object WorkReqOpCode extends Enumeration {
+//  type WorkReqOpCode = Value
+//
+//  val RDMA_WRITE = Value(0)
+//  val RDMA_WRITE_WITH_IMM = Value(1)
+//  val SEND = Value(2)
+//  val SEND_WITH_IMM = Value(3)
+//  val RDMA_READ = Value(4)
+//  val ATOMIC_CMP_AND_SWP = Value(5)
+//  val ATOMIC_FETCH_AND_ADD = Value(6)
+//  val LOCAL_INV = Value(7)
+//  val BIND_MW = Value(8)
+//  val SEND_WITH_INV = Value(9)
+//  val TSO = Value(10)
+//  val DRIVER1 = Value(11)
 
-  def hasImmDt(opcode: Bits): Bool =
+  def hasImmDt(opcode: SpinalEnumCraft[WorkReqOpCode.type]): Bool =
     new Composite(opcode) {
       val rslt = Bool()
       switch(opcode) {
-        is(SEND_WITH_IMM.id, RDMA_WRITE_WITH_IMM.id) {
+        is(SEND_WITH_IMM, RDMA_WRITE_WITH_IMM) {
           rslt := True
         }
         default {
@@ -995,15 +1035,15 @@ object WorkReqOpCode extends Enumeration {
       }
     }.rslt
 
-  def hasIeth(opcode: Bits): Bool = {
-    opcode === SEND_WITH_INV.id
+  def hasIeth(opcode: SpinalEnumCraft[WorkReqOpCode.type]): Bool = {
+    opcode === SEND_WITH_INV
   }
 
-  def isSendReq(opcode: Bits): Bool =
+  def isSendReq(opcode: SpinalEnumCraft[WorkReqOpCode.type]): Bool =
     new Composite(opcode) {
       val rslt = Bool()
       switch(opcode) {
-        is(SEND.id, SEND_WITH_IMM.id, SEND_WITH_INV.id) {
+        is(SEND, SEND_WITH_IMM, SEND_WITH_INV) {
           rslt := True
         }
         default {
@@ -1012,11 +1052,11 @@ object WorkReqOpCode extends Enumeration {
       }
     }.rslt
 
-  def isWriteReq(opcode: Bits): Bool =
+  def isWriteReq(opcode: SpinalEnumCraft[WorkReqOpCode.type]): Bool =
     new Composite(opcode) {
       val rslt = Bool()
       switch(opcode) {
-        is(RDMA_WRITE.id, RDMA_WRITE_WITH_IMM.id) {
+        is(RDMA_WRITE, RDMA_WRITE_WITH_IMM) {
           rslt := True
         }
         default {
@@ -1025,11 +1065,11 @@ object WorkReqOpCode extends Enumeration {
       }
     }.rslt
 
-  def isAtomicReq(opcode: Bits): Bool =
+  def isAtomicReq(opcode: SpinalEnumCraft[WorkReqOpCode.type]): Bool =
     new Composite(opcode) {
       val rslt = Bool()
       switch(opcode) {
-        is(ATOMIC_CMP_AND_SWP.id, ATOMIC_FETCH_AND_ADD.id) {
+        is(ATOMIC_CMP_AND_SWP, ATOMIC_FETCH_AND_ADD) {
           rslt := True
         }
         default {
@@ -1038,60 +1078,99 @@ object WorkReqOpCode extends Enumeration {
       }
     }.rslt
 
-  def isReadReq(opcode: Bits): Bool =
+  def isReadReq(opcode: SpinalEnumCraft[WorkReqOpCode.type]): Bool =
     new Composite(opcode) {
-      val rslt = (opcode === RDMA_READ.id)
+      val rslt = (opcode === RDMA_READ)
     }.rslt
 }
 
-object WorkCompFlags extends Enumeration {
-  type WorkCompFlags = Value
+object WorkCompFlags extends SpinalEnum {
+  val NO_FLAGS, GRH, WITH_IMM, IP_CSUM_OK, WITH_INV, TM_SYNC_REQ, TM_MATCH,
+      TM_DATA_VALID = newElement()
 
-  val NO_FLAGS = Value(0) // Not defined in spec.
-  val GRH = Value(1)
-  val WITH_IMM = Value(2)
-  val IP_CSUM_OK = Value(4)
-  val WITH_INV = Value(8)
-  val TM_SYNC_REQ = Value(16)
-  val TM_MATCH = Value(32)
-  val TM_DATA_VALID = Value(64)
+  defaultEncoding = SpinalEnumEncoding("opt")(
+    NO_FLAGS -> 0,
+    GRH -> 1,
+    WITH_IMM -> 2,
+    IP_CSUM_OK -> 4,
+    WITH_INV -> 8,
+    TM_SYNC_REQ -> 16,
+    TM_MATCH -> 32,
+    TM_DATA_VALID -> 64
+  )
 }
+//object WorkCompFlags extends Enumeration {
+//  type WorkCompFlags = Value
+//
+//  val NO_FLAGS = Value(0) // Not defined in spec.
+//  val GRH = Value(1)
+//  val WITH_IMM = Value(2)
+//  val IP_CSUM_OK = Value(4)
+//  val WITH_INV = Value(8)
+//  val TM_SYNC_REQ = Value(16)
+//  val TM_MATCH = Value(32)
+//  val TM_DATA_VALID = Value(64)
+//}
 
-object WorkCompOpCode extends Enumeration {
-  type WorkCompOpCode = Value
+object WorkCompOpCode extends SpinalEnum {
+  val SEND, RDMA_WRITE, RDMA_READ, COMP_SWAP, FETCH_ADD, BIND_MW, LOCAL_INV,
+      TSO, RECV, RECV_RDMA_WITH_IMM, TM_ADD, TM_DEL, TM_SYNC, TM_RECV,
+      TM_NO_TAG, DRIVER1 = newElement()
 
-  val SEND = Value(0)
-  val RDMA_WRITE = Value(1)
-  val RDMA_READ = Value(2)
-  val COMP_SWAP = Value(3)
-  val FETCH_ADD = Value(4)
-  val BIND_MW = Value(5)
-  val LOCAL_INV = Value(6)
-  val TSO = Value(7)
-  val RECV = Value(128)
-  val RECV_RDMA_WITH_IMM = Value(129)
-  val TM_ADD = Value(130)
-  val TM_DEL = Value(131)
-  val TM_SYNC = Value(132)
-  val TM_RECV = Value(133)
-  val TM_NO_TAG = Value(134)
-  val DRIVER1 = Value(135)
+  defaultEncoding = SpinalEnumEncoding("opt")(
+    SEND -> 0,
+    RDMA_WRITE -> 1,
+    RDMA_READ -> 2,
+    COMP_SWAP -> 3,
+    FETCH_ADD -> 4,
+    BIND_MW -> 5,
+    LOCAL_INV -> 6,
+    TSO -> 7,
+    RECV -> 128,
+    RECV_RDMA_WITH_IMM -> 129,
+    TM_ADD -> 130,
+    TM_DEL -> 131,
+    TM_SYNC -> 132,
+    TM_RECV -> 133,
+    TM_NO_TAG -> 134,
+    DRIVER1 -> 135
+  )
 
-  def isSendComp(opcode: Bits): Bool =
+//object WorkCompOpCode extends Enumeration {
+//  type WorkCompOpCode = Value
+//
+//  val SEND = Value(0)
+//  val RDMA_WRITE = Value(1)
+//  val RDMA_READ = Value(2)
+//  val COMP_SWAP = Value(3)
+//  val FETCH_ADD = Value(4)
+//  val BIND_MW = Value(5)
+//  val LOCAL_INV = Value(6)
+//  val TSO = Value(7)
+//  val RECV = Value(128)
+//  val RECV_RDMA_WITH_IMM = Value(129)
+//  val TM_ADD = Value(130)
+//  val TM_DEL = Value(131)
+//  val TM_SYNC = Value(132)
+//  val TM_RECV = Value(133)
+//  val TM_NO_TAG = Value(134)
+//  val DRIVER1 = Value(135)
+
+  def isSendComp(opcode: SpinalEnumCraft[WorkCompOpCode.type]): Bool =
     new Composite(opcode) {
-      val rslt = opcode === SEND.id
+      val rslt = opcode === SEND
     }.rslt
 
-  def isWriteComp(opcode: Bits): Bool =
+  def isWriteComp(opcode: SpinalEnumCraft[WorkCompOpCode.type]): Bool =
     new Composite(opcode) {
-      val rslt = opcode === RDMA_WRITE.id
+      val rslt = opcode === RDMA_WRITE
     }.rslt
 
-  def isAtomicComp(opcode: Bits): Bool =
+  def isAtomicComp(opcode: SpinalEnumCraft[WorkCompOpCode.type]): Bool =
     new Composite(opcode) {
       val rslt = Bool()
       switch(opcode) {
-        is(COMP_SWAP.id, FETCH_ADD.id) {
+        is(COMP_SWAP, FETCH_ADD) {
           rslt := True
         }
         default {
@@ -1100,52 +1179,104 @@ object WorkCompOpCode extends Enumeration {
       }
     }.rslt
 
-  def isReadComp(opcode: Bits): Bool =
+  def isReadComp(opcode: SpinalEnumCraft[WorkCompOpCode.type]): Bool =
     new Composite(opcode) {
-      val rslt = (opcode === RDMA_READ.id)
+      val rslt = (opcode === RDMA_READ)
     }.rslt
 }
 
-object WorkCompStatus extends Enumeration {
-  type WorkCompStatus = Value
+object WorkCompStatus extends SpinalEnum(binarySequential) {
+  val SUCCESS, LOC_LEN_ERR, LOC_QP_OP_ERR, LOC_EEC_OP_ERR, LOC_PROT_ERR,
+      WR_FLUSH_ERR, MW_BIND_ERR, BAD_RESP_ERR, LOC_ACCESS_ERR, REM_INV_REQ_ERR,
+      REM_ACCESS_ERR, REM_OP_ERR, RETRY_EXC_ERR, RNR_RETRY_EXC_ERR,
+      LOC_RDD_VIOL_ERR, REM_INV_RD_REQ_ERR, REM_ABORT_ERR, INV_EECN_ERR,
+      INV_EEC_STATE_ERR, FATAL_ERR, RESP_TIMEOUT_ERR, GENERAL_ERR, TM_ERR,
+      TM_RNDV_INCOMPLETE = newElement()
 
-  val SUCCESS = Value(0)
-  val LOC_LEN_ERR = Value(1)
-  val LOC_QP_OP_ERR = Value(2)
-  val LOC_EEC_OP_ERR = Value(3)
-  val LOC_PROT_ERR = Value(4)
-  val WR_FLUSH_ERR = Value(5)
-  val MW_BIND_ERR = Value(6)
-  val BAD_RESP_ERR = Value(7)
-  val LOC_ACCESS_ERR = Value(8)
-  val REM_INV_REQ_ERR = Value(9)
-  val REM_ACCESS_ERR = Value(10)
-  val REM_OP_ERR = Value(11)
-  val RETRY_EXC_ERR = Value(12)
-  val RNR_RETRY_EXC_ERR = Value(13)
-  val LOC_RDD_VIOL_ERR = Value(14)
-  val REM_INV_RD_REQ_ERR = Value(15)
-  val REM_ABORT_ERR = Value(16)
-  val INV_EECN_ERR = Value(17)
-  val INV_EEC_STATE_ERR = Value(18)
-  val FATAL_ERR = Value(19)
-  val RESP_TIMEOUT_ERR = Value(20)
-  val GENERAL_ERR = Value(21)
-  val TM_ERR = Value(22)
-  val TM_RNDV_INCOMPLETE = Value(23)
+  defaultEncoding = SpinalEnumEncoding("opt")(
+    SUCCESS -> 0,
+    LOC_LEN_ERR -> 1,
+    LOC_QP_OP_ERR -> 2,
+    LOC_EEC_OP_ERR -> 3,
+    LOC_PROT_ERR -> 4,
+    WR_FLUSH_ERR -> 5,
+    MW_BIND_ERR -> 6,
+    BAD_RESP_ERR -> 7,
+    LOC_ACCESS_ERR -> 8,
+    REM_INV_REQ_ERR -> 9,
+    REM_ACCESS_ERR -> 10,
+    REM_OP_ERR -> 11,
+    RETRY_EXC_ERR -> 12,
+    RNR_RETRY_EXC_ERR -> 13,
+    LOC_RDD_VIOL_ERR -> 14,
+    REM_INV_RD_REQ_ERR -> 15,
+    REM_ABORT_ERR -> 16,
+    INV_EECN_ERR -> 17,
+    INV_EEC_STATE_ERR -> 18,
+    FATAL_ERR -> 19,
+    RESP_TIMEOUT_ERR -> 20,
+    GENERAL_ERR -> 21,
+    TM_ERR -> 22,
+    TM_RNDV_INCOMPLETE -> 23
+  )
 }
+//object WorkCompStatus extends Enumeration {
+//  type WorkCompStatus = Value
+//
+//  val SUCCESS = Value(0)
+//  val LOC_LEN_ERR = Value(1)
+//  val LOC_QP_OP_ERR = Value(2)
+//  val LOC_EEC_OP_ERR = Value(3)
+//  val LOC_PROT_ERR = Value(4)
+//  val WR_FLUSH_ERR = Value(5)
+//  val MW_BIND_ERR = Value(6)
+//  val BAD_RESP_ERR = Value(7)
+//  val LOC_ACCESS_ERR = Value(8)
+//  val REM_INV_REQ_ERR = Value(9)
+//  val REM_ACCESS_ERR = Value(10)
+//  val REM_OP_ERR = Value(11)
+//  val RETRY_EXC_ERR = Value(12)
+//  val RNR_RETRY_EXC_ERR = Value(13)
+//  val LOC_RDD_VIOL_ERR = Value(14)
+//  val REM_INV_RD_REQ_ERR = Value(15)
+//  val REM_ABORT_ERR = Value(16)
+//  val INV_EECN_ERR = Value(17)
+//  val INV_EEC_STATE_ERR = Value(18)
+//  val FATAL_ERR = Value(19)
+//  val RESP_TIMEOUT_ERR = Value(20)
+//  val GENERAL_ERR = Value(21)
+//  val TM_ERR = Value(22)
+//  val TM_RNDV_INCOMPLETE = Value(23)
+//}
 
-object AccessType extends Enumeration {
-  type AccessType = Value
+object AccessType extends SpinalEnum {
+  val LOCAL_READ, LOCAL_WRITE, REMOTE_WRITE, REMOTE_READ, REMOTE_ATOMIC,
+      MW_BIND, ZERO_BASED, ON_DEMAND, HUGETLB, RELAXED_ORDERING = newElement()
 
-  val LOCAL_READ = Value(0) // Not defined in spec.
-  val LOCAL_WRITE = Value(1)
-  val REMOTE_WRITE = Value(2)
-  val REMOTE_READ = Value(4)
-  val REMOTE_ATOMIC = Value(8)
-  val MW_BIND = Value(16)
-  val ZERO_BASED = Value(32)
-  val ON_DEMAND = Value(64)
-  val HUGETLB = Value(128)
-  val RELAXED_ORDERING = Value(1048576)
+  defaultEncoding = SpinalEnumEncoding("opt")(
+    LOCAL_READ -> 0, // Not defined in spec
+    LOCAL_WRITE -> 1,
+    REMOTE_WRITE -> 2,
+    REMOTE_READ -> 4,
+    REMOTE_ATOMIC -> 8,
+    MW_BIND -> 16,
+    ZERO_BASED -> 32,
+    ON_DEMAND -> 64,
+    HUGETLB -> 128,
+    RELAXED_ORDERING -> 1048576
+  )
 }
+//object AccessType extends Enumeration {
+//  type AccessType = Value
+//
+//  val LOCAL_READ = Value(0) // Not defined in spec.
+//  val LOCAL_WRITE = Value(1)
+//  val REMOTE_WRITE = Value(2)
+//  val REMOTE_READ = Value(4)
+//  val REMOTE_ATOMIC = Value(8)
+//  val MW_BIND = Value(16)
+//  val ZERO_BASED = Value(32)
+//  val ON_DEMAND = Value(64)
+//  val HUGETLB = Value(128)
+//  val RELAXED_ORDERING = Value(1048576)
+//}

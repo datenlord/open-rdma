@@ -9,7 +9,7 @@ import org.scalatest.funsuite.AnyFunSuite
 class RqReadDmaRespHandlerTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
 
-  def busWidthBytes: Int = busWidth.id / BYTE_WIDTH
+//  def busWidthBytes: Int = busWidth.id / BYTE_WIDTH
 
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new RqReadDmaRespHandler(busWidth))
@@ -41,20 +41,20 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
       )
       onStreamFire(dut.io.readResultCacheDataAndDmaReadResp, dut.clockDomain) {
 //        println(
-//          f"the read request has zero DMA length, but dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen.toLong}%X"
+//          f"${simTime()} time: the read request has zero DMA length, but dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen.toLong}%X"
 //        )
         assert(
           dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen.toLong == 0,
-          f"the read request has zero DMA length, but dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen.toLong}%X"
+          f"${simTime()} time: the read request has zero DMA length, but dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.dlen.toLong}%X"
         )
 
         val inputPsnStart = psnQueue.dequeue()
 //        println(
-//          f"output PSN io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt}%X not match input PSN io.readResultCacheData.psnStart=${inputPsnStart}%X"
+//          f"${simTime()} time: output PSN io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt}%X not match input PSN io.readResultCacheData.psnStart=${inputPsnStart}%X"
 //        )
         assert(
           inputPsnStart == dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt,
-          f"output PSN io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt}%X not match input PSN io.readResultCacheData.psnStart=${inputPsnStart}%X"
+          f"${simTime()} time: output PSN io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt}%X not match input PSN io.readResultCacheData.psnStart=${inputPsnStart}%X"
         )
 
         matchQueue.enqueue(inputPsnStart)
@@ -74,12 +74,13 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
         mutable.Queue[(BigInt, Int, Int, Long, Long, Int, Boolean)]()
       val matchQueue = mutable.Queue[Int]()
 
-      val pmtuBytes = 256
+      val randSeed = scala.util.Random.nextInt()
+      val pmtuLen = PMTU.U1024
       dut.io.recvQCtrl.stateErrFlush #= false
 
       // Input to DUT
       val (_, pktNumItr4CacheData, psnItr4CacheData, totalLenItr4CacheData) =
-        SendWriteReqReadRespInput.getItr(pmtuBytes, busWidthBytes)
+        SendWriteReqReadRespInputGen.getItr(pmtuLen, busWidth, randSeed)
       streamMasterDriver(dut.io.readResultCacheData, dut.clockDomain) {
         val pktNum = pktNumItr4CacheData.next()
         val psnStart = psnItr4CacheData.next()
@@ -90,9 +91,9 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
         dut.io.readResultCacheData.pktNum #= pktNum
       }
       onStreamFire(dut.io.readResultCacheData, dut.clockDomain) {
-        println(
-          f"dut.io.readResultCacheData.psnStart=${dut.io.readResultCacheData.psnStart.toInt}, dut.io.readResultCacheData.pktNum=${dut.io.readResultCacheData.pktNum.toInt}, dut.io.readResultCacheData.dlen=${dut.io.readResultCacheData.dlen.toLong}"
-        )
+//        println(
+//          f"${simTime()} time: dut.io.readResultCacheData.psnStart=${dut.io.readResultCacheData.psnStart.toInt}, dut.io.readResultCacheData.pktNum=${dut.io.readResultCacheData.pktNum.toInt}, dut.io.readResultCacheData.dlen=${dut.io.readResultCacheData.dlen.toLong}"
+//        )
         cacheDataQueue.enqueue(
           (
             dut.io.readResultCacheData.psnStart.toInt,
@@ -104,7 +105,7 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
 
       // Functional way to generate sequences
       val (fragNumItr4DmaResp, _, psnItr4DmaResp, totalLenItr4DmaResp) =
-        SendWriteReqReadRespInput.getItr(pmtuBytes, busWidthBytes)
+        SendWriteReqReadRespInputGen.getItr(pmtuLen, busWidth, randSeed)
       fragmentStreamMasterDriver(dut.io.dmaReadResp.resp, dut.clockDomain) {
         val fragNum = fragNumItr4DmaResp.next()
         val totalLenBytes = totalLenItr4DmaResp.next()
@@ -118,7 +119,7 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
       }
       onStreamFire(dut.io.dmaReadResp.resp, dut.clockDomain) {
 //        println(
-//          f"dut.io.dmaReadResp.resp.psnStart=${dut.io.dmaReadResp.resp.psnStart.toInt}, dut.io.dmaReadResp.resp.lenBytes=${dut.io.dmaReadResp.resp.lenBytes.toLong}, dut.io.dmaReadResp.resp.last=${dut.io.dmaReadResp.resp.last.toBoolean}"
+//          f"${simTime()} time: dut.io.dmaReadResp.resp.psnStart=${dut.io.dmaReadResp.resp.psnStart.toInt}, dut.io.dmaReadResp.resp.lenBytes=${dut.io.dmaReadResp.resp.lenBytes.toLong}, dut.io.dmaReadResp.resp.last=${dut.io.dmaReadResp.resp.last.toBoolean}"
 //        )
         dmaRespQueue.enqueue(
           (
@@ -169,44 +170,44 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
             ) = MiscUtils.safeDeQueue(outputQueue, dut.clockDomain)
 
 //            println(
-//              f"psnStartInCache=${psnStartInCache} == psnStartOutCache=${psnStartOutCache}, psnStartInDmaResp=${psnStartInDmaResp} == psnStartOutDmaResp=${psnStartOutDmaResp}, psnStartInCache=${psnStartInCache} == psnStartInDmaResp=${psnStartInDmaResp}"
+//              f"${simTime()} time: psnStartInCache=${psnStartInCache} == psnStartOutCache=${psnStartOutCache}, psnStartInDmaResp=${psnStartInDmaResp} == psnStartOutDmaResp=${psnStartOutDmaResp}, psnStartInCache=${psnStartInCache} == psnStartInDmaResp=${psnStartInDmaResp}"
 //            )
             assert(
               psnStartInCache == psnStartOutCache &&
                 psnStartInDmaResp == psnStartOutDmaResp &&
                 psnStartInCache == psnStartInDmaResp,
-              f"psnStartInCache=${psnStartInCache} == psnStartOutCache=${psnStartOutCache}, psnStartInDmaResp=${psnStartInDmaResp} == psnStartOutDmaResp=${psnStartOutDmaResp}, psnStartInCache=${psnStartInCache} == psnStartInDmaResp=${psnStartInDmaResp}"
+              f"${simTime()} time: psnStartInCache=${psnStartInCache}%X == psnStartOutCache=${psnStartOutCache}%X, psnStartInDmaResp=${psnStartInDmaResp}%X == psnStartOutDmaResp=${psnStartOutDmaResp}%X, psnStartInCache=${psnStartInCache}%X == psnStartInDmaResp=${psnStartInDmaResp}%X"
             )
 
 //          println(
-//            f"output packet num=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.pktNum.toInt} not match input packet num=${pktNumIn}%X"
+//            f"${simTime()} time: output packet num=${dut.io.readResultCacheDataAndDmaReadResp.resultCacheData.pktNum.toInt} not match input packet num=${pktNumIn}%X"
 //          )
             assert(
               pktNumIn == pktNumOut,
-              f"output packet num=${pktNumOut} not match input packet num=${pktNumIn}%X"
+              f"${simTime()} time: output packet num=${pktNumOut} not match input packet num=${pktNumIn}%X"
             )
 
 //            println(
-//              f"respLenInDmaResp=${respLenInDmaResp} == respLenOutDmaResp=${respLenOutDmaResp}, respLenInCache=${respLenInCache} == respLenOutCache=${respLenOutCache}, respLenInDmaResp=${respLenInDmaResp} == respLenInCache=${respLenInCache}"
+//              f"${simTime()} time: respLenInDmaResp=${respLenInDmaResp}%X == respLenOutDmaResp=${respLenOutDmaResp}%X, respLenInCache=${respLenInCache}%X == respLenOutCache=${respLenOutCache}%X, respLenInDmaResp=${respLenInDmaResp}%X == respLenInCache=${respLenInCache}%X"
 //            )
             assert(
               respLenInDmaResp == respLenOutDmaResp &&
                 respLenInCache == respLenOutCache &&
                 respLenInDmaResp == respLenInCache,
-              f"respLenInDmaResp=${respLenInDmaResp} == respLenOutDmaResp=${respLenOutDmaResp}, respLenInCache=${respLenInCache} == respLenOutCache=${respLenOutCache}, respLenInDmaResp=${respLenInDmaResp} == respLenInCache=${respLenInCache}"
+              f"${simTime()} time: respLenInDmaResp=${respLenInDmaResp}%X == respLenOutDmaResp=${respLenOutDmaResp}%X, respLenInCache=${respLenInCache}%X == respLenOutCache=${respLenOutCache}%X, respLenInDmaResp=${respLenInDmaResp}%X == respLenInCache=${respLenInCache}%X"
             )
 
-//          println(
-//            f"output response data io.readResultCacheDataAndDmaReadResp.dmaReadResp.data=${dut.io.readResultCacheDataAndDmaReadResp.dmaReadResp.data.toBigInt}%X not match input response data io.dmaReadResp.resp.data=${dataIn}%X"
-//          )
+//            println(
+//              f"${simTime()} time: output response data io.readResultCacheDataAndDmaReadResp.dmaReadResp.data=${dmaRespDataOut}%X not match input response data io.dmaReadResp.resp.data=${dmaRespDataIn}%X"
+//            )
             assert(
               dmaRespDataIn.toString(16) == dmaRespDataOut.toString(16),
-              f"output response data io.readResultCacheDataAndDmaReadResp.dmaReadResp.data=${dmaRespDataOut}%X not match input response data io.dmaReadResp.resp.data=${dmaRespDataIn}%X"
+              f"${simTime()} time: output response data io.readResultCacheDataAndDmaReadResp.dmaReadResp.data=${dmaRespDataOut}%X not match input response data io.dmaReadResp.resp.data=${dmaRespDataIn}%X"
             )
 
             assert(
               isLastIn == isLastOut,
-              f"output dut.io.readResultCacheDataAndDmaReadResp.last=${isLastOut} not match input dut.io.dmaReadResp.resp.last=${isLastIn}"
+              f"${simTime()} time: output dut.io.readResultCacheDataAndDmaReadResp.last=${isLastOut} not match input dut.io.dmaReadResp.resp.last=${isLastIn}"
             )
 
             matchQueue.enqueue(psnStartInDmaResp)

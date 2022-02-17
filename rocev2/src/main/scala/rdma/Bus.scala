@@ -49,7 +49,7 @@ case class SqRetryNotifier() extends Bundle {
       assert(
         assertion = this.psnStart =/= that.psnStart,
         message =
-          L"impossible to have two SqRetryNotifier with the same PSN=${this.psnStart}",
+          L"${REPORT_TIME} time: impossible to have two SqRetryNotifier with the same PSN=${this.psnStart}",
         severity = FAILURE
       )
     }
@@ -74,21 +74,19 @@ case class RetryNak() extends Bundle {
   }
 }
 
-case class SqNakNotifier() extends Bundle {
-//  val rnr = RetryNak()
-//  val seqErr = RetryNak()
-  val invReq = Bool()
-  val rmtAcc = Bool()
-  val rmtOp = Bool()
-  val localErr = Bool()
+case class SqErrNotifier() extends Bundle {
+  val pulse = Bool()
+  val errType = SqErrType()
+//  val invReq = Bool()
+//  val rmtAcc = Bool()
+//  val rmtOp = Bool()
+//  val localErr = Bool()
+//  val retryExc = Bool()
+//  val rnrExc = Bool()
 
   def setFromAeth(aeth: AETH): this.type = {
     when(aeth.isNormalAck()) {
       setNoErr()
-      //    } elsewhen (aeth.isRnrNak()) {
-      //      setRnrNak(aeth)
-      //    } elsewhen (aeth.isSeqNak()) {
-      //      setSeqErr(aeth)
     } elsewhen (aeth.isInvReqNak()) {
       setInvReq()
     } elsewhen (aeth.isRmtAccNak()) {
@@ -98,7 +96,7 @@ case class SqNakNotifier() extends Bundle {
     } otherwise {
       report(
         message =
-          L"illegal AETH to set SqNakNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}",
+          L"${REPORT_TIME} time: illegal AETH to set SqErrNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}",
         severity = FAILURE
       )
       setLocalErr()
@@ -107,44 +105,69 @@ case class SqNakNotifier() extends Bundle {
   }
 
   private def setInvReq(): this.type = {
-    invReq := True
+    errType := SqErrType.RMT_ACC
+    pulse := True
     this
   }
 
   private def setRmtAcc(): this.type = {
-    rmtAcc := True
+    errType := SqErrType.RMT_ACC
+    pulse := True
     this
   }
 
   private def setRmtOp(): this.type = {
-    rmtOp := True
+    errType := SqErrType.RMT_OP
+    pulse := True
     this
   }
 
   def setLocalErr(): this.type = {
-    localErr := True
+    errType := SqErrType.LOC_ERR
+    pulse := True
+    this
+  }
+
+  def setRetryExc(): this.type = {
+    errType := SqErrType.RETRY_EXC
+    pulse := True
+    this
+  }
+
+  def setRnrExc(): this.type = {
+    errType := SqErrType.RNR_EXC
+    pulse := True
     this
   }
 
   def setNoErr(): this.type = {
-//    rnr.setNoErr()
-//    seqErr.setNoErr()
-    invReq := False
-    rmtAcc := False
-    rmtOp := False
-    localErr := False
+    errType := SqErrType.NO_ERR
+    pulse := False
     this
   }
 
-  def hasFatalNak(): Bool = invReq || rmtAcc || rmtOp || localErr
+  def hasFatalErr(): Bool = {
+    when(pulse) {
+      assert(
+        assertion = errType =/= SqErrType.NO_ERR,
+        message =
+          L"SqErrNotifier.pulse=${pulse}, but errType=${errType} shows no error",
+        severity = FAILURE
+      )
+    }
+    pulse
+  }
 
-  def ||(that: SqNakNotifier): SqNakNotifier = {
-    val rslt = SqNakNotifier()
-//      rslt.seqErr := this.seqErr || that.seqErr
-    rslt.invReq := this.invReq || that.invReq
-    rslt.rmtAcc := this.rmtAcc || that.rmtAcc
-    rslt.rmtOp := this.rmtOp || that.rmtOp
-    rslt.localErr := this.localErr || that.localErr
+  def ||(that: SqErrNotifier): SqErrNotifier = {
+    assert(
+      assertion = !(this.hasFatalErr() && that.hasFatalErr()),
+      message =
+        L"cannot merge two SqErrNotifier both have fatal error, this.pulse=${this.pulse}, this.errType=${this.errType}, that.pulse=${that.pulse}, that.errType=${that.errType}",
+      severity = FAILURE
+    )
+    val rslt = SqErrNotifier()
+    rslt.pulse := this.pulse || that.pulse
+    rslt.errType := (this.errType =/= SqErrType.NO_ERR) ? this.errType | that.errType
     rslt
   }
 }
@@ -177,7 +200,7 @@ case class RqNakNotifier() extends Bundle {
     } otherwise {
       report(
         message =
-          L"illegal AETH to set NakNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}",
+          L"${REPORT_TIME} time: illegal AETH to set NakNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}",
         severity = FAILURE
       )
       setInvReq()
@@ -250,13 +273,13 @@ case class RqNotifier() extends Bundle {
 }
 
 case class SqNotifier() extends Bundle {
-  val nak = SqNakNotifier()
+  val nak = SqErrNotifier()
   val retry = SqRetryNotifier()
   val workReqHasFence = Bool()
   val workReqCacheEmpty = Bool()
   val coalesceAckDone = Bool()
 
-  def hasFatalNak(): Bool = nak.hasFatalNak()
+  def hasFatalErr(): Bool = nak.hasFatalErr()
 }
 
 case class RecvQCtrl() extends Bundle {
@@ -342,7 +365,7 @@ case class QpAttrData() extends Bundle {
   val rnrTimeOut = Bits(RNR_TIMEOUT_WIDTH bits)
   // respTimeOut need to be converted to actual cycle number,
   // by calling getRespTimeOut()
-  private val respTimeOut = Bits(RESP_TIMEOUT_WIDTH bits)
+  val respTimeOut = Bits(RESP_TIMEOUT_WIDTH bits)
 
 //  val fence = Bool()
 //  val psnBeforeFence = UInt(PSN_WIDTH bits)
@@ -522,7 +545,7 @@ case class QpAttrData() extends Bundle {
         default {
           report(
             message =
-              L"invalid rnrTimeOut=${rnrTimeOut}, should between 0 and 31",
+              L"${REPORT_TIME} time: invalid rnrTimeOut=${rnrTimeOut}, should between 0 and 31",
             severity = FAILURE
           )
           rslt := 0
@@ -568,9 +591,9 @@ case class QpAttrData() extends Bundle {
       val maxCycleNum = timeNumToCycleNum(MAX_RESP_TIMEOUT)
       val rslt = UInt(log2Up(maxCycleNum) bits)
       switch(respTimeOut) {
-        is(0) {
+        is(INFINITE_RESP_TIMEOUT) {
           // Infinite
-          rslt := 0
+          rslt := INFINITE_RESP_TIMEOUT
         }
         for (timeOut <- 1 until (1 << RESP_TIMEOUT_WIDTH)) {
           is(timeOut) {
@@ -582,7 +605,7 @@ case class QpAttrData() extends Bundle {
 //        default {
 //          report(
 //            message =
-//              L"invalid respTimeOut=${respTimeOut}, should between 0 and 31",
+//              L"${REPORT_TIME} time: invalid respTimeOut=${respTimeOut}, should between 0 and 31",
 //            severity = FAILURE
 //          )
 //          rslt := 0
@@ -675,7 +698,7 @@ case class DmaReadReq() extends Bundle {
     assert(
       assertion = !(hasImmDt && hasIeth),
       message =
-        L"hasImmDt=${hasImmDt} and hasIeth=${hasIeth} cannot be both true",
+        L"${REPORT_TIME} time: hasImmDt=${hasImmDt} and hasIeth=${hasIeth} cannot be both true",
       severity = FAILURE
     )
 
@@ -898,7 +921,7 @@ case class DmaReadBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
       default {
         report(
           message =
-            L"invalid DMA initiator=${resp.initiator}, should be RQ_RD, RQ_DUP, RQ_ATOMIC_RD, SQ_RD, SQ_DUP",
+            L"${REPORT_TIME} time: invalid DMA initiator=${resp.initiator}, should be RQ_RD, RQ_DUP, RQ_ATOMIC_RD, SQ_RD, SQ_DUP",
           severity = FAILURE
         )
         txSel := otherIdx
@@ -929,7 +952,7 @@ case class DmaReadBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
       assert(
         assertion = foundRespTargetQp,
         message =
-          L"failed to find DMA read response target QP with QPN=${resp.sqpn}",
+          L"${REPORT_TIME} time: failed to find DMA read response target QP with QPN=${resp.sqpn}",
         severity = FAILURE
       )
     }
@@ -1055,7 +1078,7 @@ case class DmaWriteBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
       assert(
         assertion = foundRespTargetQp,
         message =
-          L"failed to find DMA write response target QP with QPN=${resp.sqpn}",
+          L"${REPORT_TIME} time: failed to find DMA write response target QP with QPN=${resp.sqpn}",
         severity = FAILURE
       )
     }
@@ -1095,7 +1118,7 @@ case class DmaWriteBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
       default {
         report(
           message =
-            L"invalid DMA initiator=${resp.initiator}, should be RQ_WR, RQ_ATOMIC_WR, RQ_WR, SQ_ATOMIC_WR",
+            L"${REPORT_TIME} time: invalid DMA initiator=${resp.initiator}, should be RQ_WR, RQ_ATOMIC_WR, RQ_WR, SQ_ATOMIC_WR",
           severity = FAILURE
         )
         txSel := otherIdx
@@ -1237,7 +1260,7 @@ case class ScatterGatherList() extends Bundle {
 
 case class WorkReq() extends Bundle {
   val id = Bits(WR_ID_WIDTH bits)
-  val opcode = Bits(WR_OPCODE_WIDTH bits)
+  val opcode = WorkReqOpCode() // Bits(WR_OPCODE_WIDTH bits)
   val raddr = UInt(MEM_ADDR_WIDTH bits)
   val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
 //  val solicited = Bool()
@@ -1254,16 +1277,16 @@ case class WorkReq() extends Bundle {
   val lenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
   val lkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
 
-  def fence = (flags & WorkReqSendFlags.FENCE.id).orR
-  def signaled = (flags & WorkReqSendFlags.SIGNALED.id).orR
-  def solicited = (flags & WorkReqSendFlags.SOLICITED.id).orR
-  def inline = (flags & WorkReqSendFlags.INLINE.id).orR
-  def ipChkSum = (flags & WorkReqSendFlags.IP_CSUM.id).orR
+  def fence = (flags & WorkReqSendFlags.FENCE.asBits).orR
+  def signaled = (flags & WorkReqSendFlags.SIGNALED.asBits).orR
+  def solicited = (flags & WorkReqSendFlags.SOLICITED.asBits).orR
+  def inline = (flags & WorkReqSendFlags.INLINE.asBits).orR
+  def ipChkSum = (flags & WorkReqSendFlags.IP_CSUM.asBits).orR
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
     id := 0
-    opcode := 0
+    opcode := WorkReqOpCode.RDMA_WRITE // Default WR opcode
     raddr := 0
     rkey := 0
 //    solicited := False
@@ -1509,12 +1532,12 @@ case class WorkCompAndAck() extends Bundle {
 
 case class WorkComp() extends Bundle {
   val id = Bits(WR_ID_WIDTH bits)
-  val opcode = Bits(WC_OPCODE_WIDTH bits)
+  val opcode = WorkCompOpCode() // Bits(WC_OPCODE_WIDTH bits)
   val lenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
   val sqpn = UInt(QPN_WIDTH bits)
   val dqpn = UInt(QPN_WIDTH bits)
-  val flags = Bits(WC_FLAG_WIDTH bits)
-  val status = Bits(WC_STATUS_WIDTH bits)
+  val flags = WorkCompFlags() // Bits(WC_FLAG_WIDTH bits)
+  val status = WorkCompStatus() // Bits(WC_STATUS_WIDTH bits)
   val immDtOrRmtKeyToInv = Bits(LRKEY_IMM_DATA_WIDTH bits)
 
   def setSuccessFromRecvWorkReq(
@@ -1524,8 +1547,8 @@ case class WorkComp() extends Bundle {
       reqTotalLenBytes: UInt,
       pktFragData: Bits
   ): this.type = {
-    val status = Bits(WC_STATUS_WIDTH bits)
-    status := WorkCompStatus.SUCCESS.id
+//    val status = Bits(WC_STATUS_WIDTH bits)
+    val status = WorkCompStatus.SUCCESS
     setFromRecvWorkReq(
       recvWorkReq,
       reqOpCode,
@@ -1540,7 +1563,7 @@ case class WorkComp() extends Bundle {
       recvWorkReq: RecvWorkReq,
       reqOpCode: Bits,
       dqpn: UInt,
-      status: Bits,
+      status: SpinalEnumCraft[WorkCompStatus.type],
       reqTotalLenBytes: UInt,
       pktFragData: Bits
   ): this.type = {
@@ -1567,13 +1590,13 @@ case class WorkComp() extends Bundle {
     )
 
     when(OpCode.hasImmDt(reqOpCode)) {
-      flags := WorkCompFlags.WITH_IMM.id
+      flags := WorkCompFlags.WITH_IMM
       immDtOrRmtKeyToInv := immDtOrRmtKeyToInvBits
     } elsewhen (OpCode.hasIeth(reqOpCode)) {
-      flags := WorkCompFlags.WITH_INV.id
+      flags := WorkCompFlags.WITH_INV
       immDtOrRmtKeyToInv := immDtOrRmtKeyToInvBits
     } otherwise {
-      flags := WorkCompFlags.NO_FLAGS.id
+      flags := WorkCompFlags.NO_FLAGS
       immDtOrRmtKeyToInv := 0
     }
     this.status := status
@@ -1581,23 +1604,27 @@ case class WorkComp() extends Bundle {
   }
 
   def setSuccessFromWorkReq(workReq: WorkReq, dqpn: UInt): this.type = {
-    val status = Bits(WC_STATUS_WIDTH bits)
-    status := WorkCompStatus.SUCCESS.id
+//    val status = Bits(WC_STATUS_WIDTH bits)
+    val status = WorkCompStatus.SUCCESS
     setFromWorkReq(workReq, dqpn, status)
   }
 
-  def setFromWorkReq(workReq: WorkReq, dqpn: UInt, status: Bits): this.type = {
+  def setFromWorkReq(
+      workReq: WorkReq,
+      dqpn: UInt,
+      status: SpinalEnumCraft[WorkCompStatus.type]
+  ): this.type = {
     id := workReq.id
     setOpCodeFromSqWorkReqOpCode(workReq.opcode)
     lenBytes := workReq.lenBytes
     sqpn := workReq.sqpn
     this.dqpn := dqpn
     when(WorkReqOpCode.hasImmDt(workReq.opcode)) {
-      flags := WorkCompFlags.WITH_IMM.id
+      flags := WorkCompFlags.WITH_IMM
     } elsewhen (WorkReqOpCode.hasIeth(workReq.opcode)) {
-      flags := WorkCompFlags.WITH_INV.id
+      flags := WorkCompFlags.WITH_INV
     } otherwise {
-      flags := WorkCompFlags.NO_FLAGS.id
+      flags := WorkCompFlags.NO_FLAGS
     }
     this.status := status
     immDtOrRmtKeyToInv := workReq.immDtOrRmtKeyToInv
@@ -1606,21 +1633,23 @@ case class WorkComp() extends Bundle {
 
   def setOpCodeFromRqReqOpCode(reqOpCode: Bits): this.type = {
     when(OpCode.isSendReqPkt(reqOpCode)) {
-      opcode := WorkCompOpCode.RECV.id
+      opcode := WorkCompOpCode.RECV
     } elsewhen (OpCode.isWriteWithImmReqPkt(reqOpCode)) {
-      opcode := WorkCompOpCode.RECV_RDMA_WITH_IMM.id
+      opcode := WorkCompOpCode.RECV_RDMA_WITH_IMM
     } otherwise {
       report(
         message =
-          L"unmatched WC opcode at RQ site for request opcode=${reqOpCode}",
+          L"${REPORT_TIME} time: unmatched WC opcode at RQ site for request opcode=${reqOpCode}",
         severity = FAILURE
       )
-      opcode := 0
+      opcode := WorkCompOpCode.SEND // Default WC opcode
     }
     this
   }
 
-  def setOpCodeFromSqWorkReqOpCode(workReqOpCode: Bits): this.type = {
+  def setOpCodeFromSqWorkReqOpCode(
+      workReqOpCode: SpinalEnumCraft[WorkReqOpCode.type]
+  ): this.type = {
     // TODO: check WR opcode without WC opcode equivalent
 //    val TM_ADD = Value(130)
 //    val TM_DEL = Value(131)
@@ -1628,45 +1657,45 @@ case class WorkComp() extends Bundle {
 //    val TM_RECV = Value(133)
 //    val TM_NO_TAG = Value(134)
     switch(workReqOpCode) {
-      is(WorkReqOpCode.RDMA_WRITE.id, WorkReqOpCode.RDMA_WRITE_WITH_IMM.id) {
-        opcode := WorkCompOpCode.RDMA_WRITE.id
+      is(WorkReqOpCode.RDMA_WRITE, WorkReqOpCode.RDMA_WRITE_WITH_IMM) {
+        opcode := WorkCompOpCode.RDMA_WRITE
       }
       is(
-        WorkReqOpCode.SEND.id,
-        WorkReqOpCode.SEND_WITH_IMM.id,
-        WorkReqOpCode.SEND_WITH_INV.id
+        WorkReqOpCode.SEND,
+        WorkReqOpCode.SEND_WITH_IMM,
+        WorkReqOpCode.SEND_WITH_INV
       ) {
-        opcode := WorkCompOpCode.SEND.id
+        opcode := WorkCompOpCode.SEND
       }
-      is(WorkReqOpCode.RDMA_READ.id) {
-        opcode := WorkCompOpCode.RDMA_READ.id
+      is(WorkReqOpCode.RDMA_READ) {
+        opcode := WorkCompOpCode.RDMA_READ
       }
-      is(WorkReqOpCode.ATOMIC_CMP_AND_SWP.id) {
-        opcode := WorkCompOpCode.COMP_SWAP.id
+      is(WorkReqOpCode.ATOMIC_CMP_AND_SWP) {
+        opcode := WorkCompOpCode.COMP_SWAP
       }
-      is(WorkReqOpCode.ATOMIC_FETCH_AND_ADD.id) {
-        opcode := WorkCompOpCode.FETCH_ADD.id
+      is(WorkReqOpCode.ATOMIC_FETCH_AND_ADD) {
+        opcode := WorkCompOpCode.FETCH_ADD
       }
-      is(WorkReqOpCode.LOCAL_INV.id) {
-        opcode := WorkCompOpCode.LOCAL_INV.id
+      is(WorkReqOpCode.LOCAL_INV) {
+        opcode := WorkCompOpCode.LOCAL_INV
       }
-      is(WorkReqOpCode.BIND_MW.id) {
-        opcode := WorkCompOpCode.BIND_MW.id
+      is(WorkReqOpCode.BIND_MW) {
+        opcode := WorkCompOpCode.BIND_MW
       }
-      is(WorkReqOpCode.TSO.id) {
-        opcode := WorkCompOpCode.TSO.id
+      is(WorkReqOpCode.TSO) {
+        opcode := WorkCompOpCode.TSO
       }
-      is(WorkReqOpCode.DRIVER1.id) {
-        opcode := WorkCompOpCode.DRIVER1.id
+      is(WorkReqOpCode.DRIVER1) {
+        opcode := WorkCompOpCode.DRIVER1
       }
-      default {
-        report(
-          message =
-            L"no matched WC opcode at SQ side for WR opcode=${workReqOpCode}",
-          severity = FAILURE
-        )
-        opcode := 0
-      }
+//      default {
+//        report(
+//          message =
+//            L"${REPORT_TIME} time: no matched WC opcode at SQ side for WR opcode=${workReqOpCode}",
+//          severity = FAILURE
+//        )
+//        opcode := WorkCompOpCode.SEND // Default WC opcode
+//      }
     }
     this
   }
@@ -1674,11 +1703,11 @@ case class WorkComp() extends Bundle {
   // TODO: remove this
   def setDefaultVal(): this.type = {
     id := 0
-    opcode := 0
+    opcode := WorkCompOpCode.SEND // Default WC opcode
     lenBytes := 0
     sqpn := 0
     dqpn := 0
-    flags := 0
+    flags := WorkCompFlags.NO_FLAGS
     immDtOrRmtKeyToInv := 0
     this
   }
@@ -1716,7 +1745,7 @@ case class PdAddrCacheReadReq() extends Bundle {
   val key = Bits(LRKEY_IMM_DATA_WIDTH bits)
   val pdId = Bits(PD_ID_WIDTH bits)
   val remoteOrLocalKey = Bool() // True: remote, False: local
-  val accessType = Bits(ACCESS_TYPE_WIDTH bits)
+  val accessType = AccessType() // Bits(ACCESS_TYPE_WIDTH bits)
   val va = UInt(MEM_ADDR_WIDTH bits)
   val dataLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
 
@@ -1834,7 +1863,7 @@ case class AddrCacheDataCreateOrDeleteBus() extends Bundle with IMasterSlave {
 case class AddrData() extends Bundle {
   val lkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
   val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
-  val accessType = Bits(ACCESS_TYPE_WIDTH bits)
+  val accessType = AccessType() // Bits(ACCESS_TYPE_WIDTH bits)
   val va = UInt(MEM_ADDR_WIDTH bits)
   val pa = UInt(MEM_ADDR_WIDTH bits)
   val dataLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
@@ -1842,7 +1871,7 @@ case class AddrData() extends Bundle {
   def init(): this.type = {
     lkey := 0
     rkey := 0
-    accessType := 0
+    accessType := AccessType.LOCAL_READ // Default AccessType
     va := 0
     pa := 0
     dataLenBytes := 0
@@ -1857,7 +1886,7 @@ case class QpAddrCacheAgentReadReq() extends Bundle {
   val pdId = Bits(PD_ID_WIDTH bits)
   // TODO: consider remove remoteOrLocalKey
   private val remoteOrLocalKey = Bool() // True: remote, False: local
-  val accessType = Bits(ACCESS_TYPE_WIDTH bits)
+  val accessType = AccessType() // Bits(ACCESS_TYPE_WIDTH bits)
   val va = UInt(MEM_ADDR_WIDTH bits)
   val dataLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
 
@@ -1873,7 +1902,7 @@ case class QpAddrCacheAgentReadReq() extends Bundle {
     key := 0
     pdId := 0
     remoteOrLocalKey := True
-    accessType := 0
+    accessType := AccessType.LOCAL_READ // Default AccessType
     va := 0
     dataLenBytes := 0
     this
@@ -2030,7 +2059,7 @@ case class RespPsnRange() extends Bundle {
 }
 
 case class ReqPsnRange() extends Bundle {
-  val opcode = Bits(WR_OPCODE_WIDTH bits)
+  val opcode = WorkReqOpCode() // Bits(WR_OPCODE_WIDTH bits)
   val start = UInt(PSN_WIDTH bits)
   // end PSN is included in the range
   val end = UInt(PSN_WIDTH bits)
@@ -2213,6 +2242,7 @@ case class HeaderDataAndMty[T <: Data](
 
   val header = headerType()
   val data = Bits(busWidth.id bits)
+  // UInt() avoid sparse
   val mty = Bits((busWidth.id / BYTE_WIDTH) bits)
 }
 
@@ -2325,7 +2355,7 @@ case class ReadOnlyFirstLastResp(busWidth: BusWidth)
 //    assert(
 //      assertion = !aethValid,
 //      message =
-//        L"read response middle packet should have no AETH, but opcode=${bth.opcode}, aethValid=${aethValid}",
+//        L"${REPORT_TIME} time: read response middle packet should have no AETH, but opcode=${bth.opcode}, aethValid=${aethValid}",
 //      severity = FAILURE
 //    )
 //  }
@@ -2358,7 +2388,11 @@ case class Acknowledge() extends Response {
     this
   }
 
-  def setAck(ackType: AckType.AckType, psn: UInt, dqpn: UInt): this.type = {
+  def setAck(
+      ackType: SpinalEnumCraft[AckType.type],
+      psn: UInt,
+      dqpn: UInt
+  ): this.type = {
 //    val ackTypeBits = Bits(ACK_TYPE_WIDTH bits)
 //    ackTypeBits := ackType.id
 
@@ -2376,7 +2410,7 @@ case class Acknowledge() extends Response {
   }
 
   def setAck(
-      ackType: AckType.AckType,
+      ackType: SpinalEnumCraft[AckType.type],
       psn: UInt,
       dqpn: UInt,
       rnrTimeOut: Bits
@@ -2387,7 +2421,7 @@ case class Acknowledge() extends Response {
   }
 
   private def setAckHelper(
-      ackType: AckType.AckType,
+      ackType: SpinalEnumCraft[AckType.type],
       psn: UInt,
       dqpn: UInt,
       msn: Int,

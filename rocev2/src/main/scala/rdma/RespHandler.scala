@@ -12,8 +12,8 @@ class RespHandler(busWidth: BusWidth) extends Component {
     val qpAttr = in(QpAttrData())
     val sendQCtrl = in(SendQCtrl())
     val rx = slave(RdmaDataBus(busWidth))
-    val nakNotify = out(SqNakNotifier())
-    val retryNotify = out(SqRetryNotifier())
+    val nakNotifier = out(SqErrNotifier())
+    val retryNotifier = out(SqRetryNotifier())
     val coalesceAckDone = out(Bool())
     val addrCacheRead = master(QpAddrCacheAgentReadBus())
     val cachedWorkReqPop = slave(Stream(CachedWorkReq()))
@@ -24,28 +24,31 @@ class RespHandler(busWidth: BusWidth) extends Component {
     val atomicRespDmaWrite = master(DmaWriteBus(busWidth))
   }
 
-  val respVerifier = new RespVerifier(busWidth)
-  respVerifier.io.qpAttr := io.qpAttr
-  respVerifier.io.sendQCtrl := io.sendQCtrl
-  respVerifier.io.rx << io.rx
-  respVerifier.io.cachedWorkReq << io.cachedWorkReqPop.asFlow
-  io.nakNotify := respVerifier.io.nakNotify
+  val respVerifierAndFatalNakHandler = new RespVerifierAndFatalNakHandler(
+    busWidth
+  )
+  respVerifierAndFatalNakHandler.io.qpAttr := io.qpAttr
+  respVerifierAndFatalNakHandler.io.sendQCtrl := io.sendQCtrl
+  respVerifierAndFatalNakHandler.io.rx << io.rx
+  respVerifierAndFatalNakHandler.io.cachedWorkReq << io.cachedWorkReqPop.asFlow
 
-  val ackHandler = new AckHandler
-  ackHandler.io.qpAttr := io.qpAttr
-  ackHandler.io.sendQCtrl := io.sendQCtrl
-  ackHandler.io.rx << respVerifier.io.txRespWithAeth
-  ackHandler.io.cachedWorkReqPop << io.cachedWorkReqPop
-  io.coalesceAckDone := ackHandler.io.coalesceAckDone
-
-  io.retryNotify := respVerifier.io.respTimeOutRetryNotify
-    .merge(ackHandler.io.retryNotify, io.qpAttr.npsn)
+  val coalesceAndNormalAndRetryNakHandler =
+    new CoalesceAndNormalAndRetryNakHandler
+  coalesceAndNormalAndRetryNakHandler.io.qpAttr := io.qpAttr
+  coalesceAndNormalAndRetryNakHandler.io.sendQCtrl := io.sendQCtrl
+  coalesceAndNormalAndRetryNakHandler.io.rx << respVerifierAndFatalNakHandler.io.txRespWithAeth
+  coalesceAndNormalAndRetryNakHandler.io.cachedWorkReqPop << io.cachedWorkReqPop
+  io.coalesceAckDone := coalesceAndNormalAndRetryNakHandler.io.coalesceAckDone
+  io.retryNotifier := coalesceAndNormalAndRetryNakHandler.io.retryNotifier
+  io.nakNotifier := coalesceAndNormalAndRetryNakHandler.io.nakNotifier
+//  io.retryNotifier := respVerifierAndFatalNakHandler.io.respTimeOutRetryNotifier
+//    .merge(ackHandler.io.retryNotifier, io.qpAttr.npsn)
 
   val readAtomicRespDmaReqInitiator =
     new ReadAtomicRespDmaReqInitiator(busWidth)
   readAtomicRespDmaReqInitiator.io.qpAttr := io.qpAttr
   readAtomicRespDmaReqInitiator.io.sendQCtrl := io.sendQCtrl
-  readAtomicRespDmaReqInitiator.io.rx << respVerifier.io.txReadAtomicResp
+  readAtomicRespDmaReqInitiator.io.rx << respVerifierAndFatalNakHandler.io.txReadAtomicResp
   io.workReqQuery << readAtomicRespDmaReqInitiator.io.workReqQuery
   io.addrCacheRead << readAtomicRespDmaReqInitiator.io.addrCacheRead
   io.readRespDmaWrite.req << readAtomicRespDmaReqInitiator.io.readRespDmaWriteReq.req
@@ -54,7 +57,7 @@ class RespHandler(busWidth: BusWidth) extends Component {
   val workCompGen = new WorkCompGen
   workCompGen.io.qpAttr := io.qpAttr
   workCompGen.io.sendQCtrl := io.sendQCtrl
-  workCompGen.io.workCompAndAck << ackHandler.io.workCompAndAck
+  workCompGen.io.workCompAndAck << coalesceAndNormalAndRetryNakHandler.io.workCompAndAck
   workCompGen.io.readRespDmaWriteResp.resp << io.readRespDmaWrite.resp
   workCompGen.io.atomicRespDmaWriteResp.resp << io.atomicRespDmaWrite.resp
   io.workComp << workCompGen.io.workCompPush
@@ -64,14 +67,13 @@ class RespHandler(busWidth: BusWidth) extends Component {
 // - NAK with reserved code;
 // - Target QP not exists; dropped by head verifier
 // - Ghost ACK;
-class RespVerifier(busWidth: BusWidth) extends Component {
+class RespVerifierAndFatalNakHandler(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val sendQCtrl = in(SendQCtrl())
     val rx = slave(RdmaDataBus(busWidth))
     val cachedWorkReq = slave(Flow(CachedWorkReq()))
-    val respTimeOutRetryNotify = out(SqRetryNotifier())
-    val nakNotify = out(SqNakNotifier())
+//    val respTimeOutRetryNotifier = out(SqRetryNotifier())
     val txRespWithAeth = master(Stream(Acknowledge()))
     val txReadAtomicResp = master(RdmaDataBus(busWidth))
   }
@@ -82,7 +84,7 @@ class RespVerifier(busWidth: BusWidth) extends Component {
     assert(
       assertion = OpCode.isRespPkt(inputPktFrag.bth.opcode),
       message =
-        L"RespVerifier received non-response packet with opcode=${inputPktFrag.bth.opcode}, PSN=${inputPktFrag.bth.psn}",
+        L"${REPORT_TIME} time: RespVerifier received non-response packet with opcode=${inputPktFrag.bth.opcode}, PSN=${inputPktFrag.bth.psn}",
       severity = FAILURE
     )
   }
@@ -96,20 +98,18 @@ class RespVerifier(busWidth: BusWidth) extends Component {
         (busWidth.id - widthOf(BTH()))
     )
   )
-  val isNormalAck = acknowledge.aeth.isNormalAck()
-  val isRetryNak = acknowledge.aeth.isRetryNak()
-  val isErrAck = acknowledge.aeth.isErrAck()
+//  val isNormalAck = acknowledge.aeth.isNormalAck()
+//  val isRetryNak = acknowledge.aeth.isRetryNak()
+//  val isErrAck = acknowledge.aeth.isErrAck()
 
   val hasAeth = OpCode.respPktHasAeth(inputPktFrag.bth.opcode)
-  when(hasAeth) {
-    hasReservedCode := inputValid && acknowledge.aeth.isReserved()
-    when(hasReservedCode) {
-      report(
-        message =
-          L"acknowledge has reserved code or value, PSN=${acknowledge.bth.psn}, aeth.code=${acknowledge.aeth.code}, aeth.value=${acknowledge.aeth.value}",
-        severity = FAILURE
-      )
-    }
+  when(inputValid && hasAeth) {
+    assert(
+      assertion = !acknowledge.aeth.isReserved(),
+      message =
+        L"${REPORT_TIME} time: acknowledge has reserved code or value, PSN=${acknowledge.bth.psn}, aeth.code=${acknowledge.aeth.code}, aeth.value=${acknowledge.aeth.value}",
+      severity = FAILURE
+    )
   }
 
   val isReadResp =
@@ -117,19 +117,7 @@ class RespVerifier(busWidth: BusWidth) extends Component {
   val isAtomicResp =
     OpCode.isAtomicRespPkt(io.rx.pktFrag.bth.opcode)
 
-//  val txSel = UInt(1 bit)
-//  val (readAtomicAckIdx, otherAckIdx) = (0, 1)
-//  when(isReadResp || isAtomicResp) {
-//    txSel := readAtomicAckIdx
-//  } otherwise {
-//    txSel := otherAckIdx
-//  }
-//  val twoStreams = StreamDemux(
-//    io.rx.pktFrag.throwWhen(io.sendQCtrl.wrongStateFlush || hasReservedCode),
-//    select = txSel,
-//    portCount = 2
-//  )
-  val (resp4ReadAtomic, respWithAeth) = StreamFork2(
+  val (resp4ReadAtomic, resp4OtherAck) = StreamFork2(
     io.rx.pktFrag.throwWhen(io.sendQCtrl.wrongStateFlush || hasReservedCode)
   )
   io.txReadAtomicResp.pktFrag <-/< resp4ReadAtomic.takeWhen(
@@ -139,7 +127,7 @@ class RespVerifier(busWidth: BusWidth) extends Component {
   // TODO: does it need to flush whole SQ when retry triggered?
   val aethQueue =
     StreamFifoLowLatency(Acknowledge(), depth = MAX_COALESCE_ACK_NUM)
-  aethQueue.io.push << respWithAeth
+  aethQueue.io.push << resp4OtherAck
     .takeWhen(hasAeth)
     .translateWith(acknowledge)
   // TODO: verify that once retry started, discard all responses before send out the retry request
@@ -147,177 +135,296 @@ class RespVerifier(busWidth: BusWidth) extends Component {
   io.txRespWithAeth <-/< aethQueue.io.pop
     .takeWhen(OpCode.isNonReadAtomicRespPkt(inputPktFrag.bth.opcode))
     .translateWith(acknowledge)
-
-  io.nakNotify.setNoErr()
-  when(hasAeth && isErrAck && respWithAeth.fire) {
-    io.nakNotify.setFromAeth(acknowledge.aeth)
-  }
-
-  // Handle response timeout retry
-  val respTimer = Timeout(MAX_RESP_TIMEOUT)
-  val respTimeOutRetry = respTimer.counter.value > io.qpAttr.getRespTimeOut()
-  // TODO: should use io.rx.fire or io.rx.valid to clear response timer?
-  when(
-    io.sendQCtrl.wrongStateFlush || inputValid || !io.cachedWorkReq.valid || io.sendQCtrl.retryFlush
-  ) {
-    respTimer.clear()
-  }
-
-  io.respTimeOutRetryNotify.pulse := respTimeOutRetry
-  io.respTimeOutRetryNotify.psnStart := io.cachedWorkReq.psnStart
-  io.respTimeOutRetryNotify.reason := RetryReason.RESP_TIMEOUT
 }
 
-class AckHandler extends Component {
+// Handle coalesce ACK, normal ACK and retry ACK
+class CoalesceAndNormalAndRetryNakHandler extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val sendQCtrl = in(SendQCtrl())
     val rx = slave(Stream(Acknowledge()))
     val cachedWorkReqPop = slave(Stream(CachedWorkReq()))
-    val retryNotify = out(SqRetryNotifier())
     val coalesceAckDone = out(Bool())
-//    val nakNotify = out(NakNotifier())
     val workCompAndAck = master(Stream(WorkCompAndAck()))
+    val nakNotifier = out(SqErrNotifier())
+    val retryNotifier = out(SqRetryNotifier())
+//    val tx = slave(Stream(Acknowledge()))
   }
+
   val inputAckValid = io.rx.valid
   val inputCachedWorkReqValid = io.cachedWorkReqPop.valid
+
+  val isDupAck =
+    PsnUtil.lt(io.rx.bth.psn, io.cachedWorkReqPop.psnStart, io.qpAttr.npsn)
+  val isGhostAck = inputAckValid && !inputCachedWorkReqValid
 
   val isNormalAck = io.rx.aeth.isNormalAck()
   val isRetryNak = io.rx.aeth.isRetryNak()
   val isErrAck = io.rx.aeth.isErrAck()
-  val isDupAck = {
-    PsnUtil.lt(io.rx.bth.psn, io.cachedWorkReqPop.psnStart, io.qpAttr.npsn)
-  }
-
-  val cachedWorkReqPsnEnd =
-    io.cachedWorkReqPop.psnStart + io.cachedWorkReqPop.pktNum - 1
-  val isTargetWorkReq =
-    PsnUtil.gte(io.rx.bth.psn, io.cachedWorkReqPop.psnStart, io.qpAttr.npsn) &&
-      PsnUtil.lte(io.rx.bth.psn, cachedWorkReqPsnEnd, io.qpAttr.npsn)
-  val isWholeWorkReqAcked = io.rx.bth.psn === cachedWorkReqPsnEnd
 
   val isReadWorkReq =
     WorkReqOpCode.isReadReq(io.cachedWorkReqPop.workReq.opcode)
   val isAtomicWorkReq =
     WorkReqOpCode.isAtomicReq(io.cachedWorkReqPop.workReq.opcode)
 
-  val needCoalesceAck =
+  val cachedWorkReqPsnEnd =
+    io.cachedWorkReqPop.psnStart + (io.cachedWorkReqPop.pktNum - 1)
+  val isTargetWorkReq =
+    PsnUtil.gte(io.rx.bth.psn, io.cachedWorkReqPop.psnStart, io.qpAttr.npsn) &&
+      PsnUtil.lte(io.rx.bth.psn, cachedWorkReqPsnEnd, io.qpAttr.npsn)
+  val isWholeWorkReqAck = io.rx.bth.psn === cachedWorkReqPsnEnd
+  val isPartialTargetWorkReqAck = isTargetWorkReq && !isWholeWorkReqAck
+  val isWholeTargetWorkReqAck = isTargetWorkReq && isWholeWorkReqAck
+
+  val hasCoalesceAck =
     PsnUtil.gt(io.rx.bth.psn, cachedWorkReqPsnEnd, io.qpAttr.npsn)
-  val implicitRetry = (isReadWorkReq || isAtomicWorkReq) && needCoalesceAck
-  val explicitRetry = isTargetWorkReq && isRetryNak
-//  val needRetry = implicitRetry || explicitRetry
+  val hasImplicitRetry = !isTargetWorkReq && (isReadWorkReq || isAtomicWorkReq)
+  val hasExplicitRetry = isTargetWorkReq && isRetryNak
 
-  val workCompAndAck = cloneOf(io.workCompAndAck)
-  workCompAndAck.valid := False
-  workCompAndAck.ackValid := inputAckValid
-  workCompAndAck.ack := io.rx
-  workCompAndAck.workComp.setSuccessFromWorkReq(
-    workReq = io.cachedWorkReqPop.workReq,
-    dqpn = io.qpAttr.dqpn
+  // For the following fire condition, it must make sure inputAckValid or inputCachedWorkReqValid
+  val fireBothCachedWorkReqAndAck =
+    (inputAckValid && inputCachedWorkReqValid && ((isWholeTargetWorkReqAck && isNormalAck) || (isTargetWorkReq && isErrAck)))
+  val fireCachedWorkReqOnly =
+    (inputAckValid && inputCachedWorkReqValid && hasCoalesceAck && !hasImplicitRetry) || io.sendQCtrl.errorFlush
+  val fireAckOnly =
+    isGhostAck || (inputAckValid && inputCachedWorkReqValid && (isDupAck || (isTargetWorkReq && isRetryNak) || (isPartialTargetWorkReqAck && isNormalAck)))
+  val zipCachedWorkReqAndAck = StreamZipByCondition(
+    leftInputStream = io.cachedWorkReqPop,
+    // Only retryFlush io.rx, no need to errorFlush
+    rightInputStream = io.rx.throwWhen(io.sendQCtrl.retryFlush),
+    // Coalesce ACK pending WR, or errorFlush
+    leftFireCond = fireCachedWorkReqOnly,
+    // Discard duplicated ACK or ghost ACK if no pending WR
+    rightFireCond = fireAckOnly,
+    bothFireCond = fireBothCachedWorkReqAndAck
   )
-
-  val workCompFlushStatus = Bits(WC_STATUS_WIDTH bits)
-  // TODO: what status should the read/atomic requests before error ACK have?
-  workCompFlushStatus := WorkCompStatus.WR_FLUSH_ERR.id
-
-  io.rx.ready := False
-  io.cachedWorkReqPop.ready := False
-  io.coalesceAckDone := (isTargetWorkReq || implicitRetry) && io.rx.fire
-  io.retryNotify.pulse := (explicitRetry || implicitRetry) && io.rx.fire
-  io.retryNotify.psnStart := io.rx.bth.psn
-  io.retryNotify.reason := RetryReason.RETRY_ACK
-  when(implicitRetry) {
-    io.retryNotify.psnStart := io.cachedWorkReqPop.psnStart
-    io.retryNotify.reason := RetryReason.IMPLICIT_ACK
-  }
-
-  when(io.retryNotify.pulse) {
+  when(inputAckValid || inputCachedWorkReqValid) {
     assert(
-      assertion = io.coalesceAckDone,
+      assertion = CountOne(
+        fireBothCachedWorkReqAndAck ## fireCachedWorkReqOnly ## fireAckOnly
+      ) <= 1,
       message =
-        L"when start to retry, no matter explicitRetry=${explicitRetry} or implicitRetry=${implicitRetry}, io.retryNotify.pulse=${io.retryNotify.pulse} must have coalesce ACK done, io.coalesceAckDone=${io.coalesceAckDone}",
+        L"${REPORT_TIME} time: fire CachedWorkReq, fire ACK, and fire both should be mutually exclusive, but fireBothCachedWorkReqAndAck=${fireBothCachedWorkReqAndAck}, fireCachedWorkReqOnly=${fireCachedWorkReqOnly}, fireAckOnly=${fireAckOnly}",
       severity = FAILURE
     )
   }
 
-  // Handle error ACK received case
-  when(io.sendQCtrl.wrongStateFlush) {
-    when(isTargetWorkReq) {
-      // Handle error ACK
-      workCompAndAck.workComp.setFromWorkReq(
-        workReq = io.cachedWorkReqPop.workReq,
-        dqpn = io.qpAttr.dqpn,
-        status = io.rx.aeth.toWorkCompStatus()
-      )
-      workCompAndAck.valid := io.cachedWorkReqPop.valid
-      io.rx.ready := workCompAndAck.fire
-      io.cachedWorkReqPop.ready := workCompAndAck.fire
-
-      when(inputAckValid) {
-        assert(
-          assertion = isErrAck,
-          message =
-            L"should handle error ACK when io.sendQCtrl.wrongStateFlush=${io.sendQCtrl.wrongStateFlush}, isTargetWorkReq=${isTargetWorkReq}",
-          severity = FAILURE
+  val workCompFlushStatus = WorkCompStatus() // Bits(WC_STATUS_WIDTH bits)
+  // TODO: what status should the read/atomic requests before error ACK have?
+  workCompFlushStatus := WorkCompStatus.WR_FLUSH_ERR
+  val zipCachedWorkReqValid = zipCachedWorkReqAndAck._1
+  io.workCompAndAck <-/< zipCachedWorkReqAndAck
+    .takeWhen(zipCachedWorkReqValid)
+    .translateWith {
+      val rslt = cloneOf(io.workCompAndAck.payloadType)
+      when(isTargetWorkReq && isErrAck) {
+        // Handle fatal NAK
+        rslt.workComp.setFromWorkReq(
+          workReq = zipCachedWorkReqAndAck._2.workReq,
+          dqpn = io.qpAttr.dqpn,
+          status = zipCachedWorkReqAndAck._4.aeth.toWorkCompStatus()
+        )
+      } elsewhen (io.sendQCtrl.errorFlush) {
+        // Handle errorFlush
+        rslt.workComp.setFromWorkReq(
+          workReq = zipCachedWorkReqAndAck._2.workReq,
+          dqpn = io.qpAttr.dqpn,
+          status = workCompFlushStatus
+        )
+      } otherwise {
+        // Handle coalesce and normal ACK
+        rslt.workComp.setSuccessFromWorkReq(
+          workReq = zipCachedWorkReqAndAck._2.workReq,
+          dqpn = io.qpAttr.dqpn
         )
       }
-    } elsewhen (needCoalesceAck && !implicitRetry) {
-      // Coalesce ACK, only generate WC if WR needs signaled
-      workCompAndAck.valid := io.cachedWorkReqPop.valid && io.cachedWorkReqPop.workReq.signaled
-      io.cachedWorkReqPop.ready := io.cachedWorkReqPop.workReq.signaled ? workCompAndAck.fire | io.cachedWorkReqPop.valid
+      // TODO: verify when errorFlush, is zipCachedWorkReqAndAck still valid?
+      rslt.ackValid := zipCachedWorkReqAndAck._3
+      rslt.ack := zipCachedWorkReqAndAck._4
+      rslt
     }
-  }
-  // Flush pending WR after coalesce ACK or error ACK handled
-  when(io.sendQCtrl.errorFlush) {
-    workCompAndAck.workComp.setFromWorkReq(
-      workReq = io.cachedWorkReqPop.workReq,
-      dqpn = io.qpAttr.dqpn,
-      status = workCompFlushStatus
-    )
-    io.rx.ready := inputAckValid // Discard all ACKs
-    workCompAndAck.ackValid := False
-    workCompAndAck.valid := inputCachedWorkReqValid
-    io.cachedWorkReqPop.ready := workCompAndAck.fire
+
+  // Handle response timeout retry
+  val respTimer = Timeout(MAX_RESP_TIMEOUT)
+  val respTimeOutThreshold = io.qpAttr.getRespTimeOut()
+  val respTimeOutRetry = respTimeOutThreshold =/= INFINITE_RESP_TIMEOUT &&
+    respTimer.counter.value > respTimeOutThreshold
+  // TODO: should use io.rx.fire or io.rx.valid to clear response timer?
+  when(
+    io.sendQCtrl.wrongStateFlush || inputAckValid || !io.cachedWorkReqPop.valid || io.sendQCtrl.retryFlush
+  ) {
+    respTimer.clear()
   }
 
-  // Handle normal and retry ACKs
-  when(isTargetWorkReq) {
-    when(isNormalAck) {
-      // Handle normal ACK, distinguish ACK to whole WR or partial WR
-      io.rx.ready := isWholeWorkReqAcked ? workCompAndAck.fire | inputAckValid
-      workCompAndAck.valid := inputAckValid && isWholeWorkReqAcked
-      io.cachedWorkReqPop.ready := isWholeWorkReqAcked ? workCompAndAck.fire | False
-    } elsewhen (isRetryNak) {
-      // Handle explicit retry, send out retry notification to QpCtrl if no error ACK
-      // TODO: handle retry number exceeds 3
-      io.rx.ready := inputAckValid && explicitRetry
-    }
-  } elsewhen (needCoalesceAck && !implicitRetry) {
-    // Coalesce ACK, only generate WC if WR needs signaled
-    workCompAndAck.valid := inputAckValid && inputCachedWorkReqValid && io.cachedWorkReqPop.workReq.signaled
-    io.cachedWorkReqPop.ready := io.cachedWorkReqPop.workReq.signaled ? workCompAndAck.fire | inputCachedWorkReqValid
-  } elsewhen (implicitRetry && !io.sendQCtrl.wrongStateFlush) {
-    // Handle implicit retry, send out retry notification to QpCtrl if no error ACK
-    io.rx.ready := inputAckValid && implicitRetry
-    // TODO: handle retry number exceeds 3
+  // SQ into ERR state if fatal error
+  io.nakNotifier.setNoErr()
+  when(!io.sendQCtrl.wrongStateFlush && inputAckValid && isErrAck) {
+    io.nakNotifier.setFromAeth(io.rx.aeth)
   }
+  io.coalesceAckDone := io.sendQCtrl.wrongStateFlush && io.rx.fire
 
-  // Discard ACK because of either no pending WR or duplicate ACK
-  when(!inputCachedWorkReqValid || isDupAck) {
-    // TODO: should discard duplicate NAK?
-    io.rx.ready := inputAckValid
-    when(inputAckValid) {
-      assert(
-        assertion = isErrAck || isRetryNak,
-        message =
-          L"received duplicate error ACK or retry ACK, PSN=${io.rx.bth.psn}, opcode=${io.rx.bth.opcode}",
-        severity = FAILURE
-      )
-    }
+  // Retry notification
+  io.retryNotifier.pulse := (respTimeOutRetry || hasExplicitRetry || hasImplicitRetry) && io.rx.fire
+  io.retryNotifier.psnStart := io.rx.bth.psn
+  io.retryNotifier.reason := RetryReason.RETRY_ACK
+  when(hasImplicitRetry) {
+    io.retryNotifier.psnStart := io.cachedWorkReqPop.psnStart
+    io.retryNotifier.reason := RetryReason.IMPLICIT_ACK
+  } elsewhen (respTimeOutRetry) {
+    io.retryNotifier.psnStart := io.cachedWorkReqPop.psnStart
+    io.retryNotifier.reason := RetryReason.RESP_TIMEOUT
   }
-
-  io.workCompAndAck <-/< workCompAndAck
 }
+
+//class AckHandler extends Component {
+//  val io = new Bundle {
+//    val qpAttr = in(QpAttrData())
+//    val sendQCtrl = in(SendQCtrl())
+//    val rx = slave(Stream(Acknowledge()))
+//    val cachedWorkReqPop = slave(Stream(CachedWorkReq()))
+//    val retryNotifier = out(SqRetryNotifier())
+//    val coalesceAckDone = out(Bool())
+////    val nakNotifier = out(NakNotifier())
+//    val workCompAndAck = master(Stream(WorkCompAndAck()))
+//  }
+//  val inputAckValid = io.rx.valid
+//  val inputCachedWorkReqValid = io.cachedWorkReqPop.valid
+//
+//  val isNormalAck = io.rx.aeth.isNormalAck()
+//  val isRetryNak = io.rx.aeth.isRetryNak()
+//  val isErrAck = io.rx.aeth.isErrAck()
+//  val isDupAck =
+//    PsnUtil.lt(io.rx.bth.psn, io.cachedWorkReqPop.psnStart, io.qpAttr.npsn)
+//
+//  val cachedWorkReqPsnEnd =
+//    io.cachedWorkReqPop.psnStart + (io.cachedWorkReqPop.pktNum - 1)
+//  val isTargetWorkReq =
+//    PsnUtil.gte(io.rx.bth.psn, io.cachedWorkReqPop.psnStart, io.qpAttr.npsn) &&
+//      PsnUtil.lte(io.rx.bth.psn, cachedWorkReqPsnEnd, io.qpAttr.npsn)
+//  val isWholeWorkReqAcked = io.rx.bth.psn === cachedWorkReqPsnEnd
+//
+//  val isReadWorkReq =
+//    WorkReqOpCode.isReadReq(io.cachedWorkReqPop.workReq.opcode)
+//  val isAtomicWorkReq =
+//    WorkReqOpCode.isAtomicReq(io.cachedWorkReqPop.workReq.opcode)
+//
+//  val needCoalesceAck =
+//    PsnUtil.gt(io.rx.bth.psn, cachedWorkReqPsnEnd, io.qpAttr.npsn)
+//  val implicitRetry = (isReadWorkReq || isAtomicWorkReq) && needCoalesceAck
+//  val explicitRetry = isTargetWorkReq && isRetryNak
+////  val needRetry = implicitRetry || explicitRetry
+//
+//  val workCompAndAck = cloneOf(io.workCompAndAck)
+//  workCompAndAck.valid := False
+//  workCompAndAck.ackValid := inputAckValid
+//  workCompAndAck.ack := io.rx
+//  workCompAndAck.workComp.setSuccessFromWorkReq(
+//    workReq = io.cachedWorkReqPop.workReq,
+//    dqpn = io.qpAttr.dqpn
+//  )
+//
+//  val workCompFlushStatus = Bits(WC_STATUS_WIDTH bits)
+//  // TODO: what status should the read/atomic requests before error ACK have?
+//  workCompFlushStatus := WorkCompStatus.WR_FLUSH_ERR.id
+//
+//  io.rx.ready := False
+//  io.cachedWorkReqPop.ready := False
+//  io.coalesceAckDone := (isTargetWorkReq || implicitRetry) && io.rx.fire
+//  io.retryNotifier.pulse := (explicitRetry || implicitRetry) && io.rx.fire
+//  io.retryNotifier.psnStart := io.rx.bth.psn
+//  io.retryNotifier.reason := RetryReason.RETRY_ACK
+//  when(implicitRetry) {
+//    io.retryNotifier.psnStart := io.cachedWorkReqPop.psnStart
+//    io.retryNotifier.reason := RetryReason.IMPLICIT_ACK
+//  }
+//
+//  when(io.retryNotifier.pulse) {
+//    assert(
+//      assertion = io.coalesceAckDone,
+//      message =
+//        L"${REPORT_TIME} time: when start to retry, no matter explicitRetry=${explicitRetry} or implicitRetry=${implicitRetry}, io.retryNotifier.pulse=${io.retryNotifier.pulse} must have coalesce ACK done, io.coalesceAckDone=${io.coalesceAckDone}",
+//      severity = FAILURE
+//    )
+//  }
+//
+//  // Handle error ACK received case
+//  when(io.sendQCtrl.wrongStateFlush) {
+//    when(isTargetWorkReq) {
+//      // Handle error ACK
+//      workCompAndAck.workComp.setFromWorkReq(
+//        workReq = io.cachedWorkReqPop.workReq,
+//        dqpn = io.qpAttr.dqpn,
+//        status = io.rx.aeth.toWorkCompStatus()
+//      )
+//      workCompAndAck.valid := io.cachedWorkReqPop.valid
+//      io.rx.ready := workCompAndAck.fire
+//      io.cachedWorkReqPop.ready := workCompAndAck.fire
+//
+//      when(inputAckValid) {
+//        assert(
+//          assertion = isErrAck,
+//          message =
+//            L"${REPORT_TIME} time: should handle error ACK when io.sendQCtrl.wrongStateFlush=${io.sendQCtrl.wrongStateFlush}, isTargetWorkReq=${isTargetWorkReq}",
+//          severity = FAILURE
+//        )
+//      }
+//    } elsewhen (needCoalesceAck && !implicitRetry) {
+//      // Coalesce ACK, only generate WC if WR needs signaled
+//      workCompAndAck.valid := io.cachedWorkReqPop.valid && io.cachedWorkReqPop.workReq.signaled
+//      io.cachedWorkReqPop.ready := io.cachedWorkReqPop.workReq.signaled ? workCompAndAck.fire | io.cachedWorkReqPop.valid
+//    }
+//  }
+//  // Flush pending WR after coalesce ACK or error ACK handled
+//  when(io.sendQCtrl.errorFlush) {
+//    workCompAndAck.workComp.setFromWorkReq(
+//      workReq = io.cachedWorkReqPop.workReq,
+//      dqpn = io.qpAttr.dqpn,
+//      status = workCompFlushStatus
+//    )
+//    io.rx.ready := inputAckValid // Discard all ACKs
+//    workCompAndAck.ackValid := False
+//    workCompAndAck.valid := inputCachedWorkReqValid
+//    io.cachedWorkReqPop.ready := workCompAndAck.fire
+//  }
+//
+//  // Handle normal and retry ACKs
+//  when(isTargetWorkReq) {
+//    when(isNormalAck) {
+//      // Handle normal ACK, distinguish ACK to whole WR or partial WR
+//      io.rx.ready := isWholeWorkReqAcked ? workCompAndAck.fire | inputAckValid
+//      workCompAndAck.valid := inputAckValid && isWholeWorkReqAcked
+//      io.cachedWorkReqPop.ready := isWholeWorkReqAcked ? workCompAndAck.fire | False
+//    } elsewhen (isRetryNak) {
+//      // Handle explicit retry, send out retry notification to QpCtrl if no error ACK
+//      // TODO: handle retry number exceeds 3
+//      io.rx.ready := inputAckValid && explicitRetry
+//    }
+//  } elsewhen (needCoalesceAck && !implicitRetry) {
+//    // Coalesce ACK, only generate WC if WR needs signaled
+//    workCompAndAck.valid := inputAckValid && inputCachedWorkReqValid && io.cachedWorkReqPop.workReq.signaled
+//    io.cachedWorkReqPop.ready := io.cachedWorkReqPop.workReq.signaled ? workCompAndAck.fire | inputCachedWorkReqValid
+//  } elsewhen (implicitRetry && !io.sendQCtrl.wrongStateFlush) {
+//    // Handle implicit retry, send out retry notification to QpCtrl if no error ACK
+//    io.rx.ready := inputAckValid && implicitRetry
+//    // TODO: handle retry number exceeds 3
+//  }
+//
+//  // Discard ACK because of either no pending WR or duplicate ACK
+//  when(!inputCachedWorkReqValid || isDupAck) {
+//    // TODO: should discard duplicate NAK?
+//    io.rx.ready := inputAckValid
+//    when(inputAckValid) {
+//      assert(
+//        assertion = isErrAck || isRetryNak,
+//        message =
+//          L"${REPORT_TIME} time: received duplicate error ACK or retry ACK, PSN=${io.rx.bth.psn}, opcode=${io.rx.bth.opcode}",
+//        severity = FAILURE
+//      )
+//    }
+//  }
+//
+//  io.workCompAndAck <-/< workCompAndAck
+//}
 
 // TODO: check read response opcode sequence
 // TODO: handle read/atomic WC
@@ -332,25 +439,49 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
     val atomicRespDmaWriteReq = master(DmaWriteReqBus(busWidth))
   }
 
-  val rxQueue = io.rx.pktFrag
-    .throwWhen(io.sendQCtrl.errorFlush)
+  // Only send out WorkReqCache query when the input data is the first fragment of
+  // the only or first read responses or atomic responses
+  val workReqCacheQueryCond = (pktFragStream: Stream[Fragment[RdmaDataPkt]]) =>
+    new Composite(pktFragStream, "queryCond") {
+      val isReadFirstOrOnlyRespOrAtomicResp = (opcode: Bits) => {
+        OpCode.isFirstOrOnlyReadRespPkt(opcode) ||
+          OpCode.isAtomicRespPkt(opcode)
+      }
+      val rslt = pktFragStream.valid && pktFragStream.isFirst &&
+        isReadFirstOrOnlyRespOrAtomicResp(pktFragStream.bth.opcode)
+    }.rslt
+  // Only join AddrCache query response when the input data is the last fragment of
+  // the only or last read responses or atomic responses
+  val addrCacheQueryRespJoinCond =
+    (pktFragStream: Stream[Fragment[RdmaDataPkt]]) =>
+      new Composite(pktFragStream, "queryCond") {
+        val isReadLastOrOnlyRespOrAtomicResp = (opcode: Bits) => {
+          OpCode.isLastOrOnlyReadRespPkt(opcode) ||
+            OpCode.isAtomicRespPkt(opcode)
+        }
+        val rslt = pktFragStream.valid && pktFragStream.isLast &&
+          isReadLastOrOnlyRespOrAtomicResp(pktFragStream.bth.opcode)
+      }.rslt
+
+  val (everyFirstInputPktFragStream, allInputPktFragStream) =
+    ConditionalStreamFork2(
+      io.rx.pktFrag.throwWhen(io.sendQCtrl.wrongStateFlush),
+      forkCond = workReqCacheQueryCond(io.rx.pktFrag)
+    )
+  val rxAllInputPkgFragQueue = allInputPktFragStream
     .queueLowLatency(
       ADDR_CACHE_QUERY_DELAY_CYCLE + WORK_REQ_CACHE_QUERY_DELAY_CYCLE
     )
-  val inputValid = rxQueue.valid
-  val inputPktFrag = rxQueue.payload
-  val isLastFrag = rxQueue.isLast
+  val inputValid = rxAllInputPkgFragQueue.valid
+  val inputPktFrag = rxAllInputPkgFragQueue.payload
+  val isLastFrag = rxAllInputPkgFragQueue.isLast
 
-  val isReadFirstOrOnlyResp =
-    OpCode.isFirstOrOnlyReadRespPkt(inputPktFrag.bth.opcode)
-  val isAtomicResp = OpCode.isAtomicRespPkt(inputPktFrag.bth.opcode)
-
-  io.workReqQuery.req <-/< SignalEdgeDrivenStream(
-    inputValid && (isReadFirstOrOnlyResp || isAtomicResp)
-  ).throwWhen(io.sendQCtrl.errorFlush)
+  val rxEveryFirstInputPktFragQueue = everyFirstInputPktFragStream
+    .queueLowLatency(ADDR_CACHE_QUERY_DELAY_CYCLE)
+  io.workReqQuery.req << rxEveryFirstInputPktFragQueue
     .translateWith {
       val rslt = cloneOf(io.workReqQuery.req.payloadType)
-      rslt.psn := inputPktFrag.bth.psn
+      rslt.psn := rxEveryFirstInputPktFragQueue.bth.psn
       rslt
     }
 
@@ -361,22 +492,27 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
   )
   val cachedWorkReq = io.workReqQuery.resp.cachedWorkReq
   io.addrCacheRead.req <-/< io.workReqQuery.resp
-    .throwWhen(io.sendQCtrl.errorFlush)
-    .continueWhen(io.rx.pktFrag.fire && (isReadFirstOrOnlyResp || isAtomicResp))
+    .throwWhen(io.sendQCtrl.wrongStateFlush)
+//    .continueWhen(io.rx.pktFrag.fire && (isReadFirstOrOnlyResp || isAtomicResp))
     .translateWith {
       val addrCacheReadReq = QpAddrCacheAgentReadReq()
       addrCacheReadReq.sqpn := io.qpAttr.sqpn
-      addrCacheReadReq.psn := inputPktFrag.bth.psn
+      addrCacheReadReq.psn := cachedWorkReq.psnStart
       addrCacheReadReq.key := cachedWorkReq.workReq.lkey
       addrCacheReadReq.pdId := io.qpAttr.pdId
       addrCacheReadReq.setKeyTypeRemoteOrLocal(isRemoteKey = False)
-      addrCacheReadReq.accessType := AccessType.LOCAL_WRITE.id
+      addrCacheReadReq.accessType := AccessType.LOCAL_WRITE
       addrCacheReadReq.va := cachedWorkReq.workReq.laddr
       addrCacheReadReq.dataLenBytes := cachedWorkReq.workReq.lenBytes
       addrCacheReadReq
     }
 
-  val joinStream = FragmentStreamJoinStream(rxQueue, io.addrCacheRead.resp)
+  val joinStream =
+    FragmentStreamConditionalJoinStream(
+      rxAllInputPkgFragQueue,
+      io.addrCacheRead.resp,
+      joinCond = addrCacheQueryRespJoinCond(rxAllInputPkgFragQueue)
+    )
   val txSel = UInt(2 bits)
   val (readRespIdx, atomicRespIdx, otherRespIdx) = (0, 1, 2)
   when(OpCode.isReadRespPkt(joinStream._1.bth.opcode)) {
@@ -385,17 +521,19 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
     txSel := atomicRespIdx
   } otherwise {
     txSel := otherRespIdx
-    report(
-      message =
-        L"input packet should be read/atomic response, but opcode=${inputPktFrag.bth.opcode}",
-      severity = FAILURE
-    )
+    when(inputValid) {
+      report(
+        message =
+          L"${REPORT_TIME} time: input packet should be read/atomic response, but opcode=${inputPktFrag.bth.opcode}",
+        severity = FAILURE
+      )
+    }
   }
   val threeStreams = StreamDemux(joinStream, select = txSel, portCount = 3)
   StreamSink(NoData) << threeStreams(otherRespIdx).translateWith(NoData)
 
   io.readRespDmaWriteReq.req <-/< threeStreams(readRespIdx)
-    .throwWhen(io.sendQCtrl.errorFlush)
+    .throwWhen(io.sendQCtrl.wrongStateFlush)
     .translateWith {
       val rslt =
         cloneOf(io.readRespDmaWriteReq.req.payloadType) //DmaWriteReq(busWidth)
@@ -413,7 +551,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
     }
 
   io.atomicRespDmaWriteReq.req <-/< threeStreams(atomicRespIdx)
-    .throwWhen(io.sendQCtrl.errorFlush)
+    .throwWhen(io.sendQCtrl.wrongStateFlush)
     .translateWith {
       val rslt = cloneOf(io.readRespDmaWriteReq.req.payloadType)
       rslt.last := isLastFrag
@@ -482,7 +620,7 @@ class WorkCompGen extends Component {
       assert(
         assertion = !dmaWriteRespTimer.state,
         message =
-          L"DMA write for read response timeout, response PSN=${io.workCompAndAck.ack.bth.psn}",
+          L"${REPORT_TIME} time: DMA write for read response timeout, response PSN=${io.workCompAndAck.ack.bth.psn}",
         severity = FAILURE
       )
     }
@@ -495,7 +633,7 @@ class WorkCompGen extends Component {
       assert(
         assertion = !dmaWriteRespTimer.state,
         message =
-          L"DMA write for atomic response timeout, response PSN=${io.workCompAndAck.ack.bth.psn}",
+          L"${REPORT_TIME} time: DMA write for atomic response timeout, response PSN=${io.workCompAndAck.ack.bth.psn}",
         severity = FAILURE
       )
     }
