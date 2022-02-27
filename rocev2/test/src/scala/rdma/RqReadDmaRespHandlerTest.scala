@@ -3,13 +3,12 @@ package rdma
 import spinal.core.sim._
 import ConstantSettings._
 import StreamSimUtil._
+import TypeReDef._
 import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
 
 class RqReadDmaRespHandlerTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
-
-//  def busWidthBytes: Int = busWidth.id / BYTE_WIDTH
 
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new RqReadDmaRespHandler(busWidth))
@@ -18,8 +17,8 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
-      val psnQueue = mutable.Queue[Int]()
-      val matchQueue = mutable.Queue[Int]()
+      val psnQueue = mutable.Queue[PSN]()
+      val matchQueue = mutable.Queue[PSN]()
 
       dut.io.recvQCtrl.stateErrFlush #= false
 
@@ -68,22 +67,30 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
-      val cacheDataQueue = mutable.Queue[(Int, Int, Long)]()
-      val dmaRespQueue = mutable.Queue[(BigInt, Int, Long, Boolean)]()
-      val outputQueue =
-        mutable.Queue[(BigInt, Int, Int, Long, Long, Int, Boolean)]()
-      val matchQueue = mutable.Queue[Int]()
+      val cacheDataQueue = mutable.Queue[(PsnStart, PktNum, PktLen)]()
+      val dmaRespQueue =
+        mutable.Queue[(RdmaFragData, PsnStart, PktLen, FragLast)]()
+      val outputQueue = mutable.Queue[
+        (RdmaFragData, PsnStart, PsnStart, PktLen, PktLen, FragNum, FragLast)
+      ]()
+      val matchQueue = mutable.Queue[PsnStart]()
 
       val randSeed = scala.util.Random.nextInt()
       val pmtuLen = PMTU.U1024
       dut.io.recvQCtrl.stateErrFlush #= false
 
       // Input to DUT
-      val (_, pktNumItr4CacheData, psnItr4CacheData, totalLenItr4CacheData) =
+      val (
+        totalFragNumItr4CacheData,
+        pktNumItr4CacheData,
+        psnStartItr4CacheData,
+        totalLenItr4CacheData
+      ) =
         SendWriteReqReadRespInputGen.getItr(pmtuLen, busWidth, randSeed)
       streamMasterDriver(dut.io.readResultCacheData, dut.clockDomain) {
+        val _ = totalFragNumItr4CacheData.next()
         val pktNum = pktNumItr4CacheData.next()
-        val psnStart = psnItr4CacheData.next()
+        val psnStart = psnStartItr4CacheData.next()
         val totalLenBytes = totalLenItr4CacheData.next()
 
         dut.io.readResultCacheData.dlen #= totalLenBytes
@@ -104,18 +111,24 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
       }
 
       // Functional way to generate sequences
-      val (fragNumItr4DmaResp, _, psnItr4DmaResp, totalLenItr4DmaResp) =
+      val (
+        totalFragNumItr4DmaResp,
+        pktNumItr4DmaResp,
+        psnStartItr4DmaResp,
+        totalLenItr4DmaResp
+      ) =
         SendWriteReqReadRespInputGen.getItr(pmtuLen, busWidth, randSeed)
-      fragmentStreamMasterDriver(dut.io.dmaReadResp.resp, dut.clockDomain) {
-        val fragNum = fragNumItr4DmaResp.next()
+      pktFragStreamMasterDriver(dut.io.dmaReadResp.resp, dut.clockDomain) {
+        val totalFragNum = totalFragNumItr4DmaResp.next()
         val totalLenBytes = totalLenItr4DmaResp.next()
-        val psnStart = psnItr4DmaResp.next()
-        (fragNum, (psnStart, totalLenBytes))
-      } { (fragIdx, outerLoopRslt) =>
-        val (fragNum, (psnStart, totalLenBytes)) = outerLoopRslt
+        val psnStart = psnStartItr4DmaResp.next()
+        val pktNum = pktNumItr4DmaResp.next()
+
+        (psnStart, totalFragNum, pktNum, pmtuLen, busWidth, totalLenBytes)
+      } { (_, psnStart, _, fragIdx, totalFragNum, _, _, totalLenBytes) =>
         dut.io.dmaReadResp.resp.psnStart #= psnStart
         dut.io.dmaReadResp.resp.lenBytes #= totalLenBytes
-        dut.io.dmaReadResp.resp.last #= (fragIdx == fragNum - 1)
+        dut.io.dmaReadResp.resp.last #= fragIdx == totalFragNum - 1
       }
       onStreamFire(dut.io.dmaReadResp.resp, dut.clockDomain) {
 //        println(

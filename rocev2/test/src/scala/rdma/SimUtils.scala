@@ -11,14 +11,14 @@ import TypeReDef._
 import scala.collection.mutable
 import scala.util.Random
 
-case class PsnItr(psnItr: Iterator[Long]) {
+case class PsnStartItr(psnStartItr: Iterator[Long]) {
   def next(): Int = {
-    val nextPsn = psnItr.next() % TOTAL_PSN
+    val nextPsnStart = psnStartItr.next() % TOTAL_PSN
     assert(
-      nextPsn >= 0,
-      f"${simTime()} time: nextPsn=${nextPsn} overflowed, it should be positive"
+      nextPsnStart >= 0,
+      f"${simTime()} time: nextPsnStart=${nextPsnStart} overflowed, it should be positive"
     )
-    nextPsn.toInt
+    nextPsnStart.toInt
   }
 }
 
@@ -73,7 +73,8 @@ object SendWriteReqReadRespInputGen {
 
   private def genTotalLen(busWidth: BusWidth.Value, maxFragNum: Int) = {
     val mtyWidth = busWidthBytes(busWidth)
-    val maxReqRespLen = mtyWidth * scala.util.Random.nextInt(maxFragNum)
+    val maxReqRespLen = mtyWidth *
+      (scala.util.Random.nextInt(maxFragNum - 1) + 1)
     val dmaRespIdxGen = NaturalNumber.from(0)
 
     // The total request/response length is from 1 byte to 2G=2^31 bytes
@@ -98,25 +99,30 @@ object SendWriteReqReadRespInputGen {
       pmtuLen: PMTU.Value,
       busWidth: BusWidth.Value
   ) = {
-    val fragNumGen =
+    val totalFragNumGen =
       totalLenGen.map(totalLen =>
         MiscUtils.computeFragNum(totalLen.toLong, busWidth)
       )
     val pktNumGen = totalLenGen.map(totalLen =>
       MiscUtils.computePktNum(totalLen.toLong, pmtuLen)
     )
-    // psnGen uses Long to avoid overflow, since Scala has not unsigned number
-    val psnGen = pktNumGen.map(_.toLong).scan(0L)(_ + _)
-    val fragNumItr = fragNumGen.iterator
+    // psnStartGen uses Long to avoid overflow, since Scala has not unsigned number
+    val psnStartGen = pktNumGen.map(_.toLong).scan(0L)(_ + _)
+    val totalFragNumItr = totalFragNumGen.iterator
     val pktNumItr = pktNumGen.iterator
-    val psnItr = psnGen.iterator
+    val psnStartItr = psnStartGen.iterator
     val totalLenItr = totalLenGen.iterator
 
-    //    for (idx <- 0 until 10) {
-    //      println(f"${simTime()} time: idx=$idx, fragNum=${fragNumItr.next()}, pktNum=${pktNumItr
-    //        .next()}, psnStart=${psnItr.next()}, totalLenBytes=${totalLenItr.next()}")
-    //    }
-    (fragNumItr, PktNumItr(pktNumItr), PsnItr(psnItr), TotalLenItr(totalLenItr))
+//    for (idx <- 0 until 10) {
+//      println(f"${simTime()} time: idx=$idx, fragNum=${fragNumItr.next()}, pktNum=${pktNumItr
+//        .next()}, psnStart=${psnItr.next()}, totalLenBytes=${totalLenItr.next()}")
+//    }
+    (
+      totalFragNumItr,
+      PktNumItr(pktNumItr),
+      PsnStartItr(psnStartItr),
+      TotalLenItr(totalLenItr)
+    )
   }
 
   def getItr(pmtuLen: PMTU.Value, busWidth: BusWidth.Value) = {
@@ -336,7 +342,7 @@ object StreamSimUtil {
       clockDomain: ClockDomain
   )(
       outerLoopBody: => (
-          PSN,
+          PsnStart,
           FragNum,
           PktNum,
           PMTU.Value,
@@ -344,7 +350,16 @@ object StreamSimUtil {
           InternalData
       )
   )(
-      innerLoopFunc: (PSN, FragLast, PktIdx, PktNum, InternalData) => Unit
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          PktNum,
+          InternalData
+      ) => Unit
   ): Unit =
     fork {
       stream.valid #= false
@@ -370,7 +385,16 @@ object StreamSimUtil {
           stream.payload.randomize()
           sleep(0)
 
-          innerLoopFunc(psn, fragLast, pktIdx, pktNum, internalData)
+          innerLoopFunc(
+            psn,
+            psnStart,
+            fragLast,
+            fragIdx,
+            totalFragNum,
+            pktIdx,
+            pktNum,
+            internalData
+          )
           if (fragIdx == totalFragNum - 1) {
             assert(
               pktIdx == pktNum - 1,
@@ -389,7 +413,7 @@ object StreamSimUtil {
       clockDomain: ClockDomain
   )(
       outerLoopBody: => (
-          PSN,
+          PsnStart,
           FragNum,
           PktNum,
           PMTU.Value,
@@ -397,7 +421,16 @@ object StreamSimUtil {
           InternalData
       )
   )(
-      innerLoopFunc: (PSN, FragLast, PktIdx, PktNum, InternalData) => Unit
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          PktNum,
+          InternalData
+      ) => Unit
   ): Unit =
     fork {
       stream.valid #= false
@@ -416,16 +449,25 @@ object StreamSimUtil {
           val psn = psnStart + pktIdx
           val fragLast =
             ((fragIdx % maxFragNumPerPkt) == (maxFragNumPerPkt - 1)) || (fragIdx == totalFragNum - 1)
-          //          println(
-          //            f"${simTime()} time: pktIdx=${pktIdx}%X, pktNum=${pktNum}%X, fragIdx=${fragIdx}%X, totalFragNum=${totalFragNum}%X, fragLast=${fragLast}, psn=${psn}%X, maxFragNumPerPkt=${maxFragNumPerPkt}%X"
-          //          )
+//          println(
+//            f"${simTime()} time: pktIdx=${pktIdx}%X, pktNum=${pktNum}%X, fragIdx=${fragIdx}%X, totalFragNum=${totalFragNum}%X, fragLast=${fragLast}, psn=${psn}%X, maxFragNumPerPkt=${maxFragNumPerPkt}%X"
+//          )
 
           do {
             stream.valid.randomize()
             stream.payload.randomize()
             sleep(0)
             if (stream.valid.toBoolean) {
-              innerLoopFunc(psn, fragLast, pktIdx, pktNum, internalData)
+              innerLoopFunc(
+                psn,
+                psnStart,
+                fragLast,
+                fragIdx,
+                totalFragNum,
+                pktIdx,
+                pktNum,
+                internalData
+              )
               if (fragIdx == totalFragNum - 1) {
                 assert(
                   pktIdx == pktNum - 1,
@@ -439,62 +481,6 @@ object StreamSimUtil {
               clockDomain.waitSampling()
             }
           } while (!stream.valid.toBoolean)
-        }
-      }
-    }
-
-  def fragmentStreamMasterDriverAlwaysValid[T <: Data, InternalData](
-      stream: Stream[Fragment[T]],
-      clockDomain: ClockDomain
-  )(
-      outerLoopBody: => (Int, InternalData)
-  )(innerLoopFunc: (Int, (Int, InternalData)) => Unit): Unit =
-    fork {
-      stream.valid #= false
-      clockDomain.waitSampling()
-
-      while (true) {
-        val (innerLoopNum, rslt) = outerLoopBody
-        for (innerLoopIdx <- 0 until innerLoopNum) {
-          stream.valid #= true
-          stream.payload.randomize()
-          sleep(0)
-
-          innerLoopFunc(innerLoopIdx, (innerLoopNum, rslt))
-          clockDomain.waitSamplingWhere(
-            stream.valid.toBoolean && stream.ready.toBoolean
-          )
-        }
-      }
-    }
-
-  def fragmentStreamMasterDriver[T <: Data, InternalData](
-      stream: Stream[Fragment[T]],
-      clockDomain: ClockDomain
-  )(
-      outerLoopBody: => (Int, InternalData)
-  )(innerLoopFunc: (Int, (Int, InternalData)) => Unit): Unit =
-    fork {
-      stream.valid #= false
-      clockDomain.waitSampling()
-
-      while (true) {
-        val (innerLoopNum, rslt) = outerLoopBody
-        for (innerLoopIdx <- 0 until innerLoopNum) {
-          stream.valid.randomize()
-          stream.payload.randomize()
-          sleep(0)
-          // Loop until valid
-          while (!stream.valid.toBoolean) {
-            clockDomain.waitSampling()
-            stream.valid.randomize()
-            sleep(0)
-          }
-
-          innerLoopFunc(innerLoopIdx, (innerLoopNum, rslt))
-          clockDomain.waitSamplingWhere(
-            stream.valid.toBoolean && stream.ready.toBoolean
-          )
         }
       }
     }

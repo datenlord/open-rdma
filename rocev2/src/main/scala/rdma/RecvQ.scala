@@ -597,8 +597,10 @@ class DupReadAtomicResultCacheRespHandlerAndDupReadDmaInitiator
   val retryFromFirstReadResp =
     io.readAtomicResultCacheResp.resp.query.psn === readAtomicResultCacheRespData.psnStart
   // For partial read retry, compute the partial read DMA length
-  val psnDiff =
-    io.readAtomicResultCacheResp.resp.query.psn - readAtomicResultCacheRespData.psnStart
+  val psnDiff = PsnUtil.diff(
+    io.readAtomicResultCacheResp.resp.query.psn,
+    readAtomicResultCacheRespData.psnStart
+  )
   // psnDiff << io.qpAttr.pmtu.asUInt === psnDiff * pmtuPktLenBytes(io.qpAttr.pmtu)
   val dmaReadLenBytes =
     readAtomicResultCacheRespData.dlen - (psnDiff << io.qpAttr.pmtu.asUInt)

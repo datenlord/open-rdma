@@ -32,7 +32,7 @@ class SendQ(busWidth: BusWidth) extends Component {
   val workReqCache = new WorkReqCache(depth = PENDING_REQ_NUM)
 //  workReqCache.io.qpAttr := io.qpAttr
   io.notifier.workReqCacheEmpty := workReqCache.io.empty
-  workReqCache.io.scanBus << io.workReqCacheScanBus
+  workReqCache.io.retryScanBus << io.workReqCacheScanBus
 
   val reqSender = new ReqSender(busWidth)
   reqSender.io.qpAttr := io.qpAttr
@@ -99,7 +99,6 @@ class ReqSender(busWidth: BusWidth) extends Component {
     val addrCacheRead = master(QpAddrCacheAgentReadBus())
     val sqOutPsnRangeFifoPush = master(Stream(ReqPsnRange()))
     val workReqCachePush = master(Stream(CachedWorkReq()))
-//    val workReqQueryPort4SqDmaReadResp = master(WorkReqCacheQueryBus())
     val workReqHasFence = out(Bool())
     val dmaRead = master(DmaReadBus(busWidth))
     val workCompErr = master(Stream(WorkComp()))
@@ -202,6 +201,8 @@ class WorkReqValidator extends Component {
         rslt.psnStart := io.qpAttr.npsn
         rslt.pktNum := numReqPkt.resize(PSN_WIDTH)
         rslt.pa := 0 // PA will be updated after QpAddrCacheAgent query
+        rslt.rnrCnt := 0 // New WR has no RNR
+        rslt.retryCnt := 0 // New WR has no retry
         rslt
       }
       .queueLowLatency(ADDR_CACHE_QUERY_DELAY_CYCLE)

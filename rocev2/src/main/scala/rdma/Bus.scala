@@ -1329,6 +1329,8 @@ case class CachedWorkReq() extends Bundle {
   val psnStart = UInt(PSN_WIDTH bits)
   val pktNum = UInt(PSN_WIDTH bits)
   val pa = UInt(MEM_ADDR_WIDTH bits)
+  val rnrCnt = UInt(RETRY_COUNT_WIDTH bits)
+  val retryCnt = UInt(RETRY_COUNT_WIDTH bits)
 
   // Used for cache to set initial CachedWorkReq value
   def setInitVal(): this.type = {
@@ -1336,8 +1338,27 @@ case class CachedWorkReq() extends Bundle {
     psnStart := 0
     pktNum := 0
     pa := 0
+    rnrCnt := 0
+    retryCnt := 0
     this
   }
+
+  def incRnrOrRetryCnt(retryReason: SpinalEnumCraft[RetryReason.type]) =
+    new Composite(this) {
+      switch(retryReason) {
+        is(RetryReason.RNR) {
+          rnrCnt := rnrCnt + 1
+        }
+        is(
+          RetryReason.IMPLICIT_ACK,
+          RetryReason.SEQ_ERR,
+          RetryReason.RESP_TIMEOUT
+        ) {
+          retryCnt := retryCnt + 1
+        }
+        default {}
+      }
+    }
 }
 
 case class WorkReqCacheQueryReq() extends Bundle {

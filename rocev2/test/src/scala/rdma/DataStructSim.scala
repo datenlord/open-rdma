@@ -8,8 +8,11 @@ import RdmaConstants._
 object TypeReDef {
   type Addr = BigInt
   type PSN = Int
+  type PsnStart = Int
+  type FragIdx = Int
   type FragLast = Boolean
   type FragNum = Int
+  type MTY = BigInt
   type PktIdx = Int
   type PktLen = Long
   type PktNum = Int

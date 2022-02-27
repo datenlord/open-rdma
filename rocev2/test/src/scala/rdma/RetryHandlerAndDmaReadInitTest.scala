@@ -45,7 +45,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       var nextPsn = 0
       val pmtuLen = PMTU.U1024
       dut.io.qpAttr.pmtu #= pmtuLen.id
-      dut.io.qpAttr.retryReason #= RetryReason.RETRY_ACK
+      dut.io.qpAttr.retryReason #= RetryReason.SEQ_ERR
       dut.io.sendQCtrl.wrongStateFlush #= false
 
       // Input to DUT
@@ -185,7 +185,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       var nextPsn = 0
       val pmtuLen = PMTU.U1024
       dut.io.qpAttr.pmtu #= pmtuLen.id
-      dut.io.qpAttr.retryReason #= RetryReason.RETRY_ACK
+      dut.io.qpAttr.retryReason #= RetryReason.SEQ_ERR
       dut.io.sendQCtrl.wrongStateFlush #= false
 
       // Input to DUT
@@ -313,7 +313,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       var nextPsn = 0
       val pmtuLen = PMTU.U1024
       dut.io.qpAttr.pmtu #= pmtuLen.id
-      dut.io.qpAttr.retryReason #= RetryReason.RETRY_ACK
+      dut.io.qpAttr.retryReason #= RetryReason.SEQ_ERR
       dut.io.sendQCtrl.wrongStateFlush #= false
 
       // Input to DUT

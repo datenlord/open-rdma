@@ -3,13 +3,13 @@ package rdma
 import spinal.core.sim._
 import ConstantSettings._
 import StreamSimUtil._
+import TypeReDef._
+
 import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
 
 class SqDmaReadRespHandlerTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
-
-//  def busWidthBytes: Int = busWidth.id / BYTE_WIDTH
 
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new SqDmaReadRespHandler(busWidth))
@@ -18,8 +18,8 @@ class SqDmaReadRespHandlerTest extends AnyFunSuite {
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
-      val psnQueue = mutable.Queue[Int]()
-      val matchQueue = mutable.Queue[Int]()
+      val psnQueue = mutable.Queue[PSN]()
+      val matchQueue = mutable.Queue[PSN]()
 
       dut.io.sendQCtrl.wrongStateFlush #= false
 
@@ -100,18 +100,26 @@ class SqDmaReadRespHandlerTest extends AnyFunSuite {
       }
 
       // Functional way to generate sequences
-      val (fragNumItr4DmaResp, _, psnItr4DmaResp, totalLenItr4DmaResp) =
+      val (
+        totalFragNumItr4DmaResp,
+        pktNumItr4DmaResp,
+        psnStartItr4DmaResp,
+        totalLenItr4DmaResp
+      ) =
         SendWriteReqReadRespInputGen.getItr(pmtuLen, busWidth)
-      fragmentStreamMasterDriver(dut.io.dmaReadResp.resp, dut.clockDomain) {
-        val fragNum = fragNumItr4DmaResp.next()
+      pktFragStreamMasterDriver(dut.io.dmaReadResp.resp, dut.clockDomain) {
+        val totalFragNum = totalFragNumItr4DmaResp.next()
+        val pktNum = pktNumItr4DmaResp.next()
         val totalLenBytes = totalLenItr4DmaResp.next()
-        val psnStart = psnItr4DmaResp.next()
-        (fragNum, (psnStart, totalLenBytes))
-      } { (fragIdx, outerLoopRslt) =>
-        val (fragNum, (psnStart, totalLenBytes)) = outerLoopRslt
+        val psnStart = psnStartItr4DmaResp.next()
+//        (fragNum, (psnStart, totalLenBytes))
+        (psnStart, totalFragNum, pktNum, pmtuLen, busWidth, totalLenBytes)
+      } { (_, psnStart, _, fragIdx, totalFragNum, _, _, totalLenBytes) =>
+//        (fragIdx, outerLoopRslt) =>
+//        val (fragNum, (psnStart, totalLenBytes)) = outerLoopRslt
         dut.io.dmaReadResp.resp.psnStart #= psnStart
         dut.io.dmaReadResp.resp.lenBytes #= totalLenBytes
-        dut.io.dmaReadResp.resp.last #= (fragIdx == fragNum - 1)
+        dut.io.dmaReadResp.resp.last #= (fragIdx == totalFragNum - 1)
       }
       onStreamFire(dut.io.dmaReadResp.resp, dut.clockDomain) {
         println(
