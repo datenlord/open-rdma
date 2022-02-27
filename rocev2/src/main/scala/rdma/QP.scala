@@ -6,7 +6,7 @@ import spinal.lib.fsm._
 
 import BusWidth.BusWidth
 import ConstantSettings._
-import RdmaConstants._
+//import RdmaConstants._
 import StreamVec._
 
 class ReqRespSplitter(busWidth: BusWidth) extends Component {
@@ -369,38 +369,6 @@ class QpCtrl extends Component {
     }
   }
 
-//  def respHandleFsm() = new StateMachine {
-//    def isWorkingState(): Bool =
-//      mainFsm.isActive(mainFsm.RTR) || mainFsm
-//        .isActive(mainFsm.RTS) || mainFsm.isActive(mainFsm.SQD)
-//
-//    val WAITING: State = new State with EntryPoint {
-//      whenIsActive {
-//        when(isWorkingState()) {
-//          goto(NORMAL)
-//        }
-//      }
-//    }
-//
-//    val NORMAL: State = new State {
-//      whenIsActive {
-//        //
-//      }
-//    }
-//
-//    val COALESCE: State = new State {
-//      whenIsActive {
-//        //
-//      }
-//    }
-//
-//    val RETRY_TRIGGER: State = new State {
-//      whenIsActive {
-//        //
-//      }
-//    }
-//  }
-
   val sqRetryFsm = sqRetryStateFsm()
   val fenceFsm = fenceStateFsm()
   def sqInternalFsm() = new StateMachine {
@@ -490,12 +458,6 @@ class QpCtrl extends Component {
       sqRetryFsm.isActive(sqRetryFsm.RETRY_FLUSH) ||
         fenceRetryFsm.isActive(fenceRetryFsm.RETRY_FLUSH)
 
-    io.workReqCacheScanBus.scanPtr := curPtr
-    val retryWorkReqPop = cloneOf(io.retryWorkReq)
-    retryWorkReqPop.valid := !io.workReqCacheScanBus.empty & fsmInRetryState
-    retryWorkReqPop.payload := io.workReqCacheScanBus.value
-    io.retryWorkReq <-/< retryWorkReqPop
-
     when(io.sendQCtrl.retry) {
       assert(
         assertion = Formal.stable(io.workReqCacheScanBus.pushPtr),
@@ -527,41 +489,78 @@ class QpCtrl extends Component {
     }
 
     // Handle WR partial retry
+    val (
+      isRetryWholeWorkReq,
+      retryStartPsn,
+      retryDmaReadStartAddr,
+      retryWorkReqRemoteStartAddr,
+      retryWorkReqLocalStartAddr,
+      retryDmaReadLenBytes
+    ) = PartialRetry(
+      io.qpAttr,
+      retryWorkReq = io.workReqCacheScanBus.scanResp.data,
+      retryWorkReqValid = io.workReqCacheScanBus.scanResp.valid
+    )
+    /*
+    // TODO: verify RNR will no partial retry
     val retryFromFirstReq =
-      (qpAttr.retryReason === RetryReason.RETRY_ACK) ? (io.sqNotifier.retry.psnStart === io.workReqCacheScanBus.value.psnStart) | True
+      (qpAttr.retryReason === RetryReason.SEQ_ERR) ? (io.sqNotifier.retry.psnStart === io.workReqCacheScanBus.scanResp.data.psnStart) | True
     // For partial read retry, compute the partial read DMA length
     val psnDiff = PsnUtil.diff(
       io.sqNotifier.retry.psnStart,
-      io.workReqCacheScanBus.value.psnStart
+      io.workReqCacheScanBus.scanResp.data.psnStart
     )
     // psnDiff << io.qpAttr.pmtu.asUInt === psnDiff * pmtuPktLenBytes(io.qpAttr.pmtu)
     val dmaReadLenBytes =
-      io.workReqCacheScanBus.value.workReq.lenBytes - (psnDiff << qpAttr.pmtu.asUInt)
-    when(io.sqNotifier.retry.pulse && !retryFromFirstReq) {
+      io.workReqCacheScanBus.scanResp.data.workReq.lenBytes - (psnDiff << qpAttr.pmtu.asUInt)
+//    when(io.sqNotifier.retry.pulse && !retryFromFirstReq) {
+    when(io.workReqCacheScanBus.scanResp.valid && !retryFromFirstReq) {
       assert(
         assertion = PsnUtil.gt(
           io.sqNotifier.retry.psnStart,
-          io.workReqCacheScanBus.value.psnStart,
+          io.workReqCacheScanBus.scanResp.data.psnStart,
           io.qpAttr.npsn
         ),
         message =
-          L"${REPORT_TIME} time: io.sqNotifier.retry.psnStart=${io.sqNotifier.retry.psnStart} should > curWorkReqToRetry.psnStart=${io.workReqCacheScanBus.value.psnStart} in PSN order",
+          L"${REPORT_TIME} time: io.sqNotifier.retry.psnStart=${io.sqNotifier.retry.psnStart} should > curWorkReqToRetry.psnStart=${io.workReqCacheScanBus.scanResp.data.psnStart} in PSN order",
         severity = FAILURE
       )
 
       assert(
         assertion = psnDiff < computePktNum(
-          io.workReqCacheScanBus.value.workReq.lenBytes,
+          io.workReqCacheScanBus.scanResp.data.workReq.lenBytes,
           io.qpAttr.pmtu
         ),
         message =
-          L"${REPORT_TIME} time: psnDiff=${psnDiff} should < packet num=${computePktNum(io.workReqCacheScanBus.value.workReq.lenBytes, io.qpAttr.pmtu)}",
+          L"${REPORT_TIME} time: psnDiff=${psnDiff} should < packet num=${computePktNum(io.workReqCacheScanBus.scanResp.data.workReq.lenBytes, io.qpAttr.pmtu)}",
         severity = FAILURE
       )
       retryWorkReqPop.psnStart := io.sqNotifier.retry.psnStart
-      retryWorkReqPop.workReq.lenBytes := dmaReadLenBytes.resize(
-        RDMA_MAX_LEN_WIDTH
-      )
+      retryWorkReqPop.workReq.lenBytes :=
+        dmaReadLenBytes.resize(RDMA_MAX_LEN_WIDTH)
+    }
+     */
+    io.workReqCacheScanBus.scanReq << StreamSource()
+      // TODO: should throwWhen wrongStateErr?
+      .takeWhen(!io.workReqCacheScanBus.empty & fsmInRetryState)
+      .translateWith {
+        val rslt = cloneOf(io.workReqCacheScanBus.scanReq.payloadType)
+        rslt.ptr := curPtr
+        rslt.retryReason := io.qpAttr.retryReason
+        rslt
+      }
+    io.retryWorkReq <-/< io.workReqCacheScanBus.scanResp ~~ { scanRespData =>
+      val rslt = cloneOf(io.retryWorkReq.payloadType)
+      rslt := scanRespData.data
+
+      when(isRetryWholeWorkReq) {
+        rslt.psnStart := retryStartPsn
+        rslt.pa := retryDmaReadStartAddr
+        rslt.workReq.raddr := retryWorkReqRemoteStartAddr
+        rslt.workReq.laddr := retryWorkReqLocalStartAddr
+        rslt.workReq.lenBytes := retryDmaReadLenBytes
+      }
+      rslt
     }
   }
 

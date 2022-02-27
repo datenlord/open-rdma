@@ -1131,6 +1131,8 @@ object StreamForkTree {
 // FIFO
 // 1024 req -> 1 resp
 // 1 resp -> 1 out of 1024 req, timing issue
+// TODO: class StreamDeMuxTree[T <: Data]
+
 class StreamForkTree[T <: Data](
     dataType: HardType[T],
     outputPortCount: Int,
@@ -1760,6 +1762,80 @@ object checkRespOpCodeMatch {
         )
         rslt := False
       }
+    }.rslt
+}
+
+//========== Partial retry related utilities ==========
+object PartialRetry {
+  def apply(
+      qpAttr: QpAttrData,
+      retryWorkReq: CachedWorkReq,
+      retryWorkReqValid: Bool
+  ) =
+    new Composite(retryWorkReq) {
+      val isRetryWholeWorkReq = PsnUtil
+        .lte(qpAttr.retryStartPsn, retryWorkReq.psnStart, qpAttr.npsn)
+      // TODO: verify RNR will not partial retry
+      val retryFromBeginning =
+        (qpAttr.retryReason === RetryReason.SEQ_ERR) ? isRetryWholeWorkReq | True
+      // For partial read retry, compute the partial read DMA length
+      val psnDiff = PsnUtil.diff(qpAttr.retryStartPsn, retryWorkReq.psnStart)
+      val retryStartPsn = cloneOf(retryWorkReq.psnStart)
+      retryStartPsn := retryWorkReq.psnStart
+      val retryDmaReadStartAddr = cloneOf(retryWorkReq.pa)
+      retryDmaReadStartAddr := retryWorkReq.pa
+      val retryWorkReqRemoteStartAddr = cloneOf(retryWorkReq.workReq.raddr)
+      retryWorkReqRemoteStartAddr := retryWorkReq.workReq.raddr
+      val retryWorkReqLocalStartAddr = cloneOf(retryWorkReq.workReq.laddr)
+      retryWorkReqLocalStartAddr := retryWorkReq.workReq.laddr
+      val retryDmaReadLenBytes = cloneOf(retryWorkReq.workReq.lenBytes)
+      retryDmaReadLenBytes := retryWorkReq.workReq.lenBytes
+      when(retryWorkReqValid && !retryFromBeginning) {
+        assert(
+          assertion = qpAttr.retryReason === RetryReason.SEQ_ERR,
+          message =
+            L"only NAK SEQ ERR can result in partial retry, but qpAttr.retryReason=${qpAttr.retryReason}",
+          severity = FAILURE
+        )
+        assert(
+          assertion = PsnUtil
+            .lt(
+              qpAttr.retryStartPsn,
+              retryWorkReq.psnStart + retryWorkReq.pktNum,
+              qpAttr.npsn
+            ),
+          message =
+            L"${REPORT_TIME} time: io.qpAttr.retryStartPsn=${qpAttr.retryStartPsn} should < retryWorkReq.psnStart=${retryWorkReq.psnStart} + retryWorkReq.pktNum=${retryWorkReq.pktNum} = ${retryWorkReq.psnStart + retryWorkReq.pktNum} in PSN order",
+          severity = FAILURE
+        )
+        val retryDmaReadOffset =
+          (psnDiff << qpAttr.pmtu.asUInt).resize(RDMA_MAX_LEN_WIDTH)
+
+        // Support partial retry
+        retryStartPsn := qpAttr.retryStartPsn
+        // TODO: handle PA offset with scatter-gather
+        retryDmaReadStartAddr := retryWorkReq.pa + retryDmaReadOffset
+        retryWorkReqRemoteStartAddr := retryWorkReq.workReq.raddr + retryDmaReadOffset
+        retryWorkReqLocalStartAddr := retryWorkReq.workReq.laddr + retryDmaReadOffset
+        retryDmaReadLenBytes := retryWorkReq.workReq.lenBytes - retryDmaReadOffset
+        //    val pktNum = computePktNum(retryWorkReq.workReq.lenBytes, io.qpAttr.pmtu)
+        val pktNum = retryWorkReq.pktNum
+        assert(
+          assertion = psnDiff < pktNum,
+          message =
+            L"${REPORT_TIME} time: psnDiff=${psnDiff} should < pktNum=${pktNum}, qpAttr.retryStartPsn=${qpAttr.retryStartPsn}, retryWorkReq.psnStart=${retryWorkReq.psnStart}, qpAttr.npsn=${qpAttr.npsn}, retryWorkReq.workReq.opcode=${retryWorkReq.workReq.opcode}",
+          severity = FAILURE
+        )
+      }
+
+      val rslt = (
+        isRetryWholeWorkReq,
+        retryStartPsn,
+        retryDmaReadStartAddr,
+        retryWorkReqRemoteStartAddr,
+        retryWorkReqLocalStartAddr,
+        retryDmaReadLenBytes
+      )
     }.rslt
 }
 

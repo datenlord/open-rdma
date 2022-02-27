@@ -131,10 +131,20 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
     rslt
   }
 
+  val (
+    isRetryWholeWorkReq,
+    retryStartPsn,
+    retryDmaReadStartAddr,
+    retryReadReqRemoteStartAddr,
+    _,
+    retryDmaReadLenBytes
+  ) = PartialRetry(io.qpAttr, retryWorkReq, retryWorkReqValid)
+  /*
   val isRetryWholeWorkReq = PsnUtil
     .lte(io.qpAttr.retryStartPsn, retryWorkReq.psnStart, io.qpAttr.npsn)
+  // TODO: verify RNR will not partial retry
   val retryFromBeginning =
-    (io.qpAttr.retryReason === RetryReason.RETRY_ACK) ? isRetryWholeWorkReq | True
+    (io.qpAttr.retryReason === RetryReason.SEQ_ERR) ? isRetryWholeWorkReq | True
   // For partial read retry, compute the partial read DMA length
   val psnDiff = PsnUtil.diff(io.qpAttr.retryStartPsn, retryWorkReq.psnStart)
   val retryStartPsn = cloneOf(retryWorkReq.psnStart)
@@ -175,11 +185,12 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
       severity = FAILURE
     )
   }
+   */
   io.txReadReqRetry <-/< fourStreams(readWorkReqIdx).translateWith {
     val rslt = ReadReq().set(
       dqpn = io.qpAttr.dqpn,
       psn = retryStartPsn,
-      va = retryReadReqStartAddr,
+      va = retryReadReqRemoteStartAddr,
       rkey = retryWorkReq.workReq.rkey,
       dlen = retryDmaReadLenBytes
     )

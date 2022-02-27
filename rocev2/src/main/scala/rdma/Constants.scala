@@ -154,7 +154,7 @@ object DmaInitiator extends SpinalEnum(binarySequential) {
 //}
 
 object RetryReason extends SpinalEnum(binarySequential) {
-  val RESP_TIMEOUT, RETRY_ACK, IMPLICIT_ACK = newElement()
+  val NO_RETRY, IMPLICIT_ACK, RESP_TIMEOUT, RNR, SEQ_ERR = newElement()
 }
 
 object AddrQueryInitiator extends SpinalEnum(binarySequential) {
@@ -233,8 +233,6 @@ object RdmaConstants {
   val AETH_VALUE_WIDTH = 5
   val RNR_TIMEOUT_WIDTH = AETH_VALUE_WIDTH
   val CREDIT_COUNT_WIDTH = AETH_VALUE_WIDTH
-
-  val RETRY_CNT_WIDTH = 3
 
   val ATOMIC_DATA_LEN = 8
   val PMTU_FRAG_NUM_WIDTH = 13 // PMTU max 4096

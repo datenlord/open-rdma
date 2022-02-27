@@ -3,7 +3,7 @@ package rdma
 import spinal.core.sim._
 import ConstantSettings._
 import StreamSimUtil._
-//import TypeReDef._
+import TypeReDef._
 
 import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
@@ -18,8 +18,8 @@ class ReadRespGeneratorTest extends AnyFunSuite {
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
-      val inputPsnQueue = mutable.Queue[Int]()
-      val outputPsnQueue = mutable.Queue[Int]()
+      val inputPsnQueue = mutable.Queue[PSN]()
+      val outputPsnQueue = mutable.Queue[PSN]()
       val naturalNumItr = NaturalNumber.from(1).iterator
 
       val pmtuLen = PMTU.U1024
@@ -70,12 +70,10 @@ class ReadRespGeneratorTest extends AnyFunSuite {
 
       val pmtuLen = PMTU.U1024
       val mtyWidth = SendWriteReqReadRespInputGen.busWidthBytes(busWidth)
-      val fragNumPerPkt =
-        SendWriteReqReadRespInputGen.maxFragNumPerPkt(pmtuLen, busWidth)
 
       val inputDataQueue =
-        mutable.Queue[(BigInt, BigInt, Int, Int, Long, Boolean)]()
-      val outputDataQueue = mutable.Queue[(BigInt, BigInt, Int, Boolean)]()
+        mutable.Queue[(RdmaFragData, MTY, PktNum, PsnStart, PktLen, FragLast)]()
+      val outputDataQueue = mutable.Queue[(RdmaFragData, MTY, PSN, FragLast)]()
 
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.recvQCtrl.stateErrFlush #= false
@@ -83,45 +81,52 @@ class ReadRespGeneratorTest extends AnyFunSuite {
 //      dut.clockDomain.waitSampling()
 
       // Input to DUT
-      val (fragNumItr, pktNumItr, psnItr, totalLenItr) =
+      val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
         SendWriteReqReadRespInputGen.getItr(pmtuLen, busWidth)
-      fragmentStreamMasterDriver(
+      pktFragStreamMasterDriver(
         dut.io.readResultCacheDataAndDmaReadRespSegment,
         dut.clockDomain
       ) {
-        val fragNum = fragNumItr.next()
+        val totalFragNum = totalFragNumItr.next()
         val pktNum = pktNumItr.next()
-        val psnStart = psnItr.next()
+        val psnStart = psnStartItr.next()
         val totalLenBytes = totalLenItr.next()
 
-        (fragNum, (pktNum, psnStart, totalLenBytes))
-      } { (fragIdx, outerLoopRslt) =>
-        val (fragNum, (pktNum, psnStart, totalLenBytes)) = outerLoopRslt
-        val isLastInputFrag = fragIdx == fragNum - 1
-        val isLastFragPerPkt = (fragIdx % fragNumPerPkt == fragNumPerPkt - 1)
-        val isLast = isLastInputFrag || isLastFragPerPkt
+        (psnStart, totalFragNum, pktNum, pmtuLen, busWidth, totalLenBytes)
+      } {
+        (
+            _,
+            psnStart,
+            fragLast,
+            fragIdx,
+            totalFragNum,
+            _,
+            pktNum,
+            totalLenBytes
+        ) =>
+          val isLastInputFrag = fragIdx == totalFragNum - 1
 
-        val mty = if (isLastInputFrag) {
-          val residue = (totalLenBytes % mtyWidth).toInt
-          if (residue == 0) {
-            setAllBits(mtyWidth) // Last fragment has full valid data
+          val mty = if (isLastInputFrag) {
+            val residue = (totalLenBytes % mtyWidth).toInt
+            if (residue == 0) {
+              setAllBits(mtyWidth) // Last fragment has full valid data
+            } else {
+              setAllBits(residue) // Last fragment has partial valid data
+            }
           } else {
-            setAllBits(residue) // Last fragment has partial valid data
+            setAllBits(mtyWidth)
           }
-        } else {
-          setAllBits(mtyWidth)
-        }
 //        println(
-//          f"${simTime()} time: fragIdx=${fragIdx}, fragNum=${fragNum}, isLastInputFrag=${isLastInputFrag}, isLastFragPerPkt=${isLastFragPerPkt}, isLast=${isLast}, totalLenBytes=${totalLenBytes}, pktNum=${pktNum}, mtyWidth=${mtyWidth}, residue=${totalLenBytes % mtyWidth}, mty=${mty}%X"
+//          f"${simTime()} time: fragIdx=${fragIdx}, fragNum=${fragNum}, isLastInputFrag=${isLastInputFrag}, isLastFragPerPkt=${isLastFragPerPkt}, fragLast=${fragLast}, totalLenBytes=${totalLenBytes}, pktNum=${pktNum}, mtyWidth=${mtyWidth}, residue=${totalLenBytes % mtyWidth}, mty=${mty}%X"
 //        )
 
-        dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.psnStart #= psnStart
-        dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.psnStart #= psnStart
-        dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.dlen #= totalLenBytes
-        dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.pktNum #= pktNum
-        dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes #= totalLenBytes
-        dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.mty #= mty
-        dut.io.readResultCacheDataAndDmaReadRespSegment.last #= isLast
+          dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.psnStart #= psnStart
+          dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.psnStart #= psnStart
+          dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.dlen #= totalLenBytes
+          dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.pktNum #= pktNum
+          dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes #= totalLenBytes
+          dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.mty #= mty
+          dut.io.readResultCacheDataAndDmaReadRespSegment.last #= fragLast
       }
       onStreamFire(
         dut.io.readResultCacheDataAndDmaReadRespSegment,
