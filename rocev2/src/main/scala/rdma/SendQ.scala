@@ -67,7 +67,8 @@ class SendQ(busWidth: BusWidth) extends Component {
 //  workReqCache.io.queryPort4DupReqDmaRead << retryHandler.io.workReqQueryPort4DupDmaReadResp
   io.dma.retry << retryHandler.io.dmaRead
 
-  io.notifier.nak := reqSender.io.nakNotifier || respHandler.io.nakNotifier
+  // TODO: handle simultaneous fatal error
+  io.notifier.err := reqSender.io.errNotifier || respHandler.io.errNotifier || retryHandler.io.errNotifier
   io.notifier.coalesceAckDone := respHandler.io.coalesceAckDone
 
   val sqOut = new SqOut(busWidth)
@@ -94,7 +95,7 @@ class ReqSender(busWidth: BusWidth) extends Component {
     val sendQCtrl = in(SendQCtrl())
     val workReqCacheEmpty = in(Bool())
     val npsnInc = out(NPsnInc())
-    val nakNotifier = out(SqErrNotifier())
+    val errNotifier = out(SqErrNotifier())
     val workReq = slave(Stream(WorkReq()))
     val addrCacheRead = master(QpAddrCacheAgentReadBus())
     val sqOutPsnRangeFifoPush = master(Stream(ReqPsnRange()))
@@ -116,7 +117,7 @@ class ReqSender(busWidth: BusWidth) extends Component {
   io.workCompErr << workReqValidator.io.workCompErr
   io.sqOutPsnRangeFifoPush << workReqValidator.io.sqOutPsnRangeFifoPush
   io.npsnInc := workReqValidator.io.npsnInc
-  io.nakNotifier := workReqValidator.io.nakNotifier
+  io.errNotifier := workReqValidator.io.errNotifier
 
   val workReqCachePushAndReadAtomicHandler =
     new WorkReqCachePushAndReadAtomicHandler
@@ -161,7 +162,7 @@ class WorkReqValidator extends Component {
     val qpAttr = in(QpAttrData())
     val sendQCtrl = in(SendQCtrl())
     val npsnInc = out(NPsnInc())
-    val nakNotifier = out(SqErrNotifier())
+    val errNotifier = out(SqErrNotifier())
     val workReq = slave(Stream(WorkReq()))
     val addrCacheRead = master(QpAddrCacheAgentReadBus())
     val workReqToCache = master(Stream(CachedWorkReq()))
@@ -172,6 +173,7 @@ class WorkReqValidator extends Component {
     val workReq = io.workReq.payload
 
     val (workReq4Queue, sqOutPsnRangeFifoPush) = StreamFork2(
+      // TODO: should generate WC for the flushed WR?
       io.workReq
         .throwWhen(io.sendQCtrl.wrongStateFlush)
         .haltWhen(io.sendQCtrl.fenceOrRetry)
@@ -282,9 +284,9 @@ class WorkReqValidator extends Component {
       )
       rslt
     }
-    io.nakNotifier.setNoErr()
+    io.errNotifier.setNoErr()
     when(twoStreams(errIdx).fire) {
-      io.nakNotifier.setLocalErr()
+      io.errNotifier.setLocalErr()
 
       assert(
         assertion = workCompErrStatus =/= WorkCompStatus.SUCCESS,

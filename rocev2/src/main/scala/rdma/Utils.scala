@@ -915,6 +915,11 @@ object ConditionalStreamFork {
   }
 }
 
+/** ConditionalStreamFork2 will fork the input based on the condition.
+  * If condition is true, then fork the input, otherwise not fork.
+  * So the first return stream is the conditional forked input stream,
+  * the second return stream is the original input stream.
+  */
 object ConditionalStreamFork2 {
   def apply[T <: Data](
       inputStream: Stream[T],
@@ -1104,6 +1109,21 @@ class StreamOneHotMux[T <: Data](dataType: HardType[T], portCount: Int)
     when(io.select(idx)) {
       io.output.payload := io.inputs(idx).payload
     }
+  }
+}
+
+object StreamDeMuxByConditions {
+  def apply[T <: Data](input: Stream[T], conditions: Bool*): Vec[Stream[T]] = {
+    val oneHot = conditions.asBits()
+    when(input.valid) {
+      assert(
+        assertion = CountOne(oneHot) === 1,
+        message =
+          L"de-mux conditions=${oneHot} should have exact one true condition when input stream is valid",
+        severity = FAILURE
+      )
+    }
+    StreamOneHotDeMux(input, oneHot)
   }
 }
 
@@ -1374,6 +1394,10 @@ object PsnUtil {
   def gte(psnA: UInt, psnB: UInt, curPsn: UInt): Bool =
     cmp(psnA, psnB, curPsn) === PsnCompResult.GREATER ||
       psnA === psnB
+
+  // Check if psn within range [start, end) or not
+  def withInRange(psn: UInt, start: UInt, end: UInt, curPsn: UInt): Bool =
+    gte(psn, start, curPsn) && lt(psn, end, curPsn)
 }
 
 object bufSizeCheck {
@@ -1400,13 +1424,12 @@ object OpCodeSeq {
 
       switch(preOpCode) {
         is(SEND_FIRST.id, SEND_MIDDLE.id) {
-          rslt := curOpCode === SEND_MIDDLE.id || OpCode.isSendLastReqPkt(
-            curOpCode
-          )
+          rslt := curOpCode === SEND_MIDDLE.id ||
+            OpCode.isSendLastReqPkt(curOpCode)
         }
         is(RDMA_WRITE_FIRST.id, RDMA_WRITE_MIDDLE.id) {
-          rslt := curOpCode === RDMA_WRITE_MIDDLE.id || OpCode
-            .isWriteLastReqPkt(curOpCode)
+          rslt := curOpCode === RDMA_WRITE_MIDDLE.id ||
+            OpCode.isWriteLastReqPkt(curOpCode)
         }
         is(
           SEND_ONLY.id,
