@@ -20,7 +20,7 @@ class RetryHandler(busWidth: BusWidth) extends Component {
     val qpAttr = in(QpAttrData())
     val sendQCtrl = in(SendQCtrl())
     val retryWorkReq = slave(Stream(CachedWorkReq()))
-//    val workReqQueryPort4DupDmaReadResp = master(WorkReqCacheQueryBus())
+    val errNotifier = out(SqErrNotifier())
     val dmaRead = master(DmaReadBus(busWidth))
     val txSendReq = master(RdmaDataBus(busWidth))
     val txWriteReq = master(RdmaDataBus(busWidth))
@@ -28,7 +28,6 @@ class RetryHandler(busWidth: BusWidth) extends Component {
     val txAtomicReq = master(Stream(AtomicReq()))
   }
 
-  // TODO: handle go-back-to-N retry, not just retry one
   val readAtomicRetryHandlerAndDmaReadInitiator =
     new ReadAtomicRetryHandlerAndDmaReadInitiator
   readAtomicRetryHandlerAndDmaReadInitiator.io.qpAttr := io.qpAttr
@@ -38,6 +37,7 @@ class RetryHandler(busWidth: BusWidth) extends Component {
 //  readAtomicRetryHandlerAndDmaReadInitiator.io.rx << io.rx
 //  io.workReqQueryPort4DupReq << readAtomicRetryHandlerAndDmaReadInitiator.io.workReqQuery
   io.dmaRead.req << readAtomicRetryHandlerAndDmaReadInitiator.io.dmaRead.req
+  io.errNotifier := readAtomicRetryHandlerAndDmaReadInitiator.io.errNotifier
 
   val sqDmaReadRespHandler = new SqDmaReadRespHandler(busWidth)
   sqDmaReadRespHandler.io.sendQCtrl := io.sendQCtrl
@@ -72,6 +72,7 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
     val qpAttr = in(QpAttrData())
     val sendQCtrl = in(SendQCtrl())
     val retryWorkReq = slave(Stream(CachedWorkReq()))
+    val errNotifier = out(SqErrNotifier())
     val txReadReqRetry = master(Stream(ReadReq()))
     val txAtomicReqRetry = master(Stream(AtomicReq()))
     val dmaRead = master(DmaReadReqBus())
@@ -85,11 +86,22 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
   val isReadWorkReq = WorkReqOpCode.isReadReq(retryWorkReq.workReq.opcode)
   val isAtomicWorkReq = WorkReqOpCode.isAtomicReq(retryWorkReq.workReq.opcode)
 
+  // SQ into ERR state if retry count exceeds qpAttr.maxRetryCnt
+  io.errNotifier.setNoErr()
+  when(io.retryWorkReq.valid) {
+    when(io.retryWorkReq.rnrCnt > io.qpAttr.maxRetryCnt) {
+      io.errNotifier.setRnrExc()
+    } elsewhen (io.retryWorkReq.retryCnt > io.qpAttr.maxRetryCnt) {
+      io.errNotifier.setRetryExc()
+    }
+  }
+
   val (retryWorkReq4Out, retryWork4Dma) = StreamFork2(
     io.retryWorkReq.throwWhen(io.sendQCtrl.wrongStateFlush)
   )
   io.outRetryWorkReq <-/< retryWorkReq4Out
 
+  /*
   val (sendWriteWorkReqIdx, readWorkReqIdx, atomicWorkReqIdx, otherWorkReqIdx) =
     (0, 1, 2, 3)
   val txSel = UInt(2 bits)
@@ -115,8 +127,15 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
   val fourStreams = StreamDemux(retryWork4Dma, select = txSel, portCount = 4)
   // Just discard non-send/write/read/atomic WR
   StreamSink(NoData) << fourStreams(otherWorkReqIdx).translateWith(NoData)
-
-  io.txAtomicReqRetry <-/< fourStreams(atomicWorkReqIdx).translateWith {
+   */
+  val (sendWriteWorkReqIdx, readWorkReqIdx, atomicWorkReqIdx) = (0, 1, 2)
+  val threeStreams = StreamDeMuxByConditions(
+    retryWork4Dma,
+    isSendWorkReq || isWriteWorkReq,
+    isReadWorkReq,
+    isAtomicWorkReq
+  )
+  io.txAtomicReqRetry <-/< threeStreams(atomicWorkReqIdx).translateWith {
     val isCompSwap =
       retryWorkReq.workReq.opcode === WorkReqOpCode.ATOMIC_CMP_AND_SWP
     val rslt = AtomicReq().set(
@@ -186,7 +205,7 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
     )
   }
    */
-  io.txReadReqRetry <-/< fourStreams(readWorkReqIdx).translateWith {
+  io.txReadReqRetry <-/< threeStreams(readWorkReqIdx).translateWith {
     val rslt = ReadReq().set(
       dqpn = io.qpAttr.dqpn,
       psn = retryStartPsn,
@@ -197,7 +216,7 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
     rslt
   }
 
-  io.dmaRead.req <-/< fourStreams(sendWriteWorkReqIdx).translateWith {
+  io.dmaRead.req <-/< threeStreams(sendWriteWorkReqIdx).translateWith {
     val rslt = cloneOf(io.dmaRead.req.payloadType)
     rslt.set(
       initiator = DmaInitiator.SQ_DUP,

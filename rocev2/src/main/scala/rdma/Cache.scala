@@ -40,18 +40,13 @@ case class CamFifoRetryScanReq(depth: Int) extends Bundle {
   //  val scanPtr = Stream(UInt(log2Up(depth) bits))
   val ptr = UInt(log2Up(depth) bits)
   val retryReason = RetryReason()
+  val retryStartPsn = UInt(PSN_WIDTH bits)
 }
 
 case class CamFifoRetryScanResp[Tv <: Data](valueType: HardType[Tv], depth: Int)
     extends Bundle {
   val data = valueType()
 }
-
-//case class CamFifoModifyReq[Tv <: Data](valueType: HardType[Tv], depth: Int)
-//    extends Bundle {
-//  val ptr = UInt(log2Up(depth) bits)
-//  val data = valueType()
-//}
 
 case class CamFifoScanBus[Tv <: Data](valueType: HardType[Tv], depth: Int)
     extends Bundle
@@ -363,6 +358,7 @@ class WorkReqCache(depth: Int) extends Component {
       Some((scanReq: CamFifoRetryScanReq, v: CachedWorkReq) => {
         val rslt = cloneOf(v)
         rslt := v
+        // TODO: which retry counter to increase after the very first retry WR
         rslt.incRnrOrRetryCnt(scanReq.retryReason)
         rslt
       }),

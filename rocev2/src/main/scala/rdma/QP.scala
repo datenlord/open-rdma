@@ -67,6 +67,7 @@ class QpCtrl extends Component {
     )
     val retryWorkReq = master(Stream(CachedWorkReq()))
   }
+
   val qpAttr = RegInit(QpAttrData().initOrReset())
   io.qpAttr := qpAttr
 
@@ -454,6 +455,7 @@ class QpCtrl extends Component {
 
     val fsmInRetryState = sqFsm.isActive(sqFsm.RETRY) ||
       fenceFsm.isActive(fenceFsm.FENCE_RETRY)
+    // retryFlushState is a sub-state when fsmInRetryState
     val retryFlushState =
       sqRetryFsm.isActive(sqRetryFsm.RETRY_FLUSH) ||
         fenceRetryFsm.isActive(fenceRetryFsm.RETRY_FLUSH)
@@ -489,6 +491,7 @@ class QpCtrl extends Component {
     }
 
     // Handle WR partial retry
+    // TODO: verify RNR has no partial retry
     val (
       isRetryWholeWorkReq,
       retryStartPsn,
@@ -501,45 +504,7 @@ class QpCtrl extends Component {
       retryWorkReq = io.workReqCacheScanBus.scanResp.data,
       retryWorkReqValid = io.workReqCacheScanBus.scanResp.valid
     )
-    /*
-    // TODO: verify RNR will no partial retry
-    val retryFromFirstReq =
-      (qpAttr.retryReason === RetryReason.SEQ_ERR) ? (io.sqNotifier.retry.psnStart === io.workReqCacheScanBus.scanResp.data.psnStart) | True
-    // For partial read retry, compute the partial read DMA length
-    val psnDiff = PsnUtil.diff(
-      io.sqNotifier.retry.psnStart,
-      io.workReqCacheScanBus.scanResp.data.psnStart
-    )
-    // psnDiff << io.qpAttr.pmtu.asUInt === psnDiff * pmtuPktLenBytes(io.qpAttr.pmtu)
-    val dmaReadLenBytes =
-      io.workReqCacheScanBus.scanResp.data.workReq.lenBytes - (psnDiff << qpAttr.pmtu.asUInt)
-//    when(io.sqNotifier.retry.pulse && !retryFromFirstReq) {
-    when(io.workReqCacheScanBus.scanResp.valid && !retryFromFirstReq) {
-      assert(
-        assertion = PsnUtil.gt(
-          io.sqNotifier.retry.psnStart,
-          io.workReqCacheScanBus.scanResp.data.psnStart,
-          io.qpAttr.npsn
-        ),
-        message =
-          L"${REPORT_TIME} time: io.sqNotifier.retry.psnStart=${io.sqNotifier.retry.psnStart} should > curWorkReqToRetry.psnStart=${io.workReqCacheScanBus.scanResp.data.psnStart} in PSN order",
-        severity = FAILURE
-      )
 
-      assert(
-        assertion = psnDiff < computePktNum(
-          io.workReqCacheScanBus.scanResp.data.workReq.lenBytes,
-          io.qpAttr.pmtu
-        ),
-        message =
-          L"${REPORT_TIME} time: psnDiff=${psnDiff} should < packet num=${computePktNum(io.workReqCacheScanBus.scanResp.data.workReq.lenBytes, io.qpAttr.pmtu)}",
-        severity = FAILURE
-      )
-      retryWorkReqPop.psnStart := io.sqNotifier.retry.psnStart
-      retryWorkReqPop.workReq.lenBytes :=
-        dmaReadLenBytes.resize(RDMA_MAX_LEN_WIDTH)
-    }
-     */
     io.workReqCacheScanBus.scanReq << StreamSource()
       // TODO: should throwWhen wrongStateErr?
       .takeWhen(!io.workReqCacheScanBus.empty & fsmInRetryState)
@@ -547,6 +512,7 @@ class QpCtrl extends Component {
         val rslt = cloneOf(io.workReqCacheScanBus.scanReq.payloadType)
         rslt.ptr := curPtr
         rslt.retryReason := io.qpAttr.retryReason
+        rslt.retryStartPsn := io.qpAttr.retryStartPsn
         rslt
       }
     io.retryWorkReq <-/< io.workReqCacheScanBus.scanResp ~~ { scanRespData =>
@@ -565,17 +531,14 @@ class QpCtrl extends Component {
   }
 
   // Flush RQ if state error or RNR sent in next cycle
-  val isQpStateWrong = mainFsm.isActive(mainFsm.ERR) || mainFsm.isActive(
-    mainFsm.RESET
-  ) ||
-    mainFsm.isActive(mainFsm.INIT)
+  val isQpStateWrong = mainFsm.isActive(mainFsm.ERR) ||
+    mainFsm.isActive(mainFsm.RESET) || mainFsm.isActive(mainFsm.INIT)
   io.sendQCtrl.errorFlush := errFsm.isActive(errFsm.ERR_FLUSH)
   io.sendQCtrl.retryFlush := sqRetryCtrl.retryFlushState
   io.sendQCtrl.retry := sqRetryCtrl.fsmInRetryState
   io.sendQCtrl.fencePulse := False // TODO: currently no use, remote it?
-  io.sendQCtrl.fence := mainFsm.isActive(mainFsm.SQD) || sqFsm.isActive(
-    sqFsm.FENCE
-  )
+  io.sendQCtrl.fence := mainFsm.isActive(mainFsm.SQD) ||
+    sqFsm.isActive(sqFsm.FENCE)
   io.sendQCtrl.fenceOrRetry := io.sendQCtrl.fence || io.sendQCtrl.retry
   io.sendQCtrl.wrongStateFlush := isQpStateWrong
 

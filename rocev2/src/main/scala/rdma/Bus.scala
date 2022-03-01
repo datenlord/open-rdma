@@ -273,13 +273,13 @@ case class RqNotifier() extends Bundle {
 }
 
 case class SqNotifier() extends Bundle {
-  val nak = SqErrNotifier()
+  val err = SqErrNotifier()
   val retry = SqRetryNotifier()
   val workReqHasFence = Bool()
   val workReqCacheEmpty = Bool()
   val coalesceAckDone = Bool()
 
-  def hasFatalErr(): Bool = nak.hasFatalErr()
+  def hasFatalErr(): Bool = err.hasFatalErr()
 }
 
 case class RecvQCtrl() extends Bundle {
@@ -1343,6 +1343,12 @@ case class CachedWorkReq() extends Bundle {
     this
   }
 
+  def psnWithIn(psn: UInt, curPsn: UInt): Bool =
+    new Composite(this) {
+      val psnEnd = psnStart + pktNum
+      val rslt = PsnUtil.withInRange(psn, psnStart, psnEnd, curPsn)
+    }.rslt
+
   def incRnrOrRetryCnt(retryReason: SpinalEnumCraft[RetryReason.type]) =
     new Composite(this) {
       switch(retryReason) {
@@ -1356,7 +1362,13 @@ case class CachedWorkReq() extends Bundle {
         ) {
           retryCnt := retryCnt + 1
         }
-        default {}
+        default {
+          report(
+            message =
+              L"input retryReason=${retryReason} should be valid reason",
+            severity = FAILURE
+          )
+        }
       }
     }
 }
@@ -2133,6 +2145,26 @@ case class RdmaDataBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
 
 }
 
+case class SqReadAtomicRespWithDmaInfo(busWidth: BusWidth) extends Bundle {
+  val pktFrag = RdmaDataPkt(busWidth)
+  val addr = UInt(MEM_ADDR_WIDTH bits)
+  val workReqId = Bits(WR_ID_WIDTH bits)
+}
+
+case class SqReadAtomicRespWithDmaInfoBus(busWidth: BusWidth)
+    extends Bundle
+    with IMasterSlave {
+  val respWithDmaInfo = Stream(Fragment(SqReadAtomicRespWithDmaInfo(busWidth)))
+
+  def >>(that: SqReadAtomicRespWithDmaInfoBus): Unit = {
+    this.respWithDmaInfo >> that.respWithDmaInfo
+  }
+
+  def <<(that: SqReadAtomicRespWithDmaInfoBus): Unit = that >> this
+
+  override def asMaster(): Unit = master(respWithDmaInfo)
+}
+
 // DmaCommHeader has the same layout as RETH
 case class DmaCommHeader() extends Bundle {
   val va = UInt(MEM_ADDR_WIDTH bits)
@@ -2223,7 +2255,8 @@ case class RqReqWithRecvBufAndDmaInfo(busWidth: BusWidth) extends Bundle {
   val recvBufValid = Bool()
   val recvBuffer = RecvWorkReq()
   // DmaCommHeader is only valid at the first or only fragment
-  val dmaHeaderValid = Bool()
+  val dmaHeaderValid =
+    Bool() // TODO: remove this, DMA info should be always valid
   val dmaCommHeader = DmaCommHeader()
 }
 

@@ -33,6 +33,7 @@ fi
 
 # mill test is not compatible with SpinalHDL, use testOnly instead
 ./mill rocev2.test.testOnly rdma.CoalesceAndNormalAndRetryNakHandlerTest
+./mill rocev2.test.testOnly rdma.ReadAtomicRespVerifierAndFatalNakNotifierTest
 ./mill rocev2.test.testOnly rdma.ReadAtomicRespDmaReqInitiatorTest
 ./mill rocev2.test.testOnly rdma.RetryHandlerAndDmaReadInitTest
 ./mill rocev2.test.testOnly rdma.SendReqGeneratorTest
