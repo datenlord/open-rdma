@@ -200,9 +200,9 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
           OpCode.isFirstOrOnlyReadRespPkt(opcode) ||
             OpCode.isAtomicRespPkt(opcode)
         }
-        val rslt = pktFragStream.valid && pktFragStream.isFirst &&
+        val result = pktFragStream.valid && pktFragStream.isFirst &&
           isReadFirstOrOnlyRespOrAtomicResp(pktFragStream.bth.opcode)
-      }.rslt
+      }.result
   // Only join AddrCache query response when the input data is the last fragment of
   // the only or last read responses or atomic responses
   val addrCacheQueryRespJoinCond =
@@ -212,9 +212,9 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
           OpCode.isLastOrOnlyReadRespPkt(opcode) ||
             OpCode.isAtomicRespPkt(opcode)
         }
-        val rslt = pktFragStream.valid && pktFragStream.isLast &&
+        val result = pktFragStream.valid && pktFragStream.isLast &&
           isReadLastOrOnlyRespOrAtomicResp(pktFragStream.bth.opcode)
-      }.rslt
+      }.result
 
   val (everyFirstReadAtomicRespPktFragStream, allReadAtomicRespPktFragStream) =
     ConditionalStreamFork2(
@@ -231,9 +231,9 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
       .queueLowLatency(ADDR_CACHE_QUERY_DELAY_CYCLE)
   io.workReqQuery.req << rxEveryFirstReadAtomicRespPktFragQueue
     .translateWith {
-      val rslt = cloneOf(io.workReqQuery.req.payloadType)
-      rslt.psn := rxEveryFirstReadAtomicRespPktFragQueue.bth.psn
-      rslt
+      val result = cloneOf(io.workReqQuery.req.payloadType)
+      result.psn := rxEveryFirstReadAtomicRespPktFragQueue.bth.psn
+      result
     }
 
   val workReqIdReg = RegNextWhen(
@@ -266,13 +266,13 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 
   io.readAtomicRespWithDmaInfoBus.respWithDmaInfo <-/< joinStream
     .translateWith {
-      val rslt =
+      val result =
         cloneOf(io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.payloadType)
-      rslt.pktFrag := joinStream._1
-      rslt.addr := joinStream._2.pa
-      rslt.workReqId := workReqIdReg
-      rslt.last := joinStream.isLast
-      rslt
+      result.pktFrag := joinStream._1
+      result.addr := joinStream._2.pa
+      result.workReqId := workReqIdReg
+      result.last := joinStream.isLast
+      result
     }
 }
 
@@ -363,9 +363,9 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 //            OpCode.isFirstOrOnlyReadRespPkt(opcode) ||
 //            OpCode.isAtomicRespPkt(opcode)
 //          }
-//          val rslt = pktFragStream.valid && pktFragStream.isFirst &&
+//          val result = pktFragStream.valid && pktFragStream.isFirst &&
 //            isReadFirstOrOnlyRespOrAtomicResp(pktFragStream.bth.opcode)
-//        }.rslt
+//        }.result
 //    // Only join AddrCache query response when the input data is the last fragment of
 //    // the only or last read responses or atomic responses
 //    val addrCacheQueryRespJoinCond =
@@ -375,9 +375,9 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 //            OpCode.isLastOrOnlyReadRespPkt(opcode) ||
 //            OpCode.isAtomicRespPkt(opcode)
 //          }
-//          val rslt = pktFragStream.valid && pktFragStream.isLast &&
+//          val result = pktFragStream.valid && pktFragStream.isLast &&
 //            isReadLastOrOnlyRespOrAtomicResp(pktFragStream.bth.opcode)
-//        }.rslt
+//        }.result
 //
 //    val (
 //      everyFirstReadAtomicRespPktFragStream,
@@ -397,9 +397,9 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 //        .queueLowLatency(ADDR_CACHE_QUERY_DELAY_CYCLE)
 //    io.workReqQuery.req << rxEveryFirstReadAtomicRespPktFragQueue
 //      .translateWith {
-//        val rslt = cloneOf(io.workReqQuery.req.payloadType)
-//        rslt.psn := rxEveryFirstReadAtomicRespPktFragQueue.bth.psn
-//        rslt
+//        val result = cloneOf(io.workReqQuery.req.payloadType)
+//        result.psn := rxEveryFirstReadAtomicRespPktFragQueue.bth.psn
+//        result
 //      }
 //
 //    // TODO: verify it's correct
@@ -433,13 +433,13 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 //
 //    io.readAtomicRespWithDmaInfoBus.respWithDmaInfo <-/< joinStream
 //      .translateWith {
-//        val rslt =
+//        val result =
 //          cloneOf(io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.payloadType)
-//        rslt.pktFrag := joinStream._1
-//        rslt.addr := joinStream._2.pa
-//        rslt.workReqId := workReqIdReg
-//        rslt.last := joinStream.isLast
-//        rslt
+//        result.pktFrag := joinStream._1
+//        result.addr := joinStream._2.pa
+//        result.workReqId := workReqIdReg
+//        result.last := joinStream.isLast
+//        result
 //      }
 //  }
 //}
@@ -523,32 +523,32 @@ class CoalesceAndNormalAndRetryNakHandler extends Component {
   io.workCompAndAck <-/< zipCachedWorkReqAndAck
     .takeWhen(zipCachedWorkReqValid)
     .translateWith {
-      val rslt = cloneOf(io.workCompAndAck.payloadType)
+      val result = cloneOf(io.workCompAndAck.payloadType)
       when(isTargetWorkReq && isErrAck) {
         // Handle fatal NAK
-        rslt.workComp.setFromWorkReq(
+        result.workComp.setFromWorkReq(
           workReq = zipCachedWorkReqAndAck._2.workReq,
           dqpn = io.qpAttr.dqpn,
           status = zipCachedWorkReqAndAck._4.aeth.toWorkCompStatus()
         )
       } elsewhen (io.sendQCtrl.errorFlush) {
         // Handle errorFlush
-        rslt.workComp.setFromWorkReq(
+        result.workComp.setFromWorkReq(
           workReq = zipCachedWorkReqAndAck._2.workReq,
           dqpn = io.qpAttr.dqpn,
           status = workCompFlushStatus
         )
       } otherwise {
         // Handle coalesce and normal ACK
-        rslt.workComp.setSuccessFromWorkReq(
+        result.workComp.setSuccessFromWorkReq(
           workReq = zipCachedWorkReqAndAck._2.workReq,
           dqpn = io.qpAttr.dqpn
         )
       }
       // TODO: verify when errorFlush, is zipCachedWorkReqAndAck still valid?
-      rslt.ackValid := zipCachedWorkReqAndAck._3
-      rslt.ack := zipCachedWorkReqAndAck._4
-      rslt
+      result.ackValid := zipCachedWorkReqAndAck._3
+      result.ack := zipCachedWorkReqAndAck._4
+      result
     }
 
   // Handle response timeout retry
@@ -629,10 +629,10 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
   io.readRespDmaWriteReq.req <-/< threeStreams(readRespIdx)
     .throwWhen(io.sendQCtrl.wrongStateFlush)
     .translateWith {
-      val rslt =
+      val result =
         cloneOf(io.readRespDmaWriteReq.req.payloadType) //DmaWriteReq(busWidth)
-      rslt.last := isLast
-      rslt.set(
+      result.last := isLast
+      result.set(
         initiator = DmaInitiator.SQ_WR,
         sqpn = io.qpAttr.sqpn,
         psn = inputPktFrag.bth.psn,
@@ -641,15 +641,15 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
         data = inputPktFrag.data,
         mty = inputPktFrag.mty
       )
-      rslt
+      result
     }
 
   io.atomicRespDmaWriteReq.req <-/< threeStreams(atomicRespIdx)
     .throwWhen(io.sendQCtrl.wrongStateFlush)
     .translateWith {
-      val rslt = cloneOf(io.readRespDmaWriteReq.req.payloadType)
-      rslt.last := isLast
-      rslt.set(
+      val result = cloneOf(io.readRespDmaWriteReq.req.payloadType)
+      result.last := isLast
+      result.set(
         initiator = DmaInitiator.SQ_ATOMIC_WR,
         sqpn = io.qpAttr.sqpn,
         psn = inputPktFrag.bth.psn,
@@ -658,7 +658,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
         data = inputPktFrag.data,
         mty = inputPktFrag.mty
       )
-      rslt
+      result
     }
 }
 
@@ -681,9 +681,9 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 //        OpCode.isFirstOrOnlyReadRespPkt(opcode) ||
 //        OpCode.isAtomicRespPkt(opcode)
 //      }
-//      val rslt = pktFragStream.valid && pktFragStream.isFirst &&
+//      val result = pktFragStream.valid && pktFragStream.isFirst &&
 //        isReadFirstOrOnlyRespOrAtomicResp(pktFragStream.bth.opcode)
-//    }.rslt
+//    }.result
 //  // Only join AddrCache query response when the input data is the last fragment of
 //  // the only or last read responses or atomic responses
 //  val addrCacheQueryRespJoinCond =
@@ -693,9 +693,9 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 //          OpCode.isLastOrOnlyReadRespPkt(opcode) ||
 //          OpCode.isAtomicRespPkt(opcode)
 //        }
-//        val rslt = pktFragStream.valid && pktFragStream.isLast &&
+//        val result = pktFragStream.valid && pktFragStream.isLast &&
 //          isReadLastOrOnlyRespOrAtomicResp(pktFragStream.bth.opcode)
-//      }.rslt
+//      }.result
 //
 //  val (everyFirstInputPktFragStream, allInputPktFragStream) =
 //    ConditionalStreamFork2(
@@ -714,9 +714,9 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 //    .queueLowLatency(ADDR_CACHE_QUERY_DELAY_CYCLE)
 //  io.workReqQuery.req << rxEveryFirstInputPktFragQueue
 //    .translateWith {
-//      val rslt = cloneOf(io.workReqQuery.req.payloadType)
-//      rslt.psn := rxEveryFirstInputPktFragQueue.bth.psn
-//      rslt
+//      val result = cloneOf(io.workReqQuery.req.payloadType)
+//      result.psn := rxEveryFirstInputPktFragQueue.bth.psn
+//      result
 //    }
 //
 //  // TODO: verify it's correct
@@ -770,10 +770,10 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 //  io.readRespDmaWriteReq.req <-/< threeStreams(readRespIdx)
 //    .throwWhen(io.sendQCtrl.wrongStateFlush)
 //    .translateWith {
-//      val rslt =
+//      val result =
 //        cloneOf(io.readRespDmaWriteReq.req.payloadType) //DmaWriteReq(busWidth)
-//      rslt.last := isLastFrag
-//      rslt.set(
+//      result.last := isLastFrag
+//      result.set(
 //        initiator = DmaInitiator.SQ_WR,
 //        sqpn = io.qpAttr.sqpn,
 //        psn = inputPktFrag.bth.psn,
@@ -782,15 +782,15 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 //        data = inputPktFrag.data,
 //        mty = inputPktFrag.mty
 //      )
-//      rslt
+//      result
 //    }
 //
 //  io.atomicRespDmaWriteReq.req <-/< threeStreams(atomicRespIdx)
 //    .throwWhen(io.sendQCtrl.wrongStateFlush)
 //    .translateWith {
-//      val rslt = cloneOf(io.readRespDmaWriteReq.req.payloadType)
-//      rslt.last := isLastFrag
-//      rslt.set(
+//      val result = cloneOf(io.readRespDmaWriteReq.req.payloadType)
+//      result.last := isLastFrag
+//      result.set(
 //        initiator = DmaInitiator.SQ_ATOMIC_WR,
 //        sqpn = io.qpAttr.sqpn,
 //        psn = inputPktFrag.bth.psn,
@@ -799,7 +799,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 //        data = inputPktFrag.data,
 //        mty = inputPktFrag.mty
 //      )
-//      rslt
+//      result
 //    }
 //}
 

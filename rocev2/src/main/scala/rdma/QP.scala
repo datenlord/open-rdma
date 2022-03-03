@@ -509,24 +509,24 @@ class QpCtrl extends Component {
       // TODO: should throwWhen wrongStateErr?
       .takeWhen(!io.workReqCacheScanBus.empty & fsmInRetryState)
       .translateWith {
-        val rslt = cloneOf(io.workReqCacheScanBus.scanReq.payloadType)
-        rslt.ptr := curPtr
-        rslt.retryReason := io.qpAttr.retryReason
-        rslt.retryStartPsn := io.qpAttr.retryStartPsn
-        rslt
+        val result = cloneOf(io.workReqCacheScanBus.scanReq.payloadType)
+        result.ptr := curPtr
+        result.retryReason := io.qpAttr.retryReason
+        result.retryStartPsn := io.qpAttr.retryStartPsn
+        result
       }
     io.retryWorkReq <-/< io.workReqCacheScanBus.scanResp ~~ { scanRespData =>
-      val rslt = cloneOf(io.retryWorkReq.payloadType)
-      rslt := scanRespData.data
+      val result = cloneOf(io.retryWorkReq.payloadType)
+      result := scanRespData.data
 
       when(isRetryWholeWorkReq) {
-        rslt.psnStart := retryStartPsn
-        rslt.pa := retryDmaReadStartAddr
-        rslt.workReq.raddr := retryWorkReqRemoteStartAddr
-        rslt.workReq.laddr := retryWorkReqLocalStartAddr
-        rslt.workReq.lenBytes := retryDmaReadLenBytes
+        result.psnStart := retryStartPsn
+        result.pa := retryDmaReadStartAddr
+        result.workReq.raddr := retryWorkReqRemoteStartAddr
+        result.workReq.laddr := retryWorkReqLocalStartAddr
+        result.workReq.lenBytes := retryDmaReadLenBytes
       }
-      rslt
+      result
     }
   }
 

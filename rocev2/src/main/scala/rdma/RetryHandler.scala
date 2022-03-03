@@ -96,6 +96,7 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
     }
   }
 
+  // TODO: if retry count exceeds, should fire the retry WR or not?
   val (retryWorkReq4Out, retryWork4Dma) = StreamFork2(
     io.retryWorkReq.throwWhen(io.sendQCtrl.wrongStateFlush)
   )
@@ -138,7 +139,7 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
   io.txAtomicReqRetry <-/< threeStreams(atomicWorkReqIdx).translateWith {
     val isCompSwap =
       retryWorkReq.workReq.opcode === WorkReqOpCode.ATOMIC_CMP_AND_SWP
-    val rslt = AtomicReq().set(
+    val result = AtomicReq().set(
       isCompSwap,
       dqpn = io.qpAttr.dqpn,
       psn = retryWorkReq.psnStart,
@@ -147,7 +148,7 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
       comp = retryWorkReq.workReq.comp,
       swap = retryWorkReq.workReq.swap
     )
-    rslt
+    result
   }
 
   val (
@@ -206,19 +207,19 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
   }
    */
   io.txReadReqRetry <-/< threeStreams(readWorkReqIdx).translateWith {
-    val rslt = ReadReq().set(
+    val result = ReadReq().set(
       dqpn = io.qpAttr.dqpn,
       psn = retryStartPsn,
       va = retryReadReqRemoteStartAddr,
       rkey = retryWorkReq.workReq.rkey,
       dlen = retryDmaReadLenBytes
     )
-    rslt
+    result
   }
 
   io.dmaRead.req <-/< threeStreams(sendWriteWorkReqIdx).translateWith {
-    val rslt = cloneOf(io.dmaRead.req.payloadType)
-    rslt.set(
+    val result = cloneOf(io.dmaRead.req.payloadType)
+    result.set(
       initiator = DmaInitiator.SQ_DUP,
       sqpn = retryWorkReq.workReq.sqpn,
       psnStart = retryStartPsn,
@@ -248,11 +249,11 @@ class SqDmaReadRespHandler(busWidth: BusWidth) extends Component {
     isReqZeroDmaLen = (req: CachedWorkReq) => req.workReq.lenBytes === 0
   )
   io.cachedWorkReqAndDmaReadResp <-/< handlerOutput.translateWith {
-    val rslt = cloneOf(io.cachedWorkReqAndDmaReadResp)
-    rslt.dmaReadResp := handlerOutput.dmaReadResp
-    rslt.cachedWorkReq := handlerOutput.req
-    rslt.last := handlerOutput.isLast
-    rslt
+    val result = cloneOf(io.cachedWorkReqAndDmaReadResp)
+    result.dmaReadResp := handlerOutput.dmaReadResp
+    result.cachedWorkReq := handlerOutput.req
+    result.last := handlerOutput.isLast
+    result
   }
 }
 
@@ -309,20 +310,20 @@ class SendWriteReqSegment(busWidth: BusWidth) extends Component {
   io.sendCachedWorkReqAndDmaReadResp <-/< threeStreams(sendWorkReqIdx)
     .throwWhen(io.sendQCtrl.wrongStateFlush)
     .translateWith {
-      val rslt = cloneOf(io.sendCachedWorkReqAndDmaReadResp.payloadType)
-      rslt.dmaReadResp := threeStreams(sendWorkReqIdx).dmaReadResp
-      rslt.cachedWorkReq := threeStreams(sendWorkReqIdx).cachedWorkReq
-      rslt.last := threeStreams(sendWorkReqIdx).isLast
-      rslt
+      val result = cloneOf(io.sendCachedWorkReqAndDmaReadResp.payloadType)
+      result.dmaReadResp := threeStreams(sendWorkReqIdx).dmaReadResp
+      result.cachedWorkReq := threeStreams(sendWorkReqIdx).cachedWorkReq
+      result.last := threeStreams(sendWorkReqIdx).isLast
+      result
     }
   io.writeCachedWorkReqAndDmaReadResp <-/< threeStreams(writeWorkReqIdx)
     .throwWhen(io.sendQCtrl.wrongStateFlush)
     .translateWith {
-      val rslt = cloneOf(io.writeCachedWorkReqAndDmaReadResp.payloadType)
-      rslt.dmaReadResp := threeStreams(writeWorkReqIdx).dmaReadResp
-      rslt.cachedWorkReq := threeStreams(writeWorkReqIdx).cachedWorkReq
-      rslt.last := threeStreams(writeWorkReqIdx).isLast
-      rslt
+      val result = cloneOf(io.writeCachedWorkReqAndDmaReadResp.payloadType)
+      result.dmaReadResp := threeStreams(writeWorkReqIdx).dmaReadResp
+      result.cachedWorkReq := threeStreams(writeWorkReqIdx).cachedWorkReq
+      result.last := threeStreams(writeWorkReqIdx).isLast
+      result
     }
 }
 
@@ -350,12 +351,12 @@ abstract class SendWriteReqGenerator(busWidth: BusWidth) extends Component {
   }
 
   val reqAndDmaReadRespSegment = input.translateWith {
-    val rslt =
+    val result =
       Fragment(ReqAndDmaReadResp(CachedWorkReq(), busWidth))
-    rslt.dmaReadResp := input.dmaReadResp
-    rslt.req := input.cachedWorkReq
-    rslt.last := input.isLast
-    rslt
+    result.dmaReadResp := input.dmaReadResp
+    result.req := input.cachedWorkReq
+    result.last := input.isLast
+    result
   }
 
   def headerGenFunc(
@@ -363,7 +364,7 @@ abstract class SendWriteReqGenerator(busWidth: BusWidth) extends Component {
       inputDmaDataFrag: DmaReadResp,
       curReqPktCntVal: UInt,
       qpAttr: QpAttrData
-  ): CombineHeaderAndDmaRespInternalRslt
+  ): CombineHeaderAndDmaRespInternalRst
 
   val combinerOutput = CombineHeaderAndDmaResponse(
     reqAndDmaReadRespSegment,
@@ -498,13 +499,13 @@ class SendReqGenerator(busWidth: BusWidth)
           .resize(PADCOUNT_WIDTH)
       }
 
-      val rslt = CombineHeaderAndDmaRespInternalRslt(busWidth).set(
+      val result = CombineHeaderAndDmaRespInternalRst(busWidth).set(
         numReqPkt,
         bth,
         headerBits,
         headerMtyBits
       )
-    }.rslt
+    }.result
 }
 
 class WriteReqGenerator(busWidth: BusWidth)
@@ -526,7 +527,7 @@ class WriteReqGenerator(busWidth: BusWidth)
       inputDmaDataFrag: DmaReadResp,
       curReqPktCntVal: UInt,
       qpAttr: QpAttrData
-  ): CombineHeaderAndDmaRespInternalRslt =
+  ): CombineHeaderAndDmaRespInternalRst =
     new Composite(this) {
       val inputCachedWorkReq = inputReq.workReq
 
@@ -624,11 +625,11 @@ class WriteReqGenerator(busWidth: BusWidth)
           .resize(PADCOUNT_WIDTH)
       }
 
-      val rslt = CombineHeaderAndDmaRespInternalRslt(busWidth).set(
+      val result = CombineHeaderAndDmaRespInternalRst(busWidth).set(
         numReqPkt,
         bth,
         headerBits,
         headerMtyBits
       )
-    }.rslt
+    }.result
 }

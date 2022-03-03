@@ -210,51 +210,51 @@ case class AETH() extends RdmaHeader {
 
   def isNormalAck(): Bool =
     new Composite(this) {
-      val rslt = code === AethCode.ACK.id
-    }.rslt
+      val result = code === AethCode.ACK.id
+    }.result
 
   def isRetryNak(): Bool =
     new Composite(this) {
-      val rslt =
+      val result =
         code === AethCode.RNR.id || (code === AethCode.NAK.id && value === NakCode.SEQ.id)
-    }.rslt
+    }.result
 
   def isRnrNak(): Bool =
     new Composite(this) {
-      val rslt = code === AethCode.RNR.id
-    }.rslt
+      val result = code === AethCode.RNR.id
+    }.result
 
   def isSeqNak(): Bool =
     new Composite(this) {
-      val rslt = code === AethCode.NAK.id && value === NakCode.SEQ.id
-    }.rslt
+      val result = code === AethCode.NAK.id && value === NakCode.SEQ.id
+    }.result
 
   def isErrAck(): Bool =
     new Composite(this) {
-      val rslt = code === AethCode.NAK.id && value =/= NakCode.SEQ.id &&
+      val result = code === AethCode.NAK.id && value =/= NakCode.SEQ.id &&
         !NakCode.isReserved(value)
-    }.rslt
+    }.result
 
   def isInvReqNak(): Bool =
     new Composite(this) {
-      val rslt = code === AethCode.NAK.id && value === NakCode.INV.id
-    }.rslt
+      val result = code === AethCode.NAK.id && value === NakCode.INV.id
+    }.result
 
   def isRmtAccNak(): Bool =
     new Composite(this) {
-      val rslt = code === AethCode.NAK.id && value === NakCode.RMT_ACC.id
-    }.rslt
+      val result = code === AethCode.NAK.id && value === NakCode.RMT_ACC.id
+    }.result
 
   def isRmtOpNak(): Bool =
     new Composite(this) {
-      val rslt = code === AethCode.NAK.id && value === NakCode.RMT_OP.id
-    }.rslt
+      val result = code === AethCode.NAK.id && value === NakCode.RMT_OP.id
+    }.result
 
   def isReserved(): Bool =
     new Composite(this) {
-      val rslt = code === AethCode.RSVD.id ||
+      val result = code === AethCode.RSVD.id ||
         (code === AethCode.NAK.id && NakCode.isReserved(value))
-    }.rslt
+    }.result
 
   // TODO: remove this
   def setDefaultVal(): this.type = {

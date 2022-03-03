@@ -115,8 +115,8 @@ class SqDmaReadRespHandlerTest extends AnyFunSuite {
 //        (fragNum, (psnStart, totalLenBytes))
         (psnStart, totalFragNum, pktNum, pmtuLen, busWidth, totalLenBytes)
       } { (_, psnStart, _, fragIdx, totalFragNum, _, _, totalLenBytes) =>
-//        (fragIdx, outerLoopRslt) =>
-//        val (fragNum, (psnStart, totalLenBytes)) = outerLoopRslt
+//        (fragIdx, outerLoopRst) =>
+//        val (fragNum, (psnStart, totalLenBytes)) = outerLoopRst
         dut.io.dmaReadResp.resp.psnStart #= psnStart
         dut.io.dmaReadResp.resp.lenBytes #= totalLenBytes
         dut.io.dmaReadResp.resp.last #= (fragIdx == totalFragNum - 1)

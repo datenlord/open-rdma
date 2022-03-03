@@ -187,25 +187,25 @@ class WorkReqValidator extends Component {
     io.sqOutPsnRangeFifoPush <-/< sqOutPsnRangeFifoPush
 //      .throwWhen(io.sendQCtrl.wrongStateFlush)
       .translateWith {
-        val rslt = cloneOf(io.sqOutPsnRangeFifoPush.payloadType)
-        rslt.opcode := workReq.opcode
-        rslt.start := io.qpAttr.npsn
-        rslt.end := psnEnd.resize(PSN_WIDTH)
-        rslt
+        val result = cloneOf(io.sqOutPsnRangeFifoPush.payloadType)
+        result.opcode := workReq.opcode
+        result.start := io.qpAttr.npsn
+        result.end := psnEnd.resize(PSN_WIDTH)
+        result
       }
 
     // To query AddCache, it needs several cycle delay.
     // In order to not block pipeline, use a FIFO to cache incoming data.
     val inputWorkReqQueue = workReq4Queue
       .translateWith {
-        val rslt = CachedWorkReq()
-        rslt.workReq := workReq
-        rslt.psnStart := io.qpAttr.npsn
-        rslt.pktNum := numReqPkt.resize(PSN_WIDTH)
-        rslt.pa := 0 // PA will be updated after QpAddrCacheAgent query
-        rslt.rnrCnt := 0 // New WR has no RNR
-        rslt.retryCnt := 0 // New WR has no retry
-        rslt
+        val result = CachedWorkReq()
+        result.workReq := workReq
+        result.psnStart := io.qpAttr.npsn
+        result.pktNum := numReqPkt.resize(PSN_WIDTH)
+        result.pa := 0 // PA will be updated after QpAddrCacheAgent query
+        result.rnrCnt := 0 // New WR has no RNR
+        result.retryCnt := 0 // New WR has no retry
+        result
       }
       .queueLowLatency(ADDR_CACHE_QUERY_DELAY_CYCLE)
 
@@ -275,14 +275,14 @@ class WorkReqValidator extends Component {
     }
 
     io.workCompErr <-/< twoStreams(errIdx).translateWith {
-      val rslt = cloneOf(io.workCompErr.payloadType)
+      val result = cloneOf(io.workCompErr.payloadType)
       // Set WC error due to invalid local virtual address or DMA length in WR, or being flushed
-      rslt.setFromWorkReq(
+      result.setFromWorkReq(
         workReq = twoStreams(errIdx)._1.workReq,
         dqpn = io.qpAttr.dqpn,
         status = workCompErrStatus
       )
-      rslt
+      result
     }
     io.errNotifier.setNoErr()
     when(twoStreams(errIdx).fire) {
@@ -367,7 +367,7 @@ class WorkReqCachePushAndReadAtomicHandler extends Component {
   io.txAtomicReq <-/< fourStreams(atomicWorkReqIdx).translateWith {
     val isCompSwap =
       cachedWorkReq.workReq.opcode === WorkReqOpCode.ATOMIC_CMP_AND_SWP
-    val rslt = AtomicReq().set(
+    val result = AtomicReq().set(
       isCompSwap,
       dqpn = io.qpAttr.dqpn,
       psn = cachedWorkReq.psnStart,
@@ -376,23 +376,23 @@ class WorkReqCachePushAndReadAtomicHandler extends Component {
       comp = cachedWorkReq.workReq.comp,
       swap = cachedWorkReq.workReq.swap
     )
-    rslt
+    result
   }
 
   io.txReadReq <-/< fourStreams(readWorkReqIdx).translateWith {
-    val rslt = ReadReq().set(
+    val result = ReadReq().set(
       dqpn = io.qpAttr.dqpn,
       psn = cachedWorkReq.psnStart,
       va = cachedWorkReq.workReq.raddr,
       rkey = cachedWorkReq.workReq.rkey,
       dlen = cachedWorkReq.workReq.lenBytes
     )
-    rslt
+    result
   }
 
   io.dmaRead.req <-/< fourStreams(sendWriteWorkReqIdx).translateWith {
-    val rslt = cloneOf(io.dmaRead.req.payloadType)
-    rslt.set(
+    val result = cloneOf(io.dmaRead.req.payloadType)
+    result.set(
       initiator = DmaInitiator.SQ_RD,
       sqpn = io.qpAttr.sqpn,
       psnStart = cachedWorkReq.psnStart,

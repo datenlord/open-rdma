@@ -61,20 +61,29 @@ object SendWriteReqReadRespInputGen {
 
   private def genTotalLen() = {
     val maxReqRespLen = 1L << (RDMA_MAX_LEN_WIDTH - 1) // 2GB
+    val avgReqRespLen = maxReqRespLen / PENDING_REQ_NUM
     val dmaRespIdxGen = NaturalNumber.from(0)
 
     // The total request/response length is from 1 byte to 2G=2^31 bytes
     val totalLenGen =
       dmaRespIdxGen.map(_ =>
-        1 + scala.util.Random.nextInt((maxReqRespLen - 1).toInt)
+        1 + scala.util.Random.nextInt((avgReqRespLen - 1).toInt)
       )
     totalLenGen
   }
 
   private def genTotalLen(busWidth: BusWidth.Value, maxFragNum: Int) = {
     val mtyWidth = busWidthBytes(busWidth)
+    require(
+      mtyWidth > 0,
+      f"${simTime()} time: mtyWidth=${mtyWidth} should be positive"
+    )
     val maxReqRespLen = mtyWidth *
       (scala.util.Random.nextInt(maxFragNum - 1) + 1)
+    require(
+      maxReqRespLen >= mtyWidth,
+      f"${simTime()} time: maxReqRespLen=${maxReqRespLen} should >= mtyWidth=${mtyWidth}"
+    )
     val dmaRespIdxGen = NaturalNumber.from(0)
 
     // The total request/response length is from 1 byte to 2G=2^31 bytes

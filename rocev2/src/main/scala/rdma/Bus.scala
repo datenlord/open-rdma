@@ -27,23 +27,23 @@ case class SqRetryNotifier() extends Bundle {
   val reason = RetryReason()
 
   def merge(that: SqRetryNotifier, curPsn: UInt): SqRetryNotifier = {
-    val rslt = SqRetryNotifier()
-    rslt.pulse := this.pulse || that.pulse
+    val result = SqRetryNotifier()
+    result.pulse := this.pulse || that.pulse
     when(this.pulse && !that.pulse) {
-      rslt.psnStart := this.psnStart
-      rslt.reason := this.reason
+      result.psnStart := this.psnStart
+      result.reason := this.reason
     } elsewhen (!this.pulse && that.pulse) {
-      rslt.psnStart := that.psnStart
-      rslt.reason := that.reason
+      result.psnStart := that.psnStart
+      result.reason := that.reason
     } elsewhen (!this.pulse && !that.pulse) {
-      rslt := this
+      result := this
     } otherwise { // this.pulse && that.pulse
       when(PsnUtil.lte(this.psnStart, that.psnStart, curPsn)) {
-        rslt.psnStart := this.psnStart
-        rslt.reason := this.reason
+        result.psnStart := this.psnStart
+        result.reason := this.reason
       } otherwise {
-        rslt.psnStart := that.psnStart
-        rslt.reason := that.reason
+        result.psnStart := that.psnStart
+        result.reason := that.reason
       }
 
       assert(
@@ -53,7 +53,7 @@ case class SqRetryNotifier() extends Bundle {
         severity = FAILURE
       )
     }
-    rslt
+    result
   }
 }
 
@@ -165,10 +165,10 @@ case class SqErrNotifier() extends Bundle {
         L"cannot merge two SqErrNotifier both have fatal error, this.pulse=${this.pulse}, this.errType=${this.errType}, that.pulse=${that.pulse}, that.errType=${that.errType}",
       severity = FAILURE
     )
-    val rslt = SqErrNotifier()
-    rslt.pulse := this.pulse || that.pulse
-    rslt.errType := (this.errType =/= SqErrType.NO_ERR) ? this.errType | that.errType
-    rslt
+    val result = SqErrNotifier()
+    result.pulse := this.pulse || that.pulse
+    result.errType := (this.errType =/= SqErrType.NO_ERR) ? this.errType | that.errType
+    result
   }
 }
 
@@ -255,13 +255,13 @@ case class RqNakNotifier() extends Bundle {
   def hasFatalNak(): Bool = invReq || rmtAcc || rmtOp // || localErr
 
 //  def ||(that: NakNotifier): NakNotifier = {
-//    val rslt = NakNotifier()
-//    rslt.seqErr := this.seqErr || that.seqErr
-//    rslt.invReq := this.invReq || that.invReq
-//    rslt.rmtAcc := this.rmtAcc || that.rmtAcc
-//    rslt.rmtOp := this.rmtOp || that.rmtOp
-//    rslt.localErr := this.localErr || that.localErr
-//    rslt
+//    val result = NakNotifier()
+//    result.seqErr := this.seqErr || that.seqErr
+//    result.invReq := this.invReq || that.invReq
+//    result.rmtAcc := this.rmtAcc || that.rmtAcc
+//    result.rmtOp := this.rmtOp || that.rmtOp
+//    result.localErr := this.localErr || that.localErr
+//    result
 //  }
 }
 
@@ -444,103 +444,103 @@ case class QpAttrData() extends Bundle {
 //  31 - 491.52 milliseconds delay
   def getRnrTimeOut(): UInt =
     new Composite(this) {
-      val rslt = UInt()
+      val result = UInt()
       switch(rnrTimeOut) {
         is(0) {
-          rslt := timeNumToCycleNum(655360 us)
+          result := timeNumToCycleNum(655360 us)
         }
         is(1) {
-          rslt := timeNumToCycleNum(10 us)
+          result := timeNumToCycleNum(10 us)
         }
         is(2) {
-          rslt := timeNumToCycleNum(20 us)
+          result := timeNumToCycleNum(20 us)
         }
         is(3) {
-          rslt := timeNumToCycleNum(30 us)
+          result := timeNumToCycleNum(30 us)
         }
         is(4) {
-          rslt := timeNumToCycleNum(40 us)
+          result := timeNumToCycleNum(40 us)
         }
         is(5) {
-          rslt := timeNumToCycleNum(60 us)
+          result := timeNumToCycleNum(60 us)
         }
         is(6) {
-          rslt := timeNumToCycleNum(80 us)
+          result := timeNumToCycleNum(80 us)
         }
         is(7) {
-          rslt := timeNumToCycleNum(120 us)
+          result := timeNumToCycleNum(120 us)
         }
         is(8) {
-          rslt := timeNumToCycleNum(160 us)
+          result := timeNumToCycleNum(160 us)
         }
         is(9) {
-          rslt := timeNumToCycleNum(240 us)
+          result := timeNumToCycleNum(240 us)
         }
         is(10) {
-          rslt := timeNumToCycleNum(320 us)
+          result := timeNumToCycleNum(320 us)
         }
         is(11) {
-          rslt := timeNumToCycleNum(480 us)
+          result := timeNumToCycleNum(480 us)
         }
         is(12) {
-          rslt := timeNumToCycleNum(640 us)
+          result := timeNumToCycleNum(640 us)
         }
         is(13) {
-          rslt := timeNumToCycleNum(960 us)
+          result := timeNumToCycleNum(960 us)
         }
         is(14) {
-          rslt := timeNumToCycleNum(1280 us)
+          result := timeNumToCycleNum(1280 us)
         }
         is(15) {
-          rslt := timeNumToCycleNum(1920 us)
+          result := timeNumToCycleNum(1920 us)
         }
         is(16) {
-          rslt := timeNumToCycleNum(2560 us)
+          result := timeNumToCycleNum(2560 us)
         }
         is(17) {
-          rslt := timeNumToCycleNum(3840 us)
+          result := timeNumToCycleNum(3840 us)
         }
         is(18) {
-          rslt := timeNumToCycleNum(5120 us)
+          result := timeNumToCycleNum(5120 us)
         }
         is(19) {
-          rslt := timeNumToCycleNum(7680 us)
+          result := timeNumToCycleNum(7680 us)
         }
         is(20) {
-          rslt := timeNumToCycleNum(10240 us)
+          result := timeNumToCycleNum(10240 us)
         }
         is(21) {
-          rslt := timeNumToCycleNum(15360 us)
+          result := timeNumToCycleNum(15360 us)
         }
         is(22) {
-          rslt := timeNumToCycleNum(20480 us)
+          result := timeNumToCycleNum(20480 us)
         }
         is(23) {
-          rslt := timeNumToCycleNum(30720 us)
+          result := timeNumToCycleNum(30720 us)
         }
         is(24) {
-          rslt := timeNumToCycleNum(40960 us)
+          result := timeNumToCycleNum(40960 us)
         }
         is(25) {
-          rslt := timeNumToCycleNum(61440 us)
+          result := timeNumToCycleNum(61440 us)
         }
         is(26) {
-          rslt := timeNumToCycleNum(81920 us)
+          result := timeNumToCycleNum(81920 us)
         }
         is(27) {
-          rslt := timeNumToCycleNum(122880 us)
+          result := timeNumToCycleNum(122880 us)
         }
         is(28) {
-          rslt := timeNumToCycleNum(163840 us)
+          result := timeNumToCycleNum(163840 us)
         }
         is(29) {
-          rslt := timeNumToCycleNum(245760 us)
+          result := timeNumToCycleNum(245760 us)
         }
         is(30) {
-          rslt := timeNumToCycleNum(327680 us)
+          result := timeNumToCycleNum(327680 us)
         }
         is(31) {
-          rslt := timeNumToCycleNum(491520 us)
+          result := timeNumToCycleNum(491520 us)
         }
         default {
           report(
@@ -548,10 +548,10 @@ case class QpAttrData() extends Bundle {
               L"${REPORT_TIME} time: invalid rnrTimeOut=${rnrTimeOut}, should between 0 and 31",
             severity = FAILURE
           )
-          rslt := 0
+          result := 0
         }
       }
-    }.rslt
+    }.result
 
 // Response timeout settings:
 //  0 - infinite
@@ -589,15 +589,15 @@ case class QpAttrData() extends Bundle {
   def getRespTimeOut(): UInt =
     new Composite(this) {
       val maxCycleNum = timeNumToCycleNum(MAX_RESP_TIMEOUT)
-      val rslt = UInt(log2Up(maxCycleNum) bits)
+      val result = UInt(log2Up(maxCycleNum) bits)
       switch(respTimeOut) {
         is(INFINITE_RESP_TIMEOUT) {
           // Infinite
-          rslt := INFINITE_RESP_TIMEOUT
+          result := INFINITE_RESP_TIMEOUT
         }
         for (timeOut <- 1 until (1 << RESP_TIMEOUT_WIDTH)) {
           is(timeOut) {
-            rslt := timeNumToCycleNum(
+            result := timeNumToCycleNum(
               BigDecimal(BigInt(8192) << (timeOut - 1)) ns
             )
           }
@@ -608,10 +608,10 @@ case class QpAttrData() extends Bundle {
 //              L"${REPORT_TIME} time: invalid respTimeOut=${respTimeOut}, should between 0 and 31",
 //            severity = FAILURE
 //          )
-//          rslt := 0
+//          result := 0
 //        }
       }
-    }.rslt
+    }.result
 }
 
 case class QpStateChange() extends Bundle {
@@ -659,31 +659,31 @@ case class DmaReadReq() extends Bundle {
                             hasImmDt: Bool,
                             hasIeth: Bool): Bits =
     new Composite(fromFirstReq) {
-      val rslt = Bits(OPCODE_WIDTH bits)
+      val result = Bits(OPCODE_WIDTH bits)
       when(fromFirstReq) {
         when(hasMultiPkts) {
-          rslt := OpCode.SEND_FIRST.id
+          result := OpCode.SEND_FIRST.id
         } otherwise {
-          rslt := OpCode.SEND_ONLY.id
+          result := OpCode.SEND_ONLY.id
           when(hasImmDt) {
-            rslt := OpCode.SEND_ONLY_WITH_IMMEDIATE.id
+            result := OpCode.SEND_ONLY_WITH_IMMEDIATE.id
           } elsewhen (hasIeth) {
-            rslt := OpCode.SEND_ONLY_WITH_INVALIDATE.id
+            result := OpCode.SEND_ONLY_WITH_INVALIDATE.id
           }
         }
       } otherwise {
         when(hasMultiPkts) {
-          rslt := OpCode.SEND_MIDDLE.id
+          result := OpCode.SEND_MIDDLE.id
         } otherwise {
-          rslt := OpCode.SEND_LAST.id
+          result := OpCode.SEND_LAST.id
           when(hasImmDt) {
-            rslt := OpCode.SEND_LAST_WITH_IMMEDIATE.id
+            result := OpCode.SEND_LAST_WITH_IMMEDIATE.id
           } elsewhen (hasIeth) {
-            rslt := OpCode.SEND_LAST_WITH_INVALIDATE.id
+            result := OpCode.SEND_LAST_WITH_INVALIDATE.id
           }
         }
       }
-    }.rslt
+    }.result
 
   def setBySendReq(sqpn: UInt,
                    psn: UInt,
@@ -724,27 +724,27 @@ case class DmaReadReq() extends Bundle {
                              hasMultiPkts: Bool,
                              hasImmDt: Bool): Bits =
     new Composite(fromFirstReq) {
-      val rslt = Bits(OPCODE_WIDTH bits)
+      val result = Bits(OPCODE_WIDTH bits)
       when(fromFirstReq) {
         when(hasMultiPkts) {
-          rslt := OpCode.RDMA_WRITE_FIRST.id
+          result := OpCode.RDMA_WRITE_FIRST.id
         } otherwise {
-          rslt := OpCode.RDMA_WRITE_ONLY.id
+          result := OpCode.RDMA_WRITE_ONLY.id
           when(hasImmDt) {
-            rslt := OpCode.RDMA_WRITE_ONLY_WITH_IMMEDIATE.id
+            result := OpCode.RDMA_WRITE_ONLY_WITH_IMMEDIATE.id
           }
         }
       } otherwise {
         when(hasMultiPkts) {
-          rslt := OpCode.RDMA_WRITE_MIDDLE.id
+          result := OpCode.RDMA_WRITE_MIDDLE.id
         } otherwise {
-          rslt := OpCode.RDMA_WRITE_LAST.id
+          result := OpCode.RDMA_WRITE_LAST.id
           when(hasImmDt) {
-            rslt := OpCode.RDMA_WRITE_LAST_WITH_IMMEDIATE.id
+            result := OpCode.RDMA_WRITE_LAST_WITH_IMMEDIATE.id
           }
         }
       }
-    }.rslt
+    }.result
 
   def setByWriteReq(sqpn: UInt,
                     psn: UInt,
@@ -773,21 +773,21 @@ case class DmaReadReq() extends Bundle {
 
   def getReadRespOpCodeStart(fromFirstResp: Bool, hasMultiPkts: Bool): Bits =
     new Composite(fromFirstResp) {
-      val rslt = Bits(OPCODE_WIDTH bits)
+      val result = Bits(OPCODE_WIDTH bits)
       when(fromFirstResp) {
         when(hasMultiPkts) {
-          rslt := OpCode.RDMA_READ_RESPONSE_FIRST.id
+          result := OpCode.RDMA_READ_RESPONSE_FIRST.id
         } otherwise {
-          rslt := OpCode.RDMA_READ_RESPONSE_ONLY.id
+          result := OpCode.RDMA_READ_RESPONSE_ONLY.id
         }
       } otherwise {
         when(hasMultiPkts) {
-          rslt := OpCode.RDMA_READ_RESPONSE_MIDDLE.id
+          result := OpCode.RDMA_READ_RESPONSE_MIDDLE.id
         } otherwise {
-          rslt := OpCode.RDMA_READ_RESPONSE_LAST.id
+          result := OpCode.RDMA_READ_RESPONSE_LAST.id
         }
       }
-    }.rslt
+    }.result
 
   def setByReadReq(sqpn: UInt,
                    psn: UInt,
@@ -1346,8 +1346,8 @@ case class CachedWorkReq() extends Bundle {
   def psnWithIn(psn: UInt, curPsn: UInt): Bool =
     new Composite(this) {
       val psnEnd = psnStart + pktNum
-      val rslt = PsnUtil.withInRange(psn, psnStart, psnEnd, curPsn)
-    }.rslt
+      val result = PsnUtil.withInRange(psn, psnStart, psnEnd, curPsn)
+    }.result
 
   def incRnrOrRetryCnt(retryReason: SpinalEnumCraft[RetryReason.type]) =
     new Composite(this) {
@@ -1426,7 +1426,7 @@ case class ReadAtomicResultCacheData() extends Bundle {
   val dlen = UInt(RDMA_MAX_LEN_WIDTH bits)
   val swap = Bits(LONG_WIDTH bits)
   val comp = Bits(LONG_WIDTH bits)
-  val atomicRslt = Bits(LONG_WIDTH bits)
+  val atomicRst = Bits(LONG_WIDTH bits)
   val done = Bool()
 
   // TODO: remote this
@@ -1440,7 +1440,7 @@ case class ReadAtomicResultCacheData() extends Bundle {
     dlen := 0
     swap := 0
     comp := 0
-    atomicRslt := 0
+    atomicRst := 0
     done := False
     this
   }
@@ -1501,7 +1501,7 @@ case class ReadAtomicResultCacheQueryBus() extends Bundle with IMasterSlave {
   }
 }
 
-case class CombineHeaderAndDmaRespInternalRslt(busWidth: BusWidth)
+case class CombineHeaderAndDmaRespInternalRst(busWidth: BusWidth)
     extends Bundle {
   val pktNum = UInt(PSN_WIDTH bits)
   val bth = BTH()
@@ -2137,10 +2137,10 @@ case class RdmaDataBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
 
   // TODO: remove this
   def setDefaultVal() = {
-    val rslt = Fragment(RdmaDataPkt(busWidth))
-    rslt.fragment.setDefaultVal()
-    rslt.last := False
-    rslt
+    val result = Fragment(RdmaDataPkt(busWidth))
+    result.fragment.setDefaultVal()
+    result.last := False
+    result
   }
 
 }
@@ -2181,7 +2181,7 @@ case class DmaCommHeader() extends Bundle {
   }
 }
 
-case class RqReqCheckRslt() extends Bundle {
+case class RqReqCheckRst() extends Bundle {
   val isPsnCheckPass = Bool()
   val isDupReq = Bool()
   val isOpSeqCheckPass = Bool()
@@ -2218,7 +2218,7 @@ case class RqReqWithRecvBufBus(busWidth: BusWidth)
 
 case class RqReqCheckInternalOutput(busWidth: BusWidth) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
-  val checkRslt = RqReqCheckRslt()
+  val checkRst = RqReqCheckRst()
 }
 
 case class RqReqCheckStageOutput(busWidth: BusWidth) extends Bundle {
@@ -2370,13 +2370,15 @@ case class ReadReq() extends RdmaReq {
       val busWidthBytes = busWidth.id / BYTE_WIDTH
       val reqWidthBytes = reqWidth / BYTE_WIDTH
 
-      val rslt = Fragment(RdmaDataPkt(busWidth))
-      rslt.last := True
-      rslt.bth := bth
-      rslt.data := (bth ## reth).resize(busWidth.id)
+      val result = Fragment(RdmaDataPkt(busWidth))
+      result.last := True
+      result.bth := bth
+      result.data := (bth ## reth).resize(busWidth.id)
       // TODO: verify endian
-      rslt.mty := (setAllBits(reqWidthBytes) << (busWidthBytes - reqWidthBytes))
-    }.rslt
+      result.mty := (setAllBits(
+        reqWidthBytes
+      ) << (busWidthBytes - reqWidthBytes))
+    }.result
 
   def set(thatBth: BTH, rethBits: Bits): this.type = {
     bth := thatBth
@@ -2428,13 +2430,15 @@ case class Acknowledge() extends Response {
       val busWidthBytes = busWidth.id / BYTE_WIDTH
       val ackWidthBytes = ackWidth / BYTE_WIDTH
 
-      val rslt = Fragment(RdmaDataPkt(busWidth))
-      rslt.last := True
-      rslt.bth := bth
-      rslt.data := (bth ## aeth).resize(busWidth.id)
+      val result = Fragment(RdmaDataPkt(busWidth))
+      result.last := True
+      result.bth := bth
+      result.data := (bth ## aeth).resize(busWidth.id)
       // TODO: verify endian
-      rslt.mty := (setAllBits(ackWidthBytes) << (busWidthBytes - ackWidthBytes))
-    }.rslt
+      result.mty := (setAllBits(
+        ackWidthBytes
+      ) << (busWidthBytes - ackWidthBytes))
+    }.result
 
   def setAck(aeth: AETH, psn: UInt, dqpn: UInt): this.type = {
     bth.set(opcode = OpCode.ACKNOWLEDGE.id, dqpn = dqpn, psn = psn)
@@ -2508,13 +2512,15 @@ case class AtomicReq() extends RdmaBasePacket {
       val busWidthBytes = busWidth.id / BYTE_WIDTH
       val reqWidthBytes = reqWidth / BYTE_WIDTH
 
-      val rslt = Fragment(RdmaDataPkt(busWidth))
-      rslt.last := True
-      rslt.bth := bth
-      rslt.data := (bth ## atomicEth).resize(busWidth.id)
+      val result = Fragment(RdmaDataPkt(busWidth))
+      result.last := True
+      result.bth := bth
+      result.data := (bth ## atomicEth).resize(busWidth.id)
       // TODO: verify endian
-      rslt.mty := (setAllBits(reqWidthBytes) << (busWidthBytes - reqWidthBytes))
-    }.rslt
+      result.mty := (setAllBits(
+        reqWidthBytes
+      ) << (busWidthBytes - reqWidthBytes))
+    }.result
 
   def set(
       isCompSwap: Bool,
@@ -2561,13 +2567,15 @@ case class AtomicResp() extends Response {
       val busWidthBytes = busWidth.id / BYTE_WIDTH
       val ackWidthBytes = ackWidth / BYTE_WIDTH
 
-      val rslt = Fragment(RdmaDataPkt(busWidth))
-      rslt.last := True
-      rslt.bth := bth
-      rslt.data := (bth ## atomicAckETH).resize(busWidth.id)
+      val result = Fragment(RdmaDataPkt(busWidth))
+      result.last := True
+      result.bth := bth
+      result.data := (bth ## atomicAckETH).resize(busWidth.id)
       // TODO: verify endian
-      rslt.mty := (setAllBits(ackWidthBytes) << (busWidthBytes - ackWidthBytes))
-    }.rslt
+      result.mty := (setAllBits(
+        ackWidthBytes
+      ) << (busWidthBytes - ackWidthBytes))
+    }.result
 
   def set(dqpn: UInt, psn: UInt, orig: Bits): this.type = {
     val opcode = Bits(OPCODE_WIDTH bits)
