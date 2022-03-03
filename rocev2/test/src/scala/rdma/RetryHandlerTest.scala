@@ -48,7 +48,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       val pmtuLen = PMTU.U1024
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.qpAttr.retryReason #= RetryReason.SEQ_ERR
-      dut.io.sendQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.wrongStateFlush #= false
       // Make retry limit check pass
       dut.io.qpAttr.maxRetryCnt #= 3
 
@@ -194,7 +194,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       val pmtuLen = PMTU.U1024
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.qpAttr.retryReason #= RetryReason.SEQ_ERR
-      dut.io.sendQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.wrongStateFlush #= false
       // Make retry limit check pass
       dut.io.qpAttr.maxRetryCnt #= 3
 
@@ -328,7 +328,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       val pmtuLen = PMTU.U1024
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.qpAttr.retryReason #= RetryReason.SEQ_ERR
-      dut.io.sendQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.wrongStateFlush #= false
       // Make retry limit check pass
       dut.io.qpAttr.maxRetryCnt #= 3
 
@@ -425,7 +425,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       val pmtuLen = PMTU.U1024
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.qpAttr.retryReason #= RetryReason.SEQ_ERR
-      dut.io.sendQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.wrongStateFlush #= false
 
       val maxRetryCnt = 3
       dut.io.qpAttr.maxRetryCnt #= maxRetryCnt

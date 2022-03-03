@@ -151,103 +151,79 @@ object WorkReqSim {
     // RDMA max packet length 2GB=2^31
     scala.util.Random.nextLong(1L << (RDMA_MAX_LEN_WIDTH - 1))
   }
+
+  def assignOpCode(
+      workReqOpCode: SpinalEnumElement[WorkReqOpCode.type],
+      pktIdx: Int,
+      pktNum: Int
+  ) = {
+    val opcode = workReqOpCode match {
+      case WorkReqOpCode.SEND => {
+        if (pktNum == 1) {
+          OpCode.SEND_ONLY
+        } else if (pktIdx == 0) {
+          OpCode.SEND_FIRST
+        } else if (pktIdx == pktNum - 1) {
+          OpCode.SEND_LAST
+        } else {
+          OpCode.SEND_MIDDLE
+        }
+      }
+      case WorkReqOpCode.SEND_WITH_IMM => {
+        if (pktNum == 1) {
+          OpCode.SEND_ONLY_WITH_IMMEDIATE
+        } else if (pktIdx == 0) {
+          OpCode.SEND_FIRST
+        } else if (pktIdx == pktNum - 1) {
+          OpCode.SEND_LAST_WITH_IMMEDIATE
+        } else {
+          OpCode.SEND_MIDDLE
+        }
+      }
+      case WorkReqOpCode.SEND_WITH_INV => {
+        if (pktNum == 1) {
+          OpCode.SEND_ONLY_WITH_INVALIDATE
+        } else if (pktIdx == 0) {
+          OpCode.SEND_FIRST
+        } else if (pktIdx == pktNum - 1) {
+          OpCode.SEND_LAST_WITH_INVALIDATE
+        } else {
+          OpCode.SEND_MIDDLE
+        }
+      }
+      case WorkReqOpCode.RDMA_WRITE => {
+        if (pktNum == 1) {
+          OpCode.RDMA_WRITE_ONLY
+        } else if (pktIdx == 0) {
+          OpCode.RDMA_WRITE_FIRST
+        } else if (pktIdx == pktNum - 1) {
+          OpCode.RDMA_WRITE_LAST
+        } else {
+          OpCode.RDMA_WRITE_MIDDLE
+        }
+      }
+      case WorkReqOpCode.RDMA_WRITE_WITH_IMM => {
+        if (pktNum == 1) {
+          OpCode.RDMA_WRITE_ONLY_WITH_IMMEDIATE
+        } else if (pktIdx == 0) {
+          OpCode.RDMA_WRITE_FIRST
+        } else if (pktIdx == pktNum - 1) {
+          OpCode.RDMA_WRITE_LAST_WITH_IMMEDIATE
+        } else {
+          OpCode.RDMA_WRITE_MIDDLE
+        }
+      }
+      case WorkReqOpCode.RDMA_READ            => OpCode.RDMA_READ_REQUEST
+      case WorkReqOpCode.ATOMIC_CMP_AND_SWP   => OpCode.COMPARE_SWAP
+      case WorkReqOpCode.ATOMIC_FETCH_AND_ADD => OpCode.FETCH_ADD
+      case _ => {
+        println(f"invalid WR opcode=${workReqOpCode} to assign")
+        ???
+      }
+    }
+    opcode.id
+  }
 }
-
-/*
-object WorkReqOpCodeSim extends Enumeration {
-  type WorkReqOpCodeSim = Value
-
-  val RDMA_WRITE = Value(0)
-  val RDMA_WRITE_WITH_IMM = Value(1)
-  val SEND = Value(2)
-  val SEND_WITH_IMM = Value(3)
-  val RDMA_READ = Value(4)
-  val ATOMIC_CMP_AND_SWP = Value(5)
-  val ATOMIC_FETCH_AND_ADD = Value(6)
-  val LOCAL_INV = Value(7)
-  val BIND_MW = Value(8)
-  val SEND_WITH_INV = Value(9)
-  val TSO = Value(10)
-  val DRIVER1 = Value(11)
-}
-
-object WorkCompFlagsSim extends Enumeration {
-  type WorkCompFlagsSim = Value
-
-  val NO_FLAGS = Value(0) // Not defined in spec.
-  val GRH = Value(1)
-  val WITH_IMM = Value(2)
-  val IP_CSUM_OK = Value(4)
-  val WITH_INV = Value(8)
-  val TM_SYNC_REQ = Value(16)
-  val TM_MATCH = Value(32)
-  val TM_DATA_VALID = Value(64)
-}
-
-object WorkCompOpCodeSim extends Enumeration {
-  type WorkCompOpCodeSim = Value
-
-  val SEND = Value(0)
-  val RDMA_WRITE = Value(1)
-  val RDMA_READ = Value(2)
-  val COMP_SWAP = Value(3)
-  val FETCH_ADD = Value(4)
-  val BIND_MW = Value(5)
-  val LOCAL_INV = Value(6)
-  val TSO = Value(7)
-  val RECV = Value(128)
-  val RECV_RDMA_WITH_IMM = Value(129)
-  val TM_ADD = Value(130)
-  val TM_DEL = Value(131)
-  val TM_SYNC = Value(132)
-  val TM_RECV = Value(133)
-  val TM_NO_TAG = Value(134)
-  val DRIVER1 = Value(135)
-}
-
-object WorkCompStatusSim extends Enumeration {
-  type WorkCompStatusSim = Value
-
-  val SUCCESS = Value(0)
-  val LOC_LEN_ERR = Value(1)
-  val LOC_QP_OP_ERR = Value(2)
-  val LOC_EEC_OP_ERR = Value(3)
-  val LOC_PROT_ERR = Value(4)
-  val WR_FLUSH_ERR = Value(5)
-  val MW_BIND_ERR = Value(6)
-  val BAD_RESP_ERR = Value(7)
-  val LOC_ACCESS_ERR = Value(8)
-  val REM_INV_REQ_ERR = Value(9)
-  val REM_ACCESS_ERR = Value(10)
-  val REM_OP_ERR = Value(11)
-  val RETRY_EXC_ERR = Value(12)
-  val RNR_RETRY_EXC_ERR = Value(13)
-  val LOC_RDD_VIOL_ERR = Value(14)
-  val REM_INV_RD_REQ_ERR = Value(15)
-  val REM_ABORT_ERR = Value(16)
-  val INV_EECN_ERR = Value(17)
-  val INV_EEC_STATE_ERR = Value(18)
-  val FATAL_ERR = Value(19)
-  val RESP_TIMEOUT_ERR = Value(20)
-  val GENERAL_ERR = Value(21)
-  val TM_ERR = Value(22)
-  val TM_RNDV_INCOMPLETE = Value(23)
-}
-object AccessTypeSim extends Enumeration {
-  type AccessTypeSim = Value
-
-  val LOCAL_READ = Value(0) // Not defined in spec.
-  val LOCAL_WRITE = Value(1)
-  val REMOTE_WRITE = Value(2)
-  val REMOTE_READ = Value(4)
-  val REMOTE_ATOMIC = Value(8)
-  val MW_BIND = Value(16)
-  val ZERO_BASED = Value(32)
-  val ON_DEMAND = Value(64)
-  val HUGETLB = Value(128)
-  val RELAXED_ORDERING = Value(1048576)
-}
- */
 
 object AckTypeSim {
   val retryNakTypes = Seq(AckType.NAK_RNR, AckType.NAK_SEQ)

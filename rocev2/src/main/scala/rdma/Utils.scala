@@ -1478,7 +1478,7 @@ object padCount {
       val padCntWidth = 2 // Pad count is 0 ~ 3
       val padCnt = UInt(padCntWidth bits)
       val pktLenRightMost2Bits = pktLen.resize(padCntWidth)
-      padCnt := (4 - pktLenRightMost2Bits).resize(padCntWidth)
+      padCnt := (PAD_COUNT_FULL - pktLenRightMost2Bits).resize(padCntWidth)
     }.padCnt
 }
 
@@ -1578,26 +1578,29 @@ object ePsnIncrease {
     new Composite(pktFrag) {
       val result = UInt(PSN_WIDTH bits)
       val isReadReq = OpCode.isReadReqPkt(pktFrag.bth.opcode)
-      when(isReadReq) {
-        // BTH is included in inputPktFrag.data
-        // TODO: verify inputPktFrag.data is big endian
-        val rethBits = pktFrag.data(
-          (busWidth.id - widthOf(BTH()) - widthOf(RETH())) until
-            (busWidth.id - widthOf(BTH()))
-        )
-        val reth = RETH()
-        reth.assignFromBits(rethBits)
+      when(OpCode.isReqPkt(pktFrag.bth.opcode)) {
+        when(isReadReq) {
+          // BTH is included in inputPktFrag.data
+          // TODO: verify inputPktFrag.data is big endian
+          val rethBits = pktFrag.data(
+            (busWidth.id - widthOf(BTH()) - widthOf(RETH())) until
+              (busWidth.id - widthOf(BTH()))
+          )
+          val reth = RETH()
+          reth.assignFromBits(rethBits)
 
-        result := computePktNum(reth.dlen, pmtu)
+          result := computePktNum(reth.dlen, pmtu)
+        } otherwise {
+          result := 1
+//          assert(
+//            assertion = OpCode.isReqPkt(pktFrag.bth.opcode),
+//            message =
+//              L"${REPORT_TIME} time: ePsnIncrease() expects requests, but opcode=${pktFrag.bth.opcode} is not of request",
+//            severity = FAILURE
+//          )
+        }
       } otherwise {
-        result := 1
-
-        assert(
-          assertion = OpCode.isReqPkt(pktFrag.bth.opcode),
-          message =
-            L"${REPORT_TIME} time: ePsnIncrease() expects requests, but opcode=${pktFrag.bth.opcode} is not of request",
-          severity = FAILURE
-        )
+        result := 0
       }
     }.result
 }

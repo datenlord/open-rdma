@@ -10,7 +10,7 @@ import RdmaConstants._
 class RespHandler(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
-    val sendQCtrl = in(SendQCtrl())
+    val txQCtrl = in(TxQCtrl())
     val rx = slave(RdmaDataBus(busWidth))
     val errNotifier = out(SqErrNotifier())
     val retryNotifier = out(SqRetryNotifier())
@@ -26,13 +26,13 @@ class RespHandler(busWidth: BusWidth) extends Component {
 
   val respAckExtractor = new RespAckExtractor(busWidth)
 //  respAckExtractor.io.qpAttr := io.qpAttr
-  respAckExtractor.io.sendQCtrl := io.sendQCtrl
+  respAckExtractor.io.txQCtrl := io.txQCtrl
   respAckExtractor.io.rx << io.rx
 
   val readAtomicRespVerifierAndFatalNakNotifier =
     new ReadAtomicRespVerifierAndFatalNakNotifier(busWidth)
   readAtomicRespVerifierAndFatalNakNotifier.io.qpAttr := io.qpAttr
-  readAtomicRespVerifierAndFatalNakNotifier.io.sendQCtrl := io.sendQCtrl
+  readAtomicRespVerifierAndFatalNakNotifier.io.txQCtrl := io.txQCtrl
   readAtomicRespVerifierAndFatalNakNotifier.io.rxAck << respAckExtractor.io.txAck
   readAtomicRespVerifierAndFatalNakNotifier.io.readAtomicResp << respAckExtractor.io.readAtomicResp
   io.workReqQuery << readAtomicRespVerifierAndFatalNakNotifier.io.workReqQuery
@@ -42,7 +42,7 @@ class RespHandler(busWidth: BusWidth) extends Component {
   val coalesceAndNormalAndRetryNakHandler =
     new CoalesceAndNormalAndRetryNakHandler
   coalesceAndNormalAndRetryNakHandler.io.qpAttr := io.qpAttr
-  coalesceAndNormalAndRetryNakHandler.io.sendQCtrl := io.sendQCtrl
+  coalesceAndNormalAndRetryNakHandler.io.txQCtrl := io.txQCtrl
   coalesceAndNormalAndRetryNakHandler.io.rx << readAtomicRespVerifierAndFatalNakNotifier.io.txAck
   coalesceAndNormalAndRetryNakHandler.io.cachedWorkReqPop << io.cachedWorkReqPop
   io.coalesceAckDone := coalesceAndNormalAndRetryNakHandler.io.coalesceAckDone
@@ -52,14 +52,14 @@ class RespHandler(busWidth: BusWidth) extends Component {
   val readAtomicRespDmaReqInitiator =
     new ReadAtomicRespDmaReqInitiator(busWidth)
   readAtomicRespDmaReqInitiator.io.qpAttr := io.qpAttr
-  readAtomicRespDmaReqInitiator.io.sendQCtrl := io.sendQCtrl
+  readAtomicRespDmaReqInitiator.io.txQCtrl := io.txQCtrl
   readAtomicRespDmaReqInitiator.io.readAtomicRespWithDmaInfoBus << readAtomicRespVerifierAndFatalNakNotifier.io.readAtomicRespWithDmaInfoBus
   io.readRespDmaWrite.req << readAtomicRespDmaReqInitiator.io.readRespDmaWriteReq.req
   io.atomicRespDmaWrite.req << readAtomicRespDmaReqInitiator.io.atomicRespDmaWriteReq.req
 
   val workCompGen = new WorkCompGen
   workCompGen.io.qpAttr := io.qpAttr
-  workCompGen.io.sendQCtrl := io.sendQCtrl
+  workCompGen.io.txQCtrl := io.txQCtrl
   workCompGen.io.workCompAndAck << coalesceAndNormalAndRetryNakHandler.io.workCompAndAck
   workCompGen.io.readRespDmaWriteResp.resp << io.readRespDmaWrite.resp
   workCompGen.io.atomicRespDmaWriteResp.resp << io.atomicRespDmaWrite.resp
@@ -73,7 +73,7 @@ class RespHandler(busWidth: BusWidth) extends Component {
 class RespAckExtractor(busWidth: BusWidth) extends Component {
   val io = new Bundle {
 //    val qpAttr = in(QpAttrData())
-    val sendQCtrl = in(SendQCtrl())
+    val txQCtrl = in(TxQCtrl())
     val rx = slave(RdmaDataBus(busWidth))
     val txAck = master(Stream(Acknowledge()))
     val readAtomicResp = master(RdmaDataBus(busWidth))
@@ -121,7 +121,7 @@ class RespAckExtractor(busWidth: BusWidth) extends Component {
   // TODO: incoming response stream needs retry flush or not?
   val (resp4ReadAtomic, resp4Ack) = StreamFork2(
     io.rx.pktFrag
-      .throwWhen(io.sendQCtrl.wrongStateFlush || (hasAeth && hasReservedCode))
+      .throwWhen(io.txQCtrl.wrongStateFlush || (hasAeth && hasReservedCode))
   )
   io.txAck <-/< resp4Ack.takeWhen(hasAeth).translateWith(acknowledge)
   io.readAtomicResp.pktFrag <-/< resp4ReadAtomic.takeWhen(
@@ -133,7 +133,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
     extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
-    val sendQCtrl = in(SendQCtrl())
+    val txQCtrl = in(TxQCtrl())
     val readAtomicResp = slave(RdmaDataBus(busWidth))
     val errNotifier = out(SqErrNotifier())
     val workReqQuery = master(WorkReqCacheQueryBus())
@@ -150,7 +150,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
     B(OpCode.RDMA_READ_RESPONSE_ONLY.id, OPCODE_WIDTH bits)
   )
   // CSR needs to reset when QP in error state
-  when(io.sendQCtrl.wrongStateFlush) {
+  when(io.txQCtrl.wrongStateFlush) {
     preReadRespPktOpCodeReg := OpCode.RDMA_READ_RESPONSE_ONLY.id
   }
   val isReadResp = OpCode.isReadRespPkt(io.readAtomicResp.pktFrag.bth.opcode)
@@ -170,7 +170,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
   val isErrAck = io.rxAck.aeth.isErrAck()
   // SQ into ERR state if fatal error
   io.errNotifier.setNoErr()
-  when(!io.sendQCtrl.wrongStateFlush) {
+  when(!io.txQCtrl.wrongStateFlush) {
     when(inputAckValid && isErrAck) {
       io.errNotifier.setFromAeth(io.rxAck.aeth)
     } elsewhen (inputReadAtomicRespValid && isReadResp && !isReadRespOpCodeSeqCheckPass) {
@@ -188,7 +188,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
     StreamFifoLowLatency(Acknowledge(), depth = MAX_COALESCE_ACK_NUM)
   ackQueue.io.push << io.rxAck
   // TODO: verify that once retry started, discard all responses before send out the retry request
-  ackQueue.io.flush := io.sendQCtrl.retryFlush || io.sendQCtrl.wrongStateFlush
+  ackQueue.io.flush := io.txQCtrl.retryFlush || io.txQCtrl.wrongStateFlush
   io.txAck <-/< ackQueue.io.pop
 
   // Only send out WorkReqCache query when the input data is the first fragment of
@@ -218,7 +218,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 
   val (everyFirstReadAtomicRespPktFragStream, allReadAtomicRespPktFragStream) =
     ConditionalStreamFork2(
-      io.readAtomicResp.pktFrag.throwWhen(io.sendQCtrl.wrongStateFlush),
+      io.readAtomicResp.pktFrag.throwWhen(io.txQCtrl.wrongStateFlush),
       forkCond = workReqCacheQueryCond(io.readAtomicResp.pktFrag)
     )
   val rxAllReadAtomicRespPkgFragQueue = allReadAtomicRespPktFragStream
@@ -242,7 +242,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
   )
   val cachedWorkReq = io.workReqQuery.resp.cachedWorkReq
   io.addrCacheRead.req <-/< io.workReqQuery.resp
-    .throwWhen(io.sendQCtrl.wrongStateFlush)
+    .throwWhen(io.txQCtrl.wrongStateFlush)
     //    .continueWhen(io.rx.pktFrag.fire && (isReadFirstOrOnlyResp || isAtomicResp))
     .translateWith {
       val addrCacheReadReq = QpAddrCacheAgentReadReq()
@@ -279,7 +279,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 //class RespVerifierAndFatalNakHandler(busWidth: BusWidth) extends Component {
 //  val io = new Bundle {
 //    val qpAttr = in(QpAttrData())
-//    val sendQCtrl = in(SendQCtrl())
+//    val txQCtrl = in(TxQCtrl())
 //    val rx = slave(RdmaDataBus(busWidth))
 //    val nakNotifier = out(SqErrNotifier())
 //    val workReqQuery = master(WorkReqCacheQueryBus())
@@ -327,7 +327,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 //  val isErrAck = acknowledge.aeth.isErrAck()
 //  // SQ into ERR state if fatal error
 //  io.nakNotifier.setNoErr()
-//  when(!io.sendQCtrl.wrongStateFlush && inputRespValid && isErrAck) {
+//  when(!io.txQCtrl.wrongStateFlush && inputRespValid && isErrAck) {
 //    io.nakNotifier.setFromAeth(acknowledge.aeth)
 //  }
 //
@@ -339,7 +339,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 //  // If error, discard all incoming response
 //  // TODO: incoming response stream needs retry flush or not?
 //  val (resp4ReadAtomic, resp4Ack) = StreamFork2(
-//    io.rx.pktFrag.throwWhen(io.sendQCtrl.wrongStateFlush || hasReservedCode)
+//    io.rx.pktFrag.throwWhen(io.txQCtrl.wrongStateFlush || hasReservedCode)
 //  )
 //
 //  // TODO: does it need to flush whole SQ when retry triggered?
@@ -349,7 +349,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 //    .takeWhen(hasAeth)
 //    .translateWith(acknowledge)
 //  // TODO: verify that once retry started, discard all responses before send out the retry request
-//  ackQueue.io.flush := io.sendQCtrl.retryFlush || io.sendQCtrl.wrongStateFlush
+//  ackQueue.io.flush := io.txQCtrl.retryFlush || io.txQCtrl.wrongStateFlush
 //  io.txRespWithAeth <-/< ackQueue.io.pop
 //    .translateWith(acknowledge)
 //
@@ -409,7 +409,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 //    )
 //    val cachedWorkReq = io.workReqQuery.resp.cachedWorkReq
 //    io.addrCacheRead.req <-/< io.workReqQuery.resp
-//      .throwWhen(io.sendQCtrl.wrongStateFlush)
+//      .throwWhen(io.txQCtrl.wrongStateFlush)
 //      //    .continueWhen(io.rx.pktFrag.fire && (isReadFirstOrOnlyResp || isAtomicResp))
 //      .translateWith {
 //        val addrCacheReadReq = QpAddrCacheAgentReadReq()
@@ -448,7 +448,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 class CoalesceAndNormalAndRetryNakHandler extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
-    val sendQCtrl = in(SendQCtrl())
+    val txQCtrl = in(TxQCtrl())
     val rx = slave(Stream(Acknowledge()))
     val cachedWorkReqPop = slave(Stream(CachedWorkReq()))
     val coalesceAckDone = out(Bool())
@@ -492,13 +492,13 @@ class CoalesceAndNormalAndRetryNakHandler extends Component {
   val fireBothCachedWorkReqAndAck =
     (inputAckValid && inputCachedWorkReqValid && ((isWholeTargetWorkReqAck && isNormalAck) || (isTargetWorkReq && isErrAck)))
   val fireCachedWorkReqOnly =
-    (inputAckValid && inputCachedWorkReqValid && hasCoalesceAck && !hasImplicitRetry) || io.sendQCtrl.errorFlush
+    (inputAckValid && inputCachedWorkReqValid && hasCoalesceAck && !hasImplicitRetry) || io.txQCtrl.errorFlush
   val fireAckOnly =
     isGhostAck || (inputAckValid && inputCachedWorkReqValid && (isDupAck || (isTargetWorkReq && isRetryNak) || (isPartialTargetWorkReqAck && isNormalAck)))
   val zipCachedWorkReqAndAck = StreamZipByCondition(
     leftInputStream = io.cachedWorkReqPop,
     // Only retryFlush io.rx, no need to errorFlush
-    rightInputStream = io.rx.throwWhen(io.sendQCtrl.retryFlush),
+    rightInputStream = io.rx.throwWhen(io.txQCtrl.retryFlush),
     // Coalesce ACK pending WR, or errorFlush
     leftFireCond = fireCachedWorkReqOnly,
     // Discard duplicated ACK or ghost ACK if no pending WR
@@ -531,7 +531,7 @@ class CoalesceAndNormalAndRetryNakHandler extends Component {
           dqpn = io.qpAttr.dqpn,
           status = zipCachedWorkReqAndAck._4.aeth.toWorkCompStatus()
         )
-      } elsewhen (io.sendQCtrl.errorFlush) {
+      } elsewhen (io.txQCtrl.errorFlush) {
         // Handle errorFlush
         result.workComp.setFromWorkReq(
           workReq = zipCachedWorkReqAndAck._2.workReq,
@@ -558,12 +558,12 @@ class CoalesceAndNormalAndRetryNakHandler extends Component {
     respTimer.counter.value > respTimeOutThreshold
   // TODO: should use io.rx.fire or io.rx.valid to clear response timer?
   when(
-    io.sendQCtrl.wrongStateFlush || inputAckValid || !io.cachedWorkReqPop.valid || io.sendQCtrl.retryFlush
+    io.txQCtrl.wrongStateFlush || inputAckValid || !io.cachedWorkReqPop.valid || io.txQCtrl.retryFlush
   ) {
     respTimer.clear()
   }
 
-  io.coalesceAckDone := io.sendQCtrl.wrongStateFlush && io.rx.fire
+  io.coalesceAckDone := io.txQCtrl.wrongStateFlush && io.rx.fire
 
   // Retry notification
   io.retryNotifier.pulse := (respTimeOutRetry || hasExplicitRetry || hasImplicitRetry) && io.rx.fire
@@ -587,7 +587,7 @@ class CoalesceAndNormalAndRetryNakHandler extends Component {
 class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
-    val sendQCtrl = in(SendQCtrl())
+    val txQCtrl = in(TxQCtrl())
     val readAtomicRespWithDmaInfoBus = slave(
       SqReadAtomicRespWithDmaInfoBus(busWidth)
     )
@@ -616,7 +616,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
   }
   val threeStreams = StreamDemux(
     io.readAtomicRespWithDmaInfoBus.respWithDmaInfo
-      .throwWhen(io.sendQCtrl.wrongStateFlush),
+      .throwWhen(io.txQCtrl.wrongStateFlush),
     select = txSel,
     portCount = 3
   )
@@ -627,7 +627,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
   val workReqId = io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.workReqId
 
   io.readRespDmaWriteReq.req <-/< threeStreams(readRespIdx)
-    .throwWhen(io.sendQCtrl.wrongStateFlush)
+    .throwWhen(io.txQCtrl.wrongStateFlush)
     .translateWith {
       val result =
         cloneOf(io.readRespDmaWriteReq.req.payloadType) //DmaWriteReq(busWidth)
@@ -645,7 +645,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
     }
 
   io.atomicRespDmaWriteReq.req <-/< threeStreams(atomicRespIdx)
-    .throwWhen(io.sendQCtrl.wrongStateFlush)
+    .throwWhen(io.txQCtrl.wrongStateFlush)
     .translateWith {
       val result = cloneOf(io.readRespDmaWriteReq.req.payloadType)
       result.last := isLast
@@ -665,7 +665,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 //class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 //  val io = new Bundle {
 //    val qpAttr = in(QpAttrData())
-//    val sendQCtrl = in(SendQCtrl())
+//    val txQCtrl = in(TxQCtrl())
 //    val rx = slave(RdmaDataBus(busWidth))
 //    val workReqQuery = master(WorkReqCacheQueryBus())
 //    val addrCacheRead = master(QpAddrCacheAgentReadBus())
@@ -699,7 +699,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 //
 //  val (everyFirstInputPktFragStream, allInputPktFragStream) =
 //    ConditionalStreamFork2(
-//      io.rx.pktFrag.throwWhen(io.sendQCtrl.wrongStateFlush),
+//      io.rx.pktFrag.throwWhen(io.txQCtrl.wrongStateFlush),
 //      forkCond = workReqCacheQueryCond(io.rx.pktFrag)
 //    )
 //  val rxAllInputPkgFragQueue = allInputPktFragStream
@@ -726,7 +726,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 //  )
 //  val cachedWorkReq = io.workReqQuery.resp.cachedWorkReq
 //  io.addrCacheRead.req <-/< io.workReqQuery.resp
-//    .throwWhen(io.sendQCtrl.wrongStateFlush)
+//    .throwWhen(io.txQCtrl.wrongStateFlush)
 ////    .continueWhen(io.rx.pktFrag.fire && (isReadFirstOrOnlyResp || isAtomicResp))
 //    .translateWith {
 //      val addrCacheReadReq = QpAddrCacheAgentReadReq()
@@ -768,7 +768,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 //  StreamSink(NoData) << threeStreams(otherRespIdx).translateWith(NoData)
 //
 //  io.readRespDmaWriteReq.req <-/< threeStreams(readRespIdx)
-//    .throwWhen(io.sendQCtrl.wrongStateFlush)
+//    .throwWhen(io.txQCtrl.wrongStateFlush)
 //    .translateWith {
 //      val result =
 //        cloneOf(io.readRespDmaWriteReq.req.payloadType) //DmaWriteReq(busWidth)
@@ -786,7 +786,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 //    }
 //
 //  io.atomicRespDmaWriteReq.req <-/< threeStreams(atomicRespIdx)
-//    .throwWhen(io.sendQCtrl.wrongStateFlush)
+//    .throwWhen(io.txQCtrl.wrongStateFlush)
 //    .translateWith {
 //      val result = cloneOf(io.readRespDmaWriteReq.req.payloadType)
 //      result.last := isLastFrag
@@ -807,7 +807,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 class WorkCompGen extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
-    val sendQCtrl = in(SendQCtrl())
+    val txQCtrl = in(TxQCtrl())
     val workCompAndAck = slave(Stream(WorkCompAndAck()))
     val workCompPush = master(Stream(WorkComp()))
     val readRespDmaWriteResp = slave(DmaWriteRespBus())
@@ -832,10 +832,10 @@ class WorkCompGen extends Component {
   io.atomicRespDmaWriteResp.resp.ready := False
 
   val dmaWriteRespTimer = Timeout(DMA_WRITE_DELAY_CYCLE)
-  when(io.sendQCtrl.errorFlush || io.workCompPush.fire || !inputWorkCompValid) {
+  when(io.txQCtrl.errorFlush || io.workCompPush.fire || !inputWorkCompValid) {
     dmaWriteRespTimer.clear()
   }
-  when(io.sendQCtrl.errorFlush) {
+  when(io.txQCtrl.errorFlush) {
     io.workCompPush.valid := inputWorkCompValid
     io.readRespDmaWriteResp.resp.ready := io.readRespDmaWriteResp.resp.valid
   } elsewhen (isReadWorkComp) {

@@ -45,6 +45,7 @@ case class TotalLenItr(totalLenItr: Iterator[Int]) {
 }
 
 object SendWriteReqReadRespInputGen {
+  val maxReqRespLen = 1L << (RDMA_MAX_LEN_WIDTH - 1) // 2GB
   def busWidthBytes(busWidth: BusWidth.Value): Int = busWidth.id / BYTE_WIDTH
 
   def maxFragNumPerPkt(pmtuLen: PMTU.Value, busWidth: BusWidth.Value): Int = {
@@ -60,7 +61,6 @@ object SendWriteReqReadRespInputGen {
   }
 
   private def genTotalLen() = {
-    val maxReqRespLen = 1L << (RDMA_MAX_LEN_WIDTH - 1) // 2GB
     val avgReqRespLen = maxReqRespLen / PENDING_REQ_NUM
     val dmaRespIdxGen = NaturalNumber.from(0)
 
@@ -78,22 +78,30 @@ object SendWriteReqReadRespInputGen {
       mtyWidth > 0,
       f"${simTime()} time: mtyWidth=${mtyWidth} should be positive"
     )
-    val maxReqRespLen = mtyWidth *
+
+    val fragNumLimit = maxReqRespLen / mtyWidth
+    require(
+      maxFragNum <= fragNumLimit,
+      f"input maxFragNum=${maxFragNum} is too large, should <= fragNumLimit=${fragNumLimit}"
+    )
+
+    val reqRespLenUnderMaxFragNUm = mtyWidth *
       (scala.util.Random.nextInt(maxFragNum - 1) + 1)
     require(
-      maxReqRespLen >= mtyWidth,
-      f"${simTime()} time: maxReqRespLen=${maxReqRespLen} should >= mtyWidth=${mtyWidth}"
+      reqRespLenUnderMaxFragNUm >= mtyWidth,
+      f"${simTime()} time: reqRespLenUnderMaxFragNUm=${reqRespLenUnderMaxFragNUm} should >= mtyWidth=${mtyWidth}"
     )
     val dmaRespIdxGen = NaturalNumber.from(0)
 
     // The total request/response length is from 1 byte to 2G=2^31 bytes
     val totalLenGen =
-      dmaRespIdxGen.map(_ => 1 + scala.util.Random.nextInt(maxReqRespLen - 1))
+      dmaRespIdxGen.map(_ =>
+        1 + scala.util.Random.nextInt(reqRespLenUnderMaxFragNUm - 1)
+      )
     totalLenGen
   }
 
   private def genTotalLen(randSeed: Int) = {
-    val maxReqRespLen = 1L << (RDMA_MAX_LEN_WIDTH - 1) // 2GB
     val dmaRespIdxGen = NaturalNumber.from(0)
 
     // The total request/response length is from 1 byte to 2G=2^31 bytes
@@ -630,6 +638,7 @@ object MiscUtils {
             f"${simTime()} time: inputData=${inputData} not match outputData=${outputData} @ outputIdx=${outputIdx}"
           )
           matchQueue.enqueue(inputData)
+//          println(f"matchQueue.size=${matchQueue.size}")
         }
       }
     }
@@ -650,17 +659,15 @@ object MiscUtils {
 
     fork {
       while (true) {
-        clockDomain.waitFallingEdge()
-        if (inputQueue.nonEmpty && outputQueue.nonEmpty) {
-          val outputIdx = outputIdxItr.next()
+        val outputIdx = outputIdxItr.next()
 
-          val inputData = inputQueue.dequeue()
-          val outputData = outputQueue.dequeue()
-          println(
-            f"${simTime()} time: inputData=${inputData} not match outputData=${outputData} @ outputIdx=${outputIdx}"
-          )
-          matchQueue.enqueue(inputData)
-        }
+        val inputData = safeDeQueue(inputQueue, clockDomain)
+        val outputData = safeDeQueue(outputQueue, clockDomain)
+        println(
+          f"${simTime()} time: inputData=${inputData} not match outputData=${outputData} @ outputIdx=${outputIdx}"
+        )
+        matchQueue.enqueue(inputData)
+
       }
     }
 
@@ -706,8 +713,7 @@ object MiscUtils {
         var (dataIn, mtyIn, pktNum, psnStart, totalLenBytes, isLastIn) =
           (BigInt(0), BigInt(0), 0, 0, 0L, false)
         do {
-          val inputData =
-            MiscUtils.safeDeQueue(inputDataQueue, clockDomain)
+          val inputData = safeDeQueue(inputDataQueue, clockDomain)
           dataIn = inputData._1
           mtyIn = inputData._2
           pktNum = inputData._3
@@ -719,8 +725,7 @@ object MiscUtils {
         var (dataOut, mtyOut, psnOut, isLastOut) =
           (BigInt(0), BigInt(0), 0, false)
         do {
-          val outputData =
-            MiscUtils.safeDeQueue(outputDataQueue, clockDomain)
+          val outputData = safeDeQueue(outputDataQueue, clockDomain)
           dataOut = outputData._1
           mtyOut = outputData._2
           psnOut = outputData._3
@@ -732,7 +737,7 @@ object MiscUtils {
           matchPsnQueue.enqueue(isLastOut)
         } while (!isLastOut)
 
-        val lastFragMtyInValidBytesNum = MiscUtils.countOnes(mtyIn, mtyWidth)
+        val lastFragMtyInValidBytesNum = countOnes(mtyIn, mtyWidth)
         val lastFragMtyOutValidBytesNum =
           MiscUtils.countOnes(mtyOut, mtyWidth)
         val lastFragMtyMinimumByteNum =

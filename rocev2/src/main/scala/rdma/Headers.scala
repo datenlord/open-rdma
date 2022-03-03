@@ -24,7 +24,7 @@ case class BTH() extends RdmaHeader {
   val opcodeFull = Bits(TRANSPORT_WIDTH + OPCODE_WIDTH bits)
   val solicited = Bool()
   val migreq = Bool()
-  val padcount = UInt(PADCOUNT_WIDTH bits)
+  val padCnt = UInt(PAD_COUNT_WIDTH bits)
   val version = Bits(VERSION_WIDTH bits)
   val pkey = Bits(PKEY_WIDTH bits)
   val fecn = Bool()
@@ -39,14 +39,14 @@ case class BTH() extends RdmaHeader {
   def opcode = opcodeFull(0, OPCODE_WIDTH bits)
 
   def set(opcode: Bits, dqpn: UInt, psn: UInt): this.type = {
-    val padCnt = U(0, PADCOUNT_WIDTH bits)
-    set(opcode = opcode, padcount = padCnt, dqpn = dqpn, psn = psn)
+    val padCnt = U(0, PAD_COUNT_WIDTH bits)
+    set(opcode = opcode, padCnt = padCnt, dqpn = dqpn, psn = psn)
   }
 
-  def set(opcode: Bits, padcount: UInt, dqpn: UInt, psn: UInt): this.type = {
+  def set(opcode: Bits, padCnt: UInt, dqpn: UInt, psn: UInt): this.type = {
     set(
       opcode = opcode,
-      padcount = padcount,
+      padCnt = padCnt,
       dqpn = dqpn,
       ackReq = False,
       psn = psn
@@ -55,7 +55,7 @@ case class BTH() extends RdmaHeader {
 
   def set(
       opcode: Bits,
-      padcount: UInt,
+      padCnt: UInt,
       dqpn: UInt,
       ackReq: Bool,
       psn: UInt
@@ -64,7 +64,7 @@ case class BTH() extends RdmaHeader {
     this.opcode := opcode
     solicited := False
     migreq := False
-    this.padcount := padcount
+    this.padCnt := padCnt
     version := 0
     pkey := 0xffff // Default PKEY
     fecn := False
@@ -83,7 +83,7 @@ case class BTH() extends RdmaHeader {
     opcode := 0
     solicited := False
     migreq := False
-    padcount := 0
+    padCnt := 0
     version := 0
     pkey := 0xffff // Default PKEY
     fecn := False

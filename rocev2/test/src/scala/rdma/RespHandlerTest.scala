@@ -33,9 +33,9 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
       dut.io.qpAttr.respTimeOut #= INFINITE_RESP_TIMEOUT // Disable response timeout retry
 
       // TODO: change flush signal accordingly
-      dut.io.sendQCtrl.wrongStateFlush #= false
-      dut.io.sendQCtrl.errorFlush #= false
-      dut.io.sendQCtrl.retryFlush #= false
+      dut.io.txQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.errorFlush #= false
+      dut.io.txQCtrl.retryFlush #= false
 
       val pmtuLen = PMTU.U256
       val (_, pktNumItr, psnItr, totalLenItr) =
@@ -118,9 +118,9 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
       dut.io.qpAttr.respTimeOut #= 0 // Disable response timeout retry
 
       // TODO: change flush signal accordingly
-      dut.io.sendQCtrl.wrongStateFlush #= false
-      dut.io.sendQCtrl.errorFlush #= false
-      dut.io.sendQCtrl.retryFlush #= false
+      dut.io.txQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.errorFlush #= false
+      dut.io.txQCtrl.retryFlush #= false
 
       val pmtuLen = PMTU.U1024
       val (_, pktNumItr, psnStartItr, totalLenItr) =
@@ -379,9 +379,9 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
-      dut.io.sendQCtrl.wrongStateFlush #= false
-      dut.io.sendQCtrl.errorFlush #= false
-      dut.io.sendQCtrl.retryFlush #= false
+      dut.io.txQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.errorFlush #= false
+      dut.io.txQCtrl.retryFlush #= false
 
       val matchQueue = mutable.Queue[PSN]()
 
@@ -416,9 +416,9 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
-      dut.io.sendQCtrl.wrongStateFlush #= false
-      dut.io.sendQCtrl.errorFlush #= false
-      dut.io.sendQCtrl.retryFlush #= false
+      dut.io.txQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.errorFlush #= false
+      dut.io.txQCtrl.retryFlush #= false
 
       // Input to DUT
       val pmtuLen = PMTU.U256
@@ -632,9 +632,9 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
       dut.clockDomain.forkStimulus(10)
 
       // TODO: change flush signal accordingly
-      dut.io.sendQCtrl.wrongStateFlush #= false
-      dut.io.sendQCtrl.errorFlush #= false
-      dut.io.sendQCtrl.retryFlush #= false
+      dut.io.txQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.errorFlush #= false
+      dut.io.txQCtrl.retryFlush #= false
 
       // Input to DUT
       val pmtuLen = PMTU.U256

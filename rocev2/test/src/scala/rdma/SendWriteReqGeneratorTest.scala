@@ -26,7 +26,7 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
 
       val pmtuLen = PMTU.U1024
       dut.io.qpAttr.pmtu #= pmtuLen.id
-      dut.io.sendQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.wrongStateFlush #= false
 
       // Input to DUT
       streamMasterDriver(dut.io.cachedWorkReqAndDmaReadResp, dut.clockDomain) {
@@ -73,7 +73,7 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
       val outputDataQueue = mutable.Queue[(RdmaFragData, MTY, PSN, FragLast)]()
 
       dut.io.qpAttr.pmtu #= pmtuLen.id
-      dut.io.sendQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.wrongStateFlush #= false
       dut.io.cachedWorkReqAndDmaReadResp.valid #= false
       dut.clockDomain.waitSampling()
 

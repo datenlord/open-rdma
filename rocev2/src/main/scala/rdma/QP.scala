@@ -60,8 +60,8 @@ class QpCtrl extends Component {
     val retryFlushDone = in(Bool())
     val qpCreateOrModify = slave(QpCreateOrModifyBus())
     val qpAttr = out(QpAttrData())
-    val recvQCtrl = out(RecvQCtrl())
-    val sendQCtrl = out(SendQCtrl())
+    val rxQCtrl = out(RxQCtrl())
+    val txQCtrl = out(TxQCtrl())
     val workReqCacheScanBus = master(
       CamFifoScanBus(CachedWorkReq(), PENDING_REQ_NUM)
     )
@@ -460,7 +460,7 @@ class QpCtrl extends Component {
       sqRetryFsm.isActive(sqRetryFsm.RETRY_FLUSH) ||
         fenceRetryFsm.isActive(fenceRetryFsm.RETRY_FLUSH)
 
-    when(io.sendQCtrl.retry) {
+    when(io.txQCtrl.retry) {
       assert(
         assertion = Formal.stable(io.workReqCacheScanBus.pushPtr),
         message = L"${REPORT_TIME} time: during retry, no new WR can be added",
@@ -474,7 +474,7 @@ class QpCtrl extends Component {
         retryDone := True
       }
     }
-    when(io.sendQCtrl.wrongStateFlush) {
+    when(io.txQCtrl.wrongStateFlush) {
       curPtr.clear()
     }
     when(io.sqNotifier.retry.pulse && !io.workReqCacheScanBus.empty) {
@@ -533,22 +533,22 @@ class QpCtrl extends Component {
   // Flush RQ if state error or RNR sent in next cycle
   val isQpStateWrong = mainFsm.isActive(mainFsm.ERR) ||
     mainFsm.isActive(mainFsm.RESET) || mainFsm.isActive(mainFsm.INIT)
-  io.sendQCtrl.errorFlush := errFsm.isActive(errFsm.ERR_FLUSH)
-  io.sendQCtrl.retryFlush := sqRetryCtrl.retryFlushState
-  io.sendQCtrl.retry := sqRetryCtrl.fsmInRetryState
-  io.sendQCtrl.fencePulse := False // TODO: currently no use, remote it?
-  io.sendQCtrl.fence := mainFsm.isActive(mainFsm.SQD) ||
+  io.txQCtrl.errorFlush := errFsm.isActive(errFsm.ERR_FLUSH)
+  io.txQCtrl.retryFlush := sqRetryCtrl.retryFlushState
+  io.txQCtrl.retry := sqRetryCtrl.fsmInRetryState
+  io.txQCtrl.fencePulse := False // TODO: currently no use, remote it?
+  io.txQCtrl.fence := mainFsm.isActive(mainFsm.SQD) ||
     sqFsm.isActive(sqFsm.FENCE)
-  io.sendQCtrl.fenceOrRetry := io.sendQCtrl.fence || io.sendQCtrl.retry
-  io.sendQCtrl.wrongStateFlush := isQpStateWrong
+  io.txQCtrl.fenceOrRetry := io.txQCtrl.fence || io.txQCtrl.retry
+  io.txQCtrl.wrongStateFlush := isQpStateWrong
 
   // RQ flush
-  io.recvQCtrl.stateErrFlush := isQpStateWrong
-  io.recvQCtrl.nakSeqTrigger := rqFsm.isActive(rqFsm.NAK_SEQ)
-  io.recvQCtrl.rnrFlush := rqFsm.isActive(rqFsm.RNR) ||
+  io.rxQCtrl.stateErrFlush := isQpStateWrong
+  io.rxQCtrl.nakSeqTrigger := rqFsm.isActive(rqFsm.NAK_SEQ)
+  io.rxQCtrl.rnrFlush := rqFsm.isActive(rqFsm.RNR) ||
     rqFsm.isActive(rqFsm.RNR)
-  io.recvQCtrl.rnrTimeOut := rqFsm.isActive(rqFsm.RNR_TIMEOUT)
-  io.recvQCtrl.flush := io.recvQCtrl.stateErrFlush || io.recvQCtrl.rnrFlush || io.recvQCtrl.nakSeqTrigger
+  io.rxQCtrl.rnrTimeOut := rqFsm.isActive(rqFsm.RNR_TIMEOUT)
+  io.rxQCtrl.flush := io.rxQCtrl.stateErrFlush || io.rxQCtrl.rnrFlush || io.rxQCtrl.nakSeqTrigger
 }
 
 class QP(busWidth: BusWidth) extends Component {
@@ -583,12 +583,12 @@ class QP(busWidth: BusWidth) extends Component {
   reqRespSplitter.io.rx << io.rx
 
   sq.io.qpAttr := io.qpAttr
-  sq.io.sendQCtrl := qpCtrl.io.sendQCtrl
+  sq.io.txQCtrl := qpCtrl.io.txQCtrl
   sq.io.workReq << io.workReq
   sq.io.rxResp << reqRespSplitter.io.txResp
 
   rq.io.qpAttr := io.qpAttr
-  rq.io.recvQCtrl := qpCtrl.io.recvQCtrl
+  rq.io.rxQCtrl := qpCtrl.io.rxQCtrl
   rq.io.rx << reqRespSplitter.io.txReq
   rq.io.recvWorkReq << io.recvWorkReq
 
