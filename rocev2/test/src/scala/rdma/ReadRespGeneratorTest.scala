@@ -24,28 +24,28 @@ class ReadRespGeneratorTest extends AnyFunSuite {
 
       val pmtuLen = PMTU.U1024
       dut.io.qpAttr.pmtu #= pmtuLen.id
-      dut.io.recvQCtrl.stateErrFlush #= false
+      dut.io.rxQCtrl.stateErrFlush #= false
 
       // Input to DUT
       streamMasterDriver(
-        dut.io.readResultCacheDataAndDmaReadRespSegment,
+        dut.io.readRstCacheDataAndDmaReadRespSegment,
         dut.clockDomain
       ) {
         val psn = naturalNumItr.next()
-        dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.psnStart #= psn
-        dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.psnStart #= psn
-        dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.pktNum #= 0
-        dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.dlen #= 0
-        dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes #= 0
-        dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.mty #= 0
-        dut.io.readResultCacheDataAndDmaReadRespSegment.last #= true
+        dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.psnStart #= psn
+        dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.psnStart #= psn
+        dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.pktNum #= 0
+        dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.dlen #= 0
+        dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes #= 0
+        dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.mty #= 0
+        dut.io.readRstCacheDataAndDmaReadRespSegment.last #= true
       }
       onStreamFire(
-        dut.io.readResultCacheDataAndDmaReadRespSegment,
+        dut.io.readRstCacheDataAndDmaReadRespSegment,
         dut.clockDomain
       ) {
         inputPsnQueue.enqueue(
-          dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.psnStart.toInt
+          dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.psnStart.toInt
         )
       }
 
@@ -76,15 +76,15 @@ class ReadRespGeneratorTest extends AnyFunSuite {
       val outputDataQueue = mutable.Queue[(RdmaFragData, MTY, PSN, FragLast)]()
 
       dut.io.qpAttr.pmtu #= pmtuLen.id
-      dut.io.recvQCtrl.stateErrFlush #= false
-      dut.io.readResultCacheDataAndDmaReadRespSegment.valid #= false
+      dut.io.rxQCtrl.stateErrFlush #= false
+      dut.io.readRstCacheDataAndDmaReadRespSegment.valid #= false
 //      dut.clockDomain.waitSampling()
 
       // Input to DUT
       val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
         SendWriteReqReadRespInputGen.getItr(pmtuLen, busWidth)
       pktFragStreamMasterDriver(
-        dut.io.readResultCacheDataAndDmaReadRespSegment,
+        dut.io.readRstCacheDataAndDmaReadRespSegment,
         dut.clockDomain
       ) {
         val totalFragNum = totalFragNumItr.next()
@@ -120,26 +120,26 @@ class ReadRespGeneratorTest extends AnyFunSuite {
 //          f"${simTime()} time: fragIdx=${fragIdx}, fragNum=${fragNum}, isLastInputFrag=${isLastInputFrag}, isLastFragPerPkt=${isLastFragPerPkt}, fragLast=${fragLast}, totalLenBytes=${totalLenBytes}, pktNum=${pktNum}, mtyWidth=${mtyWidth}, residue=${totalLenBytes % mtyWidth}, mty=${mty}%X"
 //        )
 
-          dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.psnStart #= psnStart
-          dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.psnStart #= psnStart
-          dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.dlen #= totalLenBytes
-          dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.pktNum #= pktNum
-          dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes #= totalLenBytes
-          dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.mty #= mty
-          dut.io.readResultCacheDataAndDmaReadRespSegment.last #= fragLast
+          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.psnStart #= psnStart
+          dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.psnStart #= psnStart
+          dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.dlen #= totalLenBytes
+          dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.pktNum #= pktNum
+          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes #= totalLenBytes
+          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.mty #= mty
+          dut.io.readRstCacheDataAndDmaReadRespSegment.last #= fragLast
       }
       onStreamFire(
-        dut.io.readResultCacheDataAndDmaReadRespSegment,
+        dut.io.readRstCacheDataAndDmaReadRespSegment,
         dut.clockDomain
       ) {
         inputDataQueue.enqueue(
           (
-            dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.data.toBigInt,
-            dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.mty.toBigInt,
-            dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.pktNum.toInt,
-            dut.io.readResultCacheDataAndDmaReadRespSegment.resultCacheData.psnStart.toInt,
-            dut.io.readResultCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes.toLong,
-            dut.io.readResultCacheDataAndDmaReadRespSegment.last.toBoolean
+            dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.data.toBigInt,
+            dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.mty.toBigInt,
+            dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.pktNum.toInt,
+            dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.psnStart.toInt,
+            dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes.toLong,
+            dut.io.readRstCacheDataAndDmaReadRespSegment.last.toBoolean
           )
         )
       }

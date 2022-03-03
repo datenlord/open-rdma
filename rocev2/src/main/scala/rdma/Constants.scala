@@ -208,7 +208,7 @@ object BusWidth extends Enumeration {
 object RdmaConstants {
   val TRANSPORT_WIDTH = 3
   val OPCODE_WIDTH = 5
-  val PADCOUNT_WIDTH = 2
+  val PAD_COUNT_WIDTH = 2
   val VERSION_WIDTH = 4
   val PKEY_WIDTH = 16
   val QPN_WIDTH = 24
@@ -217,7 +217,7 @@ object RdmaConstants {
 
   val LONG_WIDTH = 64
   val MEM_ADDR_WIDTH = 64
-  val PADCOUNT_FULL = 4
+  val PAD_COUNT_FULL = 4
 
   val WR_ID_WIDTH = 64
   val PD_ID_WIDTH = 32
@@ -883,12 +883,8 @@ object OpCode extends Enumeration {
 
   def isReqPkt(opcode: Bits): Bool =
     new Composite(opcode) {
-      val result =
-        isSendReqPkt(opcode) || isWriteReqPkt(opcode) || isReadReqPkt(
-          opcode
-        ) || isAtomicReqPkt(
-          opcode
-        )
+      val result = isSendReqPkt(opcode) || isWriteReqPkt(opcode) ||
+        isReadReqPkt(opcode) || isAtomicReqPkt(opcode)
     }.result
 
   // CNP is not considered

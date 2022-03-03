@@ -286,21 +286,21 @@ class CamFifo[Tk <: Data, Tv <: Data](
 // saved in FIFO order. The FIFO depth is the same as the maximum number
 // of outstanding ATOMIC Operations and RDMA READ requests negotiated
 // on a per QP basis at connection setup.
-class ReadAtomicResultCache(depth: Int) extends Component {
+class ReadAtomicRstCache(depth: Int) extends Component {
   val io = new Bundle {
-    val push = slave(Stream(ReadAtomicResultCacheData()))
-    val pop = master(Stream(ReadAtomicResultCacheData()))
+    val push = slave(Stream(ReadAtomicRstCacheData()))
+    val pop = master(Stream(ReadAtomicRstCacheData()))
     val occupancy = out(UInt(log2Up(depth + 1) bits))
     val flush = in(Bool())
-//    val queryPort4DmaReadResp = slave(ReadAtomicResultCacheQueryBus())
-    val queryPort4DupReq = slave(ReadAtomicResultCacheQueryBus())
-//    val queryPort4DupReqDmaRead = slave(ReadAtomicResultCacheQueryBus())
+//    val queryPort4DmaReadResp = slave(ReadAtomicRstCacheQueryBus())
+    val queryPort4DupReq = slave(ReadAtomicRstCacheQueryBus())
+//    val queryPort4DupReqDmaRead = slave(ReadAtomicRstCacheQueryBus())
   }
 
   val cache = new CamFifo(
-    ReadAtomicResultCacheReq(),
-    ReadAtomicResultCacheData(),
-    queryFunc = (k: ReadAtomicResultCacheReq, v: ReadAtomicResultCacheData) =>
+    ReadAtomicRstCacheReq(),
+    ReadAtomicRstCacheData(),
+    queryFunc = (k: ReadAtomicRstCacheReq, v: ReadAtomicRstCacheData) =>
       v.psnStart <= k.psn && k.psn < (v.psnStart + v.pktNum),
     depth = depth,
     portCount = 1,

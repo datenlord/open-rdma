@@ -38,6 +38,7 @@ fi
 ./mill rocev2.test.testOnly rdma.RetryHandlerAndDmaReadInitTest
 ./mill rocev2.test.testOnly rdma.SendReqGeneratorTest
 ./mill rocev2.test.testOnly rdma.ReadRespGeneratorTest
+./mill rocev2.test.testOnly rdma.ReqCommCheckTest
 ./mill rocev2.test.testOnly rdma.RqReadDmaRespHandlerTest
 ./mill rocev2.test.testOnly rdma.WriteReqGeneratorTest
 #./mill rocev2.test.testOnly rdma.SetSuite

@@ -282,7 +282,7 @@ case class SqNotifier() extends Bundle {
   def hasFatalErr(): Bool = err.hasFatalErr()
 }
 
-case class RecvQCtrl() extends Bundle {
+case class RxQCtrl() extends Bundle {
   val stateErrFlush = Bool()
   val rnrFlush = Bool()
   val rnrTimeOut = Bool()
@@ -300,7 +300,7 @@ case class RecvQCtrl() extends Bundle {
   }
 }
 
-case class SendQCtrl() extends Bundle {
+case class TxQCtrl() extends Bundle {
   val errorFlush = Bool()
   val retryFlush = Bool()
   val retry = Bool()
@@ -1416,7 +1416,7 @@ case class WorkReqCacheQueryBus() extends Bundle with IMasterSlave {
   }
 }
 
-case class ReadAtomicResultCacheData() extends Bundle {
+case class ReadAtomicRstCacheData() extends Bundle {
   val psnStart = UInt(PSN_WIDTH bits)
   val pktNum = UInt(PSN_WIDTH bits)
   val opcode = Bits(OPCODE_WIDTH bits)
@@ -1446,54 +1446,54 @@ case class ReadAtomicResultCacheData() extends Bundle {
   }
 }
 
-case class ReadAtomicResultCacheReq() extends Bundle {
+case class ReadAtomicRstCacheReq() extends Bundle {
   val psn = UInt(PSN_WIDTH bits)
 }
 
-case class ReadAtomicResultCacheResp() extends Bundle {
-  val cachedData = ReadAtomicResultCacheData()
-  val query = ReadAtomicResultCacheReq()
+case class ReadAtomicRstCacheResp() extends Bundle {
+  val cachedData = ReadAtomicRstCacheData()
+  val query = ReadAtomicRstCacheReq()
   val found = Bool()
 }
 
-case class ReadAtomicResultCacheReqBus() extends Bundle with IMasterSlave {
-  val req = Stream(ReadAtomicResultCacheReq())
+case class ReadAtomicRstCacheReqBus() extends Bundle with IMasterSlave {
+  val req = Stream(ReadAtomicRstCacheReq())
 
-//  def >>(that: ReadAtomicResultCacheReqBus): Unit = {
+//  def >>(that: ReadAtomicRstCacheReqBus): Unit = {
 //    this.req >> that.req
 //  }
 //
-//  def <<(that: ReadAtomicResultCacheReqBus): Unit = that >> this
+//  def <<(that: ReadAtomicRstCacheReqBus): Unit = that >> this
 
   override def asMaster(): Unit = {
     master(req)
   }
 }
 
-case class ReadAtomicResultCacheRespBus() extends Bundle with IMasterSlave {
-  val resp = Stream(ReadAtomicResultCacheResp())
+case class ReadAtomicRstCacheRespBus() extends Bundle with IMasterSlave {
+  val resp = Stream(ReadAtomicRstCacheResp())
 
-//  def >>(that: ReadAtomicResultCacheRespBus): Unit = {
+//  def >>(that: ReadAtomicRstCacheRespBus): Unit = {
 //    this.resp >> that.resp
 //  }
 //
-//  def <<(that: ReadAtomicResultCacheRespBus): Unit = that >> this
+//  def <<(that: ReadAtomicRstCacheRespBus): Unit = that >> this
 
   override def asMaster(): Unit = {
     master(resp)
   }
 }
 
-case class ReadAtomicResultCacheQueryBus() extends Bundle with IMasterSlave {
-  val req = Stream(ReadAtomicResultCacheReq())
-  val resp = Stream(ReadAtomicResultCacheResp())
+case class ReadAtomicRstCacheQueryBus() extends Bundle with IMasterSlave {
+  val req = Stream(ReadAtomicRstCacheReq())
+  val resp = Stream(ReadAtomicRstCacheResp())
 
-  def >>(that: ReadAtomicResultCacheQueryBus): Unit = {
+  def >>(that: ReadAtomicRstCacheQueryBus): Unit = {
     this.req >> that.req
     this.resp << that.resp
   }
 
-  def <<(that: ReadAtomicResultCacheQueryBus): Unit = that >> this
+  def <<(that: ReadAtomicRstCacheQueryBus): Unit = that >> this
 
   override def asMaster(): Unit = {
     master(req)
@@ -1533,20 +1533,20 @@ case class ReqAndDmaReadResp[T <: Data](
 }
 
 /** for RQ */
-//case class ReadAtomicResultCacheRespAndDmaReadResp(busWidth: BusWidth)
+//case class ReadAtomicRstCacheRespAndDmaReadResp(busWidth: BusWidth)
 //    extends Bundle {
 //  val dmaReadResp = DmaReadResp(busWidth)
-//  val resultCacheResp = ReadAtomicResultCacheResp()
+//  val resultCacheResp = ReadAtomicRstCacheResp()
 //}
 
 //object ABC {
-//  type ReadAtomicResultCacheDataAndDmaReadResp =
-//    ReqAndDmaReadResp[ReadAtomicResultCacheData]
+//  type ReadAtomicRstCacheDataAndDmaReadResp =
+//    ReqAndDmaReadResp[ReadAtomicRstCacheData]
 //}
-case class ReadAtomicResultCacheDataAndDmaReadResp(busWidth: BusWidth)
+case class ReadAtomicRstCacheDataAndDmaReadResp(busWidth: BusWidth)
     extends Bundle {
   val dmaReadResp = DmaReadResp(busWidth)
-  val resultCacheData = ReadAtomicResultCacheData()
+  val resultCacheData = ReadAtomicRstCacheData()
 }
 
 /** for SQ */
@@ -2187,7 +2187,7 @@ case class RqReqCheckRst() extends Bundle {
   val isOpSeqCheckPass = Bool()
   val isSupportedOpCode = Bool()
   val isPadCntCheckPass = Bool()
-  val isReadAtomicResultCacheFull = Bool()
+  val isReadAtomicRstCacheFull = Bool()
   val epsn = UInt(PSN_WIDTH bits)
 }
 

@@ -21,7 +21,7 @@ class SqDmaReadRespHandlerTest extends AnyFunSuite {
       val psnQueue = mutable.Queue[PSN]()
       val matchQueue = mutable.Queue[PSN]()
 
-      dut.io.sendQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.wrongStateFlush #= false
 
       // Input to DUT
       streamMasterDriver(dut.io.cachedWorkReq, dut.clockDomain) {
@@ -72,7 +72,7 @@ class SqDmaReadRespHandlerTest extends AnyFunSuite {
       val matchQueue = mutable.Queue[Int]()
 
       val pmtuLen = PMTU.U1024
-      dut.io.sendQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.wrongStateFlush #= false
 
       // Input to DUT
       val (_, pktNumItr4CacheData, psnItr4CacheData, totalLenItr4CacheData) =
