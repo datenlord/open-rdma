@@ -41,20 +41,17 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
       val (_, pktNumItr, psnItr, totalLenItr) =
         SendWriteReqReadRespInputGen.getItr(pmtuLen, busWidth)
 
-      val dupOrGhostAckQueue = mutable.Queue[(PktNum, PsnStart)]()
+      val dupOrGhostAckQueue = mutable.Queue[(PktNum, PsnStart, PktLen)]()
       val inputAckQueue = mutable.Queue[PSN]()
 
       val pendingReqNum = PENDING_REQ_NUM
       val matchCnt = MATCH_CNT
 
-      val pktNum4CachedWorkReq = pktNumItr.next()
-      val psnStart4CachedWorkReq = psnItr.next()
-      val lenBytes4CachedWorkReq = totalLenItr.next()
       for (_ <- 0 until pendingReqNum) {
         val pktNum = pktNumItr.next()
         val psnStart = psnItr.next()
-        val _ = totalLenItr.next()
-        dupOrGhostAckQueue.enqueue((pktNum, psnStart))
+        val totalLenBytes = totalLenItr.next()
+        dupOrGhostAckQueue.enqueue((pktNum, psnStart, totalLenBytes.toLong))
       }
       fork {
         while (true) {
@@ -63,22 +60,12 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
           for (_ <- 0 until pendingReqNum) {
             val pktNum = pktNumItr.next()
             val psnStart = psnItr.next()
-            val _ = totalLenItr.next()
-            dupOrGhostAckQueue.enqueue((pktNum, psnStart))
+            val totalLenBytes = totalLenItr.next()
+            dupOrGhostAckQueue.enqueue((pktNum, psnStart, totalLenBytes.toLong))
           }
         }
       }
 
-      streamMasterDriver(dut.io.cachedWorkReqPop, dut.clockDomain) {
-        val randOpCode = WorkReqSim.randomSendWriteOpCode()
-        dut.io.cachedWorkReqPop.workReq.opcode #= randOpCode
-        // NOTE: if PSN comparison is involved, it must update nPSN too
-        // CacheWorkReq PSN always larger than ACK PSN
-        dut.io.qpAttr.npsn #= pktNum4CachedWorkReq
-        dut.io.cachedWorkReqPop.pktNum #= pktNum4CachedWorkReq
-        dut.io.cachedWorkReqPop.psnStart #= psnStart4CachedWorkReq
-        dut.io.cachedWorkReqPop.workReq.lenBytes #= lenBytes4CachedWorkReq
-      }
       // io.cachedWorkReqPop never fire
       MiscUtils.checkConditionAlways(dut.clockDomain)(
 //        !dut.io.cachedWorkReqPop.ready.toBoolean
@@ -86,8 +73,20 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
       )
 
       streamMasterDriver(dut.io.rx, dut.clockDomain) {
-        val (pktNum, psnStart) = dupOrGhostAckQueue.dequeue()
-        val ackPsn = (psnStart + pktNum - 1) % TOTAL_PSN
+        val (pktNum, psnStart, totalLenBytes) = dupOrGhostAckQueue.dequeue()
+
+        // Set input to dut.io.cachedWorkReqPop
+        dut.io.cachedWorkReqPop.randomize()
+        val randOpCode = WorkReqSim.randomSendWriteOpCode()
+        dut.io.cachedWorkReqPop.workReq.opcode #= randOpCode
+        // NOTE: if PSN comparison is involved, it must update nPSN too
+        dut.io.qpAttr.npsn #= (psnStart + pktNum) % TOTAL_PSN
+        dut.io.cachedWorkReqPop.pktNum #= pktNum
+        dut.io.cachedWorkReqPop.psnStart #= psnStart
+        dut.io.cachedWorkReqPop.workReq.lenBytes #= totalLenBytes
+
+        // Set input to dut.io.rx
+        val ackPsn = (psnStart - 1 + TOTAL_PSN) % TOTAL_PSN
         dut.io.rx.bth.psn #= ackPsn
         dut.io.rx.bth.setTransportAndOpCode(Transports.RC, OpCode.ACKNOWLEDGE)
         dut.io.rx.aeth.setAsNormalAck()
@@ -160,6 +159,8 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
         val pktNum = pktNumItr.next()
         val psnStart = psnStartItr.next()
         val lenBytes = totalLenItr.next()
+        // NOTE: if PSN comparison is involved, it must update nPSN too
+        dut.io.qpAttr.npsn #= (psnStart + pktNum) % TOTAL_PSN
         cachedWorkReqQueue.enqueue((pktNum, psnStart, lenBytes.toLong))
 //        println(
 //          f"${simTime()} time: cachedWorkReqQueue enqueue: pktNum=${pktNum}%X, psnStart=${psnStart}%X, lenBytes=${lenBytes}%X"
@@ -182,6 +183,8 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
             val pktNum = pktNumItr.next()
             val psnStart = psnStartItr.next()
             val lenBytes = totalLenItr.next()
+            // NOTE: if PSN comparison is involved, it must update nPSN too
+            dut.io.qpAttr.npsn #= (psnStart + pktNum) % TOTAL_PSN
             cachedWorkReqQueue.enqueue((pktNum, psnStart, lenBytes.toLong))
             if ((idx % pendingReqNum) == (pendingReqNum - 1)) {
               explicitAckQueue.enqueue((pktNum, psnStart, AckType.NAK_RNR))
@@ -222,9 +225,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
       streamMasterDriver(dut.io.rx, dut.clockDomain) {
         val (pktNum, psnStart, ackType) = explicitAckQueue.dequeue()
         val ackPsn = (psnStart + pktNum - 1) % TOTAL_PSN
-        // NOTE: if PSN comparison is involved, it must update nPSN too
-        // ACK PSN always larger than current CacheWorkReq PSN
-        dut.io.qpAttr.npsn #= ackPsn
+//        dut.io.qpAttr.npsn #= ackPsn
         dut.io.rx.bth.psn #= ackPsn
         dut.io.rx.bth.setTransportAndOpCode(Transports.RC, OpCode.ACKNOWLEDGE)
         dut.io.rx.aeth.setAs(ackType)
@@ -372,19 +373,21 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
     )
     .compile(new ReadAtomicRespVerifierAndFatalNakNotifier(busWidth))
 
+// TODO: test("ReadAtomicRespVerifierAndFatalNakNotifier error flush test")
+
   test("ReadAtomicRespVerifierAndFatalNakNotifier fatal NAK test") {
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
-      // TODO: change flush signal accordingly
       dut.io.sendQCtrl.wrongStateFlush #= false
       dut.io.sendQCtrl.errorFlush #= false
       dut.io.sendQCtrl.retryFlush #= false
 
-//      val inputAckQueue = mutable.Queue[(PSN, SpinalEnumElement[AckType.type])]()
+      val matchQueue = mutable.Queue[PSN]()
 
+      dut.io.readAtomicResp.pktFrag.valid #= false
       streamMasterDriver(dut.io.rxAck, dut.clockDomain) {
-        val normalAckOrFatalNakType = AckTypeSim.randomNormalAckOrFatalNak()
+        val normalAckOrFatalNakType = AckTypeSim.randomFatalNak()
         dut.io.rxAck.bth
           .setTransportAndOpCode(Transports.RC, OpCode.ACKNOWLEDGE)
         dut.io.rxAck.aeth.setAs(normalAckOrFatalNakType)
@@ -400,17 +403,19 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
             dut.io.errNotifier.errType.toEnum != SqErrType.NO_ERR,
             f"${simTime()} time: dut.io.errNotifier.errType=${dut.io.errNotifier.errType.toEnum} should not be ${SqErrType.NO_ERR} when ackType=${ackType}"
           )
+          matchQueue.enqueue(dut.io.rxAck.bth.psn.toInt)
         }
-//        inputAckQueue.enqueue((dut.io.rxAck.bth.psn.toInt, ackType))
       }
+      streamSlaveRandomizer(dut.io.txAck, dut.clockDomain)
+
+      waitUntil(matchQueue.size > MATCH_CNT)
     }
   }
 
-  test("ReadAtomicRespVerifierAndFatalNakNotifier normal behavior test") {
+  test("ReadAtomicRespVerifierAndFatalNakNotifier read response test") {
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
-      // TODO: change flush signal accordingly
       dut.io.sendQCtrl.wrongStateFlush #= false
       dut.io.sendQCtrl.errorFlush #= false
       dut.io.sendQCtrl.retryFlush #= false
@@ -431,6 +436,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
       val addrCacheReadRespQueue = mutable.Queue[(PSN, Addr)]()
       val matchQueue = mutable.Queue[PSN]()
 
+      dut.io.rxAck.valid #= false
       pktFragStreamMasterDriver(
         dut.io.readAtomicResp.pktFrag,
         dut.clockDomain
@@ -513,7 +519,6 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
             dut.io.addrCacheRead.req.va.toBigInt
           )
         )
-
 //        println(
 //          f"${simTime()} time: dut.io.addrCacheRead.req received psn=${dut.io.addrCacheRead.req.psn.toInt}%X"
 //        )
@@ -563,7 +568,6 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
 
           val (psnStartInAddrCacheResp, phyAddrInAddrCacheResp) =
             MiscUtils.safeDeQueue(addrCacheReadRespQueue, dut.clockDomain)
-
 //          println(
 //            f"${simTime()} time: Read response psnStartInReadRespMeta=${psnStartInReadRespMeta}=${psnStartInReadRespMeta}%X"
 //          )

@@ -22,12 +22,12 @@ object DmaReadRespHandler {
       busWidth: BusWidth,
       isReqZeroDmaLen: T => Bool
   ): Stream[Fragment[ReqAndDmaReadResp[T]]] = {
-    val rslt =
+    val result =
       new DmaReadRespHandler(inputReq.payloadType, busWidth, isReqZeroDmaLen)
-    rslt.io.flush := flush
-    rslt.io.inputReq << inputReq
-    rslt.io.dmaReadResp << dmaReadResp
-    rslt.io.reqAndDmaReadResp
+    result.io.flush := flush
+    result.io.inputReq << inputReq
+    result.io.dmaReadResp << dmaReadResp
+    result.io.reqAndDmaReadResp
   }
 }
 
@@ -75,21 +75,21 @@ class DmaReadRespHandler[T <: Data](
     select = txSel,
     inputs = Vec(
       twoStreams(emptyReadIdx).translateWith {
-        val rslt =
+        val result =
           cloneOf(io.reqAndDmaReadResp.payloadType)
-        rslt.dmaReadResp
+        result.dmaReadResp
           .setDefaultVal() // TODO: dmaReadResp.lenBytes set to zero explicitly
-        rslt.req := twoStreams(emptyReadIdx).payload
-        rslt.last := True
-        rslt
+        result.req := twoStreams(emptyReadIdx).payload
+        result.last := True
+        result
       },
       joinStream.translateWith {
-        val rslt =
+        val result =
           cloneOf(io.reqAndDmaReadResp.payloadType)
-        rslt.dmaReadResp := joinStream._1
-        rslt.req := joinStream._2
-        rslt.last := joinStream.isLast
-        rslt
+        result.dmaReadResp := joinStream._1
+        result.req := joinStream._2
+        result.last := joinStream.isLast
+        result
       }
     )
   )
@@ -118,12 +118,12 @@ object DmaReadRespSegment {
       busWidth: BusWidth,
       isReqZeroDmaLen: T => Bool
   ): Stream[Fragment[T]] = {
-    val rslt =
+    val result =
       new DmaReadRespSegment(input.fragmentType, busWidth, isReqZeroDmaLen)
-    rslt.io.flush := flush
-    rslt.io.pmtu := pmtu
-    rslt.io.reqAndDmaReadRespIn << input
-    rslt.io.reqAndDmaReadRespOut
+    result.io.flush := flush
+    result.io.pmtu := pmtu
+    result.io.reqAndDmaReadRespIn << input
+    result.io.reqAndDmaReadRespOut
   }
 }
 
@@ -181,18 +181,18 @@ object CombineHeaderAndDmaResponse {
           DmaReadResp,
           UInt,
           QpAttrData
-      ) => CombineHeaderAndDmaRespInternalRslt
+      ) => CombineHeaderAndDmaRespInternalRst
   ): RdmaDataBus = {
-    val rslt = new CombineHeaderAndDmaResponse(
+    val result = new CombineHeaderAndDmaResponse(
       reqAndDmaReadRespSegment.reqType,
       busWidth,
 //      pktNumFunc,
       headerGenFunc
     )
-    rslt.io.qpAttr := qpAttr
-    rslt.io.flush := flush
-    rslt.io.reqAndDmaReadRespSegment << reqAndDmaReadRespSegment
-    rslt.io.tx
+    result.io.qpAttr := qpAttr
+    result.io.flush := flush
+    result.io.reqAndDmaReadRespSegment << reqAndDmaReadRespSegment
+    result.io.tx
   }
 }
 
@@ -205,7 +205,7 @@ class CombineHeaderAndDmaResponse[T <: Data](
         DmaReadResp,
         UInt,
         QpAttrData
-    ) => CombineHeaderAndDmaRespInternalRslt
+    ) => CombineHeaderAndDmaRespInternalRst
 ) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
@@ -240,32 +240,32 @@ class CombineHeaderAndDmaResponse[T <: Data](
   val headerStream = StreamSource()
     .throwWhen(io.flush)
     .translateWith {
-      val rslt = HeaderDataAndMty(BTH(), busWidth)
-      rslt.header := bth
-      rslt.data := headerBits
-      rslt.mty := headerMtyBits
-      rslt
+      val result = HeaderDataAndMty(BTH(), busWidth)
+      result.header := bth
+      result.data := headerBits
+      result.mty := headerMtyBits
+      result
     }
   val addHeaderStream = StreamAddHeader(
     input
       .throwWhen(io.flush)
       .translateWith {
-        val rslt = Fragment(DataAndMty(busWidth))
-        rslt.data := inputDmaDataFrag.data
-        rslt.mty := inputDmaDataFrag.mty
-        rslt.last := isLastDataFrag
-        rslt
+        val result = Fragment(DataAndMty(busWidth))
+        result.data := inputDmaDataFrag.data
+        result.mty := inputDmaDataFrag.mty
+        result.last := isLastDataFrag
+        result
       },
     headerStream,
     busWidth
   )
   io.tx.pktFrag << addHeaderStream.translateWith {
-    val rslt = Fragment(RdmaDataPkt(busWidth))
-    rslt.bth := addHeaderStream.header
-    rslt.data := addHeaderStream.data
-    rslt.mty := addHeaderStream.mty
-    rslt.last := addHeaderStream.last
-    rslt
+    val result = Fragment(RdmaDataPkt(busWidth))
+    result.bth := addHeaderStream.header
+    result.data := addHeaderStream.data
+    result.mty := addHeaderStream.mty
+    result.last := addHeaderStream.last
+    result
   }
 }
 
@@ -273,9 +273,9 @@ class CombineHeaderAndDmaResponse[T <: Data](
 
 object StreamSource {
   def apply(): Event = {
-    val rslt = Event
-    rslt.valid := True
-    rslt
+    val result = Event
+    result.valid := True
+    result
   }
 }
 
@@ -429,10 +429,10 @@ object StreamDropHeader {
       inputStream: Stream[Fragment[T]],
       headerFragNum: UInt
   ): Stream[Fragment[T]] = {
-    val rslt = new StreamDropHeader(cloneOf(inputStream.fragmentType))
-    rslt.io.inputStream << inputStream
-    rslt.io.headerFragNum := headerFragNum
-    rslt.io.outputStream
+    val result = new StreamDropHeader(cloneOf(inputStream.fragmentType))
+    result.io.inputStream << inputStream
+    result.io.headerFragNum := headerFragNum
+    result.io.outputStream
   }
 }
 
@@ -474,10 +474,10 @@ class StreamSegment[T <: Data](dataType: HardType[T]) extends Component {
   }
 
   io.outputStream << io.inputStream.translateWith {
-    val rslt = cloneOf(io.inputStream.payloadType) // Fragment(dataType())
-    rslt.fragment := inputData
-    rslt.last := setLast
-    rslt
+    val result = cloneOf(io.inputStream.payloadType) // Fragment(dataType())
+    result.fragment := inputData
+    result.last := setLast
+    result
   }
 }
 
@@ -486,10 +486,10 @@ object StreamSegment {
       inputStream: Stream[Fragment[T]],
       segmentFragNum: UInt
   ): Stream[Fragment[T]] = {
-    val rslt = new StreamSegment(cloneOf(inputStream.fragmentType))
-    rslt.io.inputStream << inputStream
-    rslt.io.segmentFragNum := segmentFragNum
-    rslt.io.outputStream
+    val result = new StreamSegment(cloneOf(inputStream.fragmentType))
+    result.io.inputStream << inputStream
+    result.io.segmentFragNum := segmentFragNum
+    result.io.outputStream
   }
 }
 
@@ -649,12 +649,12 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
   }
 
   val inputStreamTranslate = joinStream.translateWith {
-    val rslt = cloneOf(io.outputStream.payloadType)
-    rslt.header := inputHeader
-    rslt.data := outputData
-    rslt.mty := outputMty
-    rslt.last := isLastFrag && !lastFragHasResidue
-    rslt
+    val result = cloneOf(io.outputStream.payloadType)
+    result.header := inputHeader
+    result.data := outputData
+    result.mty := outputMty
+    result.last := isLastFrag && !lastFragHasResidue
+    result
   }
 
   // needHandleLastFragResidueReg is CSR.
@@ -691,11 +691,11 @@ object StreamAddHeader {
       widthOf(inputStream.data) == busWidth.id,
       s"widthOf(inputStream.data)=${widthOf(inputStream.data)} should == busWidth.id=${busWidth.id}"
     )
-    val rslt =
+    val result =
       new StreamAddHeader(inputHeader.headerType, busWidth)
-    rslt.io.inputStream << inputStream
-    rslt.io.inputHeader << inputHeader
-    rslt.io.outputStream
+    result.io.inputStream << inputStream
+    result.io.inputHeader << inputHeader
+    result.io.outputStream
   }
 }
 
@@ -775,17 +775,17 @@ class StreamRemoveHeader(busWidth: BusWidth) extends Component {
     .throwWhen(throwDelayedLastFrag)
     .continueWhen(io.inputStream.valid || needHandleLastFragResidue)
     .translateWith {
-      val rslt = cloneOf(io.inputStream.payloadType)
+      val result = cloneOf(io.inputStream.payloadType)
       when(needHandleLastFragResidue) {
-        rslt.data := extraLastFragData
-        rslt.mty := extraLastFragMty
-        rslt.last := True
+        result.data := extraLastFragData
+        result.mty := extraLastFragMty
+        result.last := True
       } otherwise {
-        rslt.data := outputData
-        rslt.mty := outputMty
-        rslt.last := isLastFrag && !inputFragHasResidue
+        result.data := outputData
+        result.mty := outputMty
+        result.last := isLastFrag && !inputFragHasResidue
       }
-      rslt
+      result
     }
 
   io.outputStream << inputStreamTranslate
@@ -797,10 +797,10 @@ object StreamRemoveHeader {
       headerLenBytes: UInt,
       busWidth: BusWidth
   ): Stream[Fragment[DataAndMty]] = {
-    val rslt = new StreamRemoveHeader(busWidth)
-    rslt.io.inputStream << inputStream
-    rslt.io.headerLenBytes := headerLenBytes
-    rslt.io.outputStream
+    val result = new StreamRemoveHeader(busWidth)
+    result.io.inputStream << inputStream
+    result.io.headerLenBytes := headerLenBytes
+    result.io.outputStream
   }
 }
 
@@ -808,11 +808,11 @@ object StreamRemoveHeader {
 object SignalEdgeDrivenStream {
   def apply(signal: Bool): Stream[NoData] =
     new Composite(signal) {
-      val rslt = Stream(NoData)
+      val result = Stream(NoData)
       val signalRiseEdge = signal.rise(initAt = False)
       val validReg = Reg(Bool())
         .setWhen(signalRiseEdge)
-        .clearWhen(rslt.fire)
+        .clearWhen(result.fire)
       when(validReg) {
         assert(
           assertion = !signalRiseEdge,
@@ -821,8 +821,8 @@ object SignalEdgeDrivenStream {
           severity = FAILURE
         )
       }
-      rslt.valid := signal.rise(initAt = False) || validReg
-    }.rslt
+      result.valid := signal.rise(initAt = False) || validReg
+    }.result
 }
 
 /** Join a stream A of fragments with a stream B,
@@ -870,11 +870,11 @@ class FragmentStreamConditionalJoinStream[T1 <: Data, T2 <: Data](
   io.outputJoinStream << io.inputFragmentStream
     .continueWhen(io.inputStream.valid)
     .translateWith {
-      val rslt = cloneOf(io.outputJoinStream.payloadType)
-      rslt._1 := io.inputFragmentStream.fragment
-      rslt._2 := io.inputStream.payload
-      rslt.last := io.inputFragmentStream.isLast
-      rslt
+      val result = cloneOf(io.outputJoinStream.payloadType)
+      result._1 := io.inputFragmentStream.fragment
+      result._2 := io.inputStream.payload
+      result.last := io.inputFragmentStream.isLast
+      result
     }
 }
 
@@ -905,13 +905,13 @@ object ConditionalStreamFork {
       forkCond: Bool,
       portCount: Int
   ): Vec[Stream[T]] = {
-    val rslt = Vec(Stream(inputStream.payloadType), portCount + 1)
+    val result = Vec(Stream(inputStream.payloadType), portCount + 1)
     val forkStreams = StreamFork(inputStream, portCount + 1)
-    rslt(portCount) << forkStreams(portCount)
+    result(portCount) << forkStreams(portCount)
     for (idx <- 0 until portCount) {
-      rslt(idx) << forkStreams(idx).takeWhen(forkCond)
+      result(idx) << forkStreams(idx).takeWhen(forkCond)
     }
-    rslt
+    result
   }
 }
 
@@ -1245,8 +1245,8 @@ object setAllBits {
     new Composite(width) {
       val one = U(1, 1 bit)
       val shift = (one << width) - 1
-      val rslt = shift.asBits
-    }.rslt
+      val result = shift.asBits
+    }.result
 }
 
 object IPv4Addr {
@@ -1310,59 +1310,59 @@ object PsnUtil {
       psnB: UInt,
       curPsn: UInt
   ): SpinalEnumCraft[PsnCompResult.type] =
-    new Composite(curPsn) {
+    new Composite(curPsn, "PsnUtil_cmp") {
       // TODO: check timing, maybe too many logic level here
-      // TODO: check bugs
-      val rslt = PsnCompResult()
-      when(psnA === psnB) {
-        rslt := PsnCompResult.EQUAL
-      } elsewhen (psnA === curPsn) {
-        rslt := PsnCompResult.GREATER
-      } elsewhen (psnB === curPsn) {
-        rslt := PsnCompResult.LESSER
-      } elsewhen (psnA < psnB) {
-        when(curPsn <= psnA) {
-          rslt := PsnCompResult.LESSER
-        } elsewhen (psnB <= curPsn) {
-          rslt := PsnCompResult.LESSER
-        } otherwise {
-          rslt := PsnCompResult.GREATER
-        }
-      } otherwise { // psnA > psnB
-        when(psnA <= curPsn) {
-          rslt := PsnCompResult.GREATER
-        } elsewhen (curPsn <= psnB) {
-          rslt := PsnCompResult.GREATER
-        } otherwise {
-          rslt := PsnCompResult.LESSER
-        }
-      }
-//      val oldestPSN = (curPsn - HALF_MAX_PSN) & PSN_MASK
+      val result = PsnCompResult()
 //      when(psnA === psnB) {
-//        rslt := PsnCompResult.EQUAL
+//        result := PsnCompResult.EQUAL
+//      } elsewhen (psnA === curPsn) {
+//        result := PsnCompResult.GREATER
+//      } elsewhen (psnB === curPsn) {
+//        result := PsnCompResult.LESSER
 //      } elsewhen (psnA < psnB) {
-//        when(oldestPSN <= psnA) {
-//          rslt := PsnCompResult.LESSER
-//        } elsewhen (psnB <= oldestPSN) {
-//          rslt := PsnCompResult.LESSER
+//        when(curPsn <= psnA) {
+//          result := PsnCompResult.LESSER
+//        } elsewhen (psnB <= curPsn) {
+//          result := PsnCompResult.LESSER
 //        } otherwise {
-//          rslt := PsnCompResult.GREATER
+//          result := PsnCompResult.GREATER
 //        }
 //      } otherwise { // psnA > psnB
-//        when(psnA <= oldestPSN) {
-//          rslt := PsnCompResult.GREATER
-//        } elsewhen (oldestPSN <= psnB) {
-//          rslt := PsnCompResult.GREATER
+//        when(psnA <= curPsn) {
+//          result := PsnCompResult.GREATER
+//        } elsewhen (curPsn <= psnB) {
+//          result := PsnCompResult.GREATER
 //        } otherwise {
-//          rslt := PsnCompResult.LESSER
+//          result := PsnCompResult.LESSER
 //        }
 //      }
-    }.rslt
+
+      val oldestPSN = (curPsn - HALF_MAX_PSN) & PSN_MASK
+      when(psnA === psnB) {
+        result := PsnCompResult.EQUAL
+      } elsewhen (psnA < psnB) {
+        when(oldestPSN <= psnA) {
+          result := PsnCompResult.LESSER
+        } elsewhen (psnB <= oldestPSN) {
+          result := PsnCompResult.LESSER
+        } otherwise {
+          result := PsnCompResult.GREATER
+        }
+      } otherwise { // psnA > psnB
+        when(psnA <= oldestPSN) {
+          result := PsnCompResult.GREATER
+        } elsewhen (oldestPSN <= psnB) {
+          result := PsnCompResult.GREATER
+        } otherwise {
+          result := PsnCompResult.LESSER
+        }
+      }
+    }.result
 
   /** psnA - psnB, always <= HALF_MAX_PSN
     */
   def diff(psnA: UInt, psnB: UInt): UInt =
-    new Composite(psnA) {
+    new Composite(psnA, "PsnUtil_diff") {
       val min = UInt(PSN_WIDTH bits)
       val max = UInt(PSN_WIDTH bits)
       when(psnA > psnB) {
@@ -1373,13 +1373,13 @@ object PsnUtil {
         max := psnB
       }
       val diff = max - min
-      val rslt = UInt(PSN_WIDTH bits)
+      val result = UInt(PSN_WIDTH bits)
       when(diff > HALF_MAX_PSN) {
-        rslt := (TOTAL_PSN - diff).resize(PSN_WIDTH)
+        result := (TOTAL_PSN - diff).resize(PSN_WIDTH)
       } otherwise {
-        rslt := diff
+        result := diff
       }
-    }.rslt
+    }.result
 
   def lt(psnA: UInt, psnB: UInt, curPsn: UInt): Bool =
     cmp(psnA, psnB, curPsn) === PsnCompResult.LESSER
@@ -1410,9 +1410,9 @@ object bufSizeCheck {
     new Composite(dataLenBytes) {
       val bufEndAddr = bufPhysicalAddr + bufSize
       val targetEndAddr = targetPhysicalAddr + dataLenBytes
-      val rslt =
+      val result =
         bufPhysicalAddr <= targetPhysicalAddr && targetEndAddr <= bufEndAddr
-    }.rslt
+    }.result
 }
 
 object OpCodeSeq {
@@ -1420,15 +1420,15 @@ object OpCodeSeq {
 
   def checkReqSeq(preOpCode: Bits, curOpCode: Bits): Bool =
     new Composite(curOpCode) {
-      val rslt = Bool()
+      val result = Bool()
 
       switch(preOpCode) {
         is(SEND_FIRST.id, SEND_MIDDLE.id) {
-          rslt := curOpCode === SEND_MIDDLE.id ||
+          result := curOpCode === SEND_MIDDLE.id ||
             OpCode.isSendLastReqPkt(curOpCode)
         }
         is(RDMA_WRITE_FIRST.id, RDMA_WRITE_MIDDLE.id) {
-          rslt := curOpCode === RDMA_WRITE_MIDDLE.id ||
+          result := curOpCode === RDMA_WRITE_MIDDLE.id ||
             OpCode.isWriteLastReqPkt(curOpCode)
         }
         is(
@@ -1446,30 +1446,30 @@ object OpCodeSeq {
           COMPARE_SWAP.id,
           FETCH_ADD.id
         ) {
-          rslt := OpCode.isFirstOrOnlyReqPkt(curOpCode)
+          result := OpCode.isFirstOrOnlyReqPkt(curOpCode)
         }
         default {
-          rslt := False
+          result := False
         }
       }
-    }.rslt
+    }.result
 
   def checkReadRespSeq(preOpCode: Bits, curOpCode: Bits): Bool =
     new Composite(curOpCode) {
-      val rslt = Bool()
+      val result = Bool()
 
       switch(preOpCode) {
         is(RDMA_READ_RESPONSE_FIRST.id, RDMA_READ_RESPONSE_MIDDLE.id) {
-          rslt := curOpCode === RDMA_READ_RESPONSE_MIDDLE.id || curOpCode === RDMA_READ_RESPONSE_LAST.id
+          result := curOpCode === RDMA_READ_RESPONSE_MIDDLE.id || curOpCode === RDMA_READ_RESPONSE_LAST.id
         }
         is(RDMA_READ_RESPONSE_ONLY.id, RDMA_READ_RESPONSE_LAST.id) {
-          rslt := curOpCode === RDMA_READ_RESPONSE_FIRST.id || curOpCode === RDMA_READ_RESPONSE_ONLY.id
+          result := curOpCode === RDMA_READ_RESPONSE_FIRST.id || curOpCode === RDMA_READ_RESPONSE_ONLY.id
         }
         default {
-          rslt := False
+          result := False
         }
       }
-    }.rslt
+    }.result
 }
 
 object padCount {
@@ -1516,8 +1516,8 @@ object reqPadCountCheck {
           mtyCheck := pktFragLen === (widthOf(RETH()) % busWidth.id)
         }
       }
-      val rslt = mtyCheck && paddingCheck
-    }.rslt
+      val result = mtyCheck && paddingCheck
+    }.result
 }
 
 object respPadCountCheck {
@@ -1569,14 +1569,14 @@ object respPadCountCheck {
           ) % busWidth.id)
         }
       }
-      val rslt = mtyCheck && paddingCheck
-    }.rslt
+      val result = mtyCheck && paddingCheck
+    }.result
 }
 
 object ePsnIncrease {
   def apply(pktFrag: RdmaDataPkt, pmtu: Bits, busWidth: BusWidth): UInt =
     new Composite(pktFrag) {
-      val rslt = UInt(PSN_WIDTH bits)
+      val result = UInt(PSN_WIDTH bits)
       val isReadReq = OpCode.isReadReqPkt(pktFrag.bth.opcode)
       when(isReadReq) {
         // BTH is included in inputPktFrag.data
@@ -1588,9 +1588,9 @@ object ePsnIncrease {
         val reth = RETH()
         reth.assignFromBits(rethBits)
 
-        rslt := computePktNum(reth.dlen, pmtu)
+        result := computePktNum(reth.dlen, pmtu)
       } otherwise {
-        rslt := 1
+        result := 1
 
         assert(
           assertion = OpCode.isReqPkt(pktFrag.bth.opcode),
@@ -1599,7 +1599,7 @@ object ePsnIncrease {
           severity = FAILURE
         )
       }
-    }.rslt
+    }.result
 }
 
 //========== Packet related utilities ==========
@@ -1607,7 +1607,7 @@ object ePsnIncrease {
 object computePktNum {
   def apply(len: UInt, pmtu: Bits): UInt =
     new Composite(len) {
-      val rslt = UInt(PSN_WIDTH bits)
+      val result = UInt(PSN_WIDTH bits)
       val shiftAmt = UInt(PMTU_WIDTH bits)
       val residueMaxWidth = PMTU.U4096.id
       val residue = UInt(residueMaxWidth bits)
@@ -1648,32 +1648,32 @@ object computePktNum {
       // This downsize is safe, since max length is 2^32 bytes,
       // And the min packet size is 256=2^8 bytes,
       // So the max packet number is 2^PSN_WIDTH=2^24
-      rslt := pktNum.resize(PSN_WIDTH)
-    }.rslt
+      result := pktNum.resize(PSN_WIDTH)
+    }.result
 }
 
 object pmtuPktLenBytes {
   def apply(pmtu: Bits): UInt = {
-    val rslt = UInt(PMTU_FRAG_NUM_WIDTH bits)
+    val result = UInt(PMTU_FRAG_NUM_WIDTH bits)
     switch(pmtu) {
       // The PMTU enum value itself means right shift amount of bits
       is(PMTU.U256.id) { // 8
-        rslt := 256
+        result := 256
       }
       is(PMTU.U512.id) { // 9
-        rslt := 512
+        result := 512
       }
       is(PMTU.U1024.id) { // 10
-        rslt := 1024
+        result := 1024
       }
       is(PMTU.U2048.id) { // 11
-        rslt := 2048
+        result := 2048
       }
       is(PMTU.U4096.id) { // 12
-        rslt := 4096
+        result := 4096
       }
       default {
-        rslt := 0
+        result := 0
         report(
           message =
             L"${REPORT_TIME} time: pmtuPktLenBytes encounters invalid PMTU=${pmtu}",
@@ -1681,32 +1681,32 @@ object pmtuPktLenBytes {
         )
       }
     }
-    rslt
+    result
   }
 }
 
 object pmtuLenMask {
   def apply(pmtu: Bits): Bits = {
-    val rslt = Bits(PMTU_FRAG_NUM_WIDTH bits)
+    val result = Bits(PMTU_FRAG_NUM_WIDTH bits)
     switch(pmtu) {
       // The value means right shift amount of bits
       is(PMTU.U256.id) { // 8
-        rslt := 256 - 1
+        result := 256 - 1
       }
       is(PMTU.U512.id) { // 9
-        rslt := 512 - 1
+        result := 512 - 1
       }
       is(PMTU.U1024.id) { // 10
-        rslt := 1024 - 1
+        result := 1024 - 1
       }
       is(PMTU.U2048.id) { // 11
-        rslt := 2048 - 1
+        result := 2048 - 1
       }
       is(PMTU.U4096.id) { // 12
-        rslt := 4096 - 1
+        result := 4096 - 1
       }
       default {
-        rslt := 0
+        result := 0
         report(
           message =
             L"${REPORT_TIME} time: pmtuLenMask encounters invalid PMTU=${pmtu}",
@@ -1714,7 +1714,7 @@ object pmtuLenMask {
         )
       }
     }
-    rslt
+    result
   }
 }
 
@@ -1754,7 +1754,7 @@ object checkWorkReqOpCodeMatch {
       reqOpCode: Bits
   ): Bool =
     new Composite(reqOpCode) {
-      val rslt = (WorkReqOpCode.isSendReq(workReqOpCode) &&
+      val result = (WorkReqOpCode.isSendReq(workReqOpCode) &&
         OpCode.isSendReqPkt(reqOpCode)) ||
         (WorkReqOpCode.isWriteReq(workReqOpCode) &&
           OpCode.isWriteReqPkt(reqOpCode)) ||
@@ -1762,20 +1762,20 @@ object checkWorkReqOpCodeMatch {
           OpCode.isReadReqPkt(reqOpCode)) ||
         (WorkReqOpCode.isAtomicReq(workReqOpCode) &&
           OpCode.isAtomicReqPkt(reqOpCode))
-    }.rslt
+    }.result
 }
 
 object checkRespOpCodeMatch {
   def apply(reqOpCode: Bits, respOpCode: Bits): Bool =
     new Composite(reqOpCode) {
-      val rslt = Bool()
+      val result = Bool()
       when(OpCode.isSendReqPkt(reqOpCode) || OpCode.isWriteReqPkt(reqOpCode)) {
-        rslt := OpCode.isNonReadAtomicRespPkt(respOpCode)
+        result := OpCode.isNonReadAtomicRespPkt(respOpCode)
       } elsewhen (OpCode.isReadReqPkt(reqOpCode)) {
-        rslt := OpCode.isReadRespPkt(respOpCode) || OpCode
+        result := OpCode.isReadRespPkt(respOpCode) || OpCode
           .isNonReadAtomicRespPkt(respOpCode)
       } elsewhen (OpCode.isAtomicReqPkt(reqOpCode)) {
-        rslt := OpCode.isAtomicRespPkt(respOpCode) || OpCode
+        result := OpCode.isAtomicRespPkt(respOpCode) || OpCode
           .isNonReadAtomicRespPkt(respOpCode)
       } otherwise {
         report(
@@ -1783,9 +1783,9 @@ object checkRespOpCodeMatch {
             L"${REPORT_TIME} time: reqOpCode=${reqOpCode} should be request opcode, respOpCode=${respOpCode}",
           severity = FAILURE
         )
-        rslt := False
+        result := False
       }
-    }.rslt
+    }.result
 }
 
 //========== Partial retry related utilities ==========
@@ -1851,7 +1851,7 @@ object PartialRetry {
         )
       }
 
-      val rslt = (
+      val result = (
         isRetryWholeWorkReq,
         retryStartPsn,
         retryDmaReadStartAddr,
@@ -1859,7 +1859,7 @@ object PartialRetry {
         retryWorkReqLocalStartAddr,
         retryDmaReadLenBytes
       )
-    }.rslt
+    }.result
 }
 
 //========== TupleBundle related utilities ==========

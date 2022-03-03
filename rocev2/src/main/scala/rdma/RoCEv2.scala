@@ -99,12 +99,12 @@ class AllQpCtrl(numMaxQPs: Int) extends Component {
 
   Vec(io.qpCreateOrModifyVec.map(_.req)) <-/< StreamOneHotDeMux(
     io.qpCreateOrModify.req.translateWith {
-      val rslt = cloneOf(io.qpCreateOrModify.req.payloadType)
-      rslt.qpAttr := io.qpCreateOrModify.req.qpAttr
+      val result = cloneOf(io.qpCreateOrModify.req.payloadType)
+      result.qpAttr := io.qpCreateOrModify.req.qpAttr
       when(io.qpCreateOrModify.req.valid && isQpCreation && foundQpAvailable) {
-        rslt.qpAttr.sqpn := nextQpnReg
+        result.qpAttr.sqpn := nextQpnReg
       }
-      rslt
+      result
     },
     select = qpSelIdxOH.asBits
   )
@@ -211,10 +211,10 @@ class AllAddrCache(numMaxPDs: Int, numMaxMRsPerPD: Int) extends Component {
       }
     }
     io.pdCreateOrDelete.resp <-/< io.pdCreateOrDelete.req.translateWith {
-      val rslt = cloneOf(io.pdCreateOrDelete.resp.payloadType)
-      rslt.successOrFailure := (isPdCreation && foundPdAvailable) || (isPdDeletion && foundPdDelete)
-      rslt.pdId := OHToUInt(pdSelIdxOH).resize(PD_ID_WIDTH).asBits
-      rslt
+      val result = cloneOf(io.pdCreateOrDelete.resp.payloadType)
+      result.successOrFailure := (isPdCreation && foundPdAvailable) || (isPdDeletion && foundPdDelete)
+      result.pdId := OHToUInt(pdSelIdxOH).resize(PD_ID_WIDTH).asBits
+      result
     }
   }
 }

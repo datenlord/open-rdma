@@ -116,25 +116,25 @@ object WorkReqSim {
   def randomReadAtomicOpCode(): SpinalEnumElement[WorkReqOpCode.type] = {
     val opCodes = WorkReqOpCode.RDMA_READ +: workReqAtomic
     val randIdx = scala.util.Random.nextInt(opCodes.size)
-    val rslt = opCodes(randIdx)
-    assert(opCodes.contains(rslt))
-    rslt
+    val result = opCodes(randIdx)
+    assert(opCodes.contains(result))
+    result
   }
 
   def randomSendWriteOpCode(): SpinalEnumElement[WorkReqOpCode.type] = {
     val opCodes = workReqSend ++ workReqWrite
     val randIdx = scala.util.Random.nextInt(opCodes.size)
-    val rslt = opCodes(randIdx)
-    assert(opCodes.contains(rslt))
-    rslt
+    val result = opCodes(randIdx)
+    assert(opCodes.contains(result))
+    result
   }
 
   def randomSendWriteReadOpCode(): SpinalEnumElement[WorkReqOpCode.type] = {
     val opCodes = WorkReqOpCode.RDMA_READ +: (workReqSend ++ workReqWrite)
     val randIdx = scala.util.Random.nextInt(opCodes.size)
-    val rslt = opCodes(randIdx)
-    assert(opCodes.contains(rslt))
-    rslt
+    val result = opCodes(randIdx)
+    assert(opCodes.contains(result))
+    result
   }
 
   def randomSendWriteReadAtomicOpCode()
@@ -142,9 +142,9 @@ object WorkReqSim {
     val opCodes =
       WorkReqOpCode.RDMA_READ +: (workReqSend ++ workReqWrite ++ workReqAtomic)
     val randIdx = scala.util.Random.nextInt(opCodes.size)
-    val rslt = opCodes(randIdx)
-    assert(opCodes.contains(rslt))
-    rslt
+    val result = opCodes(randIdx)
+    assert(opCodes.contains(result))
+    result
   }
 
   def randomDmaLength(): Long = {
@@ -257,25 +257,25 @@ object AckTypeSim {
   def randomRetryNak(): SpinalEnumElement[AckType.type] = {
     val nakTypes = retryNakTypes
     val randIdx = scala.util.Random.nextInt(nakTypes.size)
-    val rslt = nakTypes(randIdx)
-    assert(nakTypes.contains(rslt))
-    rslt
+    val result = nakTypes(randIdx)
+    assert(nakTypes.contains(result))
+    result
   }
 
   def randomFatalNak(): SpinalEnumElement[AckType.type] = {
     val nakTypes = fatalNakType
     val randIdx = scala.util.Random.nextInt(nakTypes.size)
-    val rslt = nakTypes(randIdx)
-    assert(nakTypes.contains(rslt))
-    rslt
+    val result = nakTypes(randIdx)
+    assert(nakTypes.contains(result))
+    result
   }
 
   def randomNormalAckOrFatalNak(): SpinalEnumElement[AckType.type] = {
     val ackTypes = AckType.NORMAL +: fatalNakType
     val randIdx = scala.util.Random.nextInt(ackTypes.size)
-    val rslt = ackTypes(randIdx)
-    assert(ackTypes.contains(rslt))
-    rslt
+    val result = ackTypes(randIdx)
+    assert(ackTypes.contains(result))
+    result
   }
 
   def isRetryNak(ackType: SpinalEnumElement[AckType.type]): Boolean = {

@@ -174,9 +174,9 @@ class CamFifo[Tk <: Data, Tv <: Data](
         linkedData = io.scanBus.scanReq
       )
       io.scanBus.scanResp <-/< scanRespStream ~~ { scanResponse =>
-        val rslt = cloneOf(io.scanBus.scanResp.payloadType)
-        rslt.data := scanResponse.value.data
-        rslt
+        val result = cloneOf(io.scanBus.scanResp.payloadType)
+        result.data := scanResponse.value.data
+        result
       }
       // Increase retry count
       for (modifyFunc <- scanRespOnFireModifyFunc) {
@@ -247,11 +247,11 @@ class CamFifo[Tk <: Data, Tv <: Data](
         )
     )
     io.queryBusVec(busIdx).resp <-/< queryResultStream.translateWith {
-      val rslt = CamFifoQueryResp(keyType, valueType)
-      rslt.respValue := queryResultStream.value.data
-      rslt.queryKey := queryResultStream.linked._2
-      rslt.found := queryResultStream.linked._3
-      rslt
+      val result = CamFifoQueryResp(keyType, valueType)
+      result.respValue := queryResultStream.value.data
+      result.queryKey := queryResultStream.linked._2
+      result.found := queryResultStream.linked._3
+      result
     }
   } else { // More than 2 query port, need arbitration
     val queryReqVec =
@@ -323,11 +323,11 @@ class ReadAtomicResultCache(depth: Int) extends Component {
       .queryBusVec(portIdx)
       .resp
       .translateWith {
-        val rslt = cloneOf(queryPort.resp.payloadType)
-        rslt.cachedData := cache.io.queryBusVec(portIdx).resp.respValue
-        rslt.query := cache.io.queryBusVec(portIdx).resp.queryKey
-        rslt.found := cache.io.queryBusVec(portIdx).resp.found
-        rslt
+        val result = cloneOf(queryPort.resp.payloadType)
+        result.cachedData := cache.io.queryBusVec(portIdx).resp.respValue
+        result.query := cache.io.queryBusVec(portIdx).resp.queryKey
+        result.found := cache.io.queryBusVec(portIdx).resp.found
+        result
       }
   }
 }
@@ -356,11 +356,11 @@ class WorkReqCache(depth: Int) extends Component {
     portCount = 1,
     scanRespOnFireModifyFunc =
       Some((scanReq: CamFifoRetryScanReq, v: CachedWorkReq) => {
-        val rslt = cloneOf(v)
-        rslt := v
+        val result = cloneOf(v)
+        result := v
         // TODO: which retry counter to increase after the very first retry WR
-        rslt.incRnrOrRetryCnt(scanReq.retryReason)
-        rslt
+        result.incRnrOrRetryCnt(scanReq.retryReason)
+        result
       }),
     supportScan = true
   )
@@ -383,11 +383,11 @@ class WorkReqCache(depth: Int) extends Component {
       .queryBusVec(portIdx)
       .resp
       .translateWith {
-        val rslt = cloneOf(queryPort.resp.payloadType)
-        rslt.cachedWorkReq := cache.io.queryBusVec(portIdx).resp.respValue
-        rslt.query := cache.io.queryBusVec(portIdx).resp.queryKey
-        rslt.found := cache.io.queryBusVec(portIdx).resp.found
-        rslt
+        val result = cloneOf(queryPort.resp.payloadType)
+        result.cachedWorkReq := cache.io.queryBusVec(portIdx).resp.respValue
+        result.query := cache.io.queryBusVec(portIdx).resp.queryKey
+        result.found := cache.io.queryBusVec(portIdx).resp.found
+        result
       }
   }
 }
@@ -400,10 +400,10 @@ class PdInternalAddrCache(depth: Int) extends Component {
   }
 
   val addrCacheMem = Mem(CachedValue(AddrData()), depth).init(List.fill(depth) {
-    val rslt = CachedValue(AddrData())
-    rslt.valid := False
-    rslt.data.init()
-    rslt
+    val result = CachedValue(AddrData())
+    result.valid := False
+    result.data.init()
+    result
   })
 
   val addrCreateOrDelete = new Area {
@@ -446,9 +446,9 @@ class PdInternalAddrCache(depth: Int) extends Component {
       }
     }
     io.addrCreateOrDelete.resp <-/< io.addrCreateOrDelete.req.translateWith {
-      val rslt = cloneOf(io.addrCreateOrDelete.resp.payloadType)
-      rslt.successOrFailure := (isAddrDataCreation && foundRamAvailable) || (isAddrDataDeletion && foundAddrDataDelete)
-      rslt
+      val result = cloneOf(io.addrCreateOrDelete.resp.payloadType)
+      result.successOrFailure := (isAddrDataCreation && foundRamAvailable) || (isAddrDataDeletion && foundAddrDataDelete)
+      result
     }
   }
 
@@ -497,15 +497,15 @@ class PdInternalAddrCache(depth: Int) extends Component {
       (originalReq.accessType.asBits | cacheResp.accessType.asBits).orR
     io.query.resp << joinStream
       .translateWith {
-        val rslt = cloneOf(io.query.resp.payloadType)
-        rslt.initiator := originalReq.initiator
-        rslt.sqpn := originalReq.sqpn
-        rslt.psn := originalReq.psn
-        rslt.pa := pa
-        rslt.accessValid := accessValid
-        rslt.sizeValid := reqAddrWithBoundary && reqDataSizeValid
-        rslt.keyValid := joinStream._2.linked._2 // Found
-        rslt
+        val result = cloneOf(io.query.resp.payloadType)
+        result.initiator := originalReq.initiator
+        result.sqpn := originalReq.sqpn
+        result.psn := originalReq.psn
+        result.pa := pa
+        result.accessValid := accessValid
+        result.sizeValid := reqAddrWithBoundary && reqDataSizeValid
+        result.keyValid := joinStream._2.linked._2 // Found
+        result
       }
   }
 }
@@ -525,25 +525,25 @@ class QpAddrCacheAgent extends Component {
     .on(
       Vec(
         io.rqCacheRead.req.translateWith {
-          val rslt = cloneOf(io.pdAddrCacheQuery.req.payloadType)
-//      rslt.pdId := io.qpAttr.pdId
-          rslt.initiator := AddrQueryInitiator.RQ
-          rslt.assignSomeByName(io.rqCacheRead.req.payload)
-          rslt
+          val result = cloneOf(io.pdAddrCacheQuery.req.payloadType)
+//      result.pdId := io.qpAttr.pdId
+          result.initiator := AddrQueryInitiator.RQ
+          result.assignSomeByName(io.rqCacheRead.req.payload)
+          result
         },
         io.sqReqCacheRead.req.translateWith {
-          val rslt = cloneOf(io.pdAddrCacheQuery.req.payloadType)
-//      rslt.pdId := io.qpAttr.pdId
-          rslt.initiator := AddrQueryInitiator.SQ_REQ
-          rslt.assignSomeByName(io.sqReqCacheRead.req.payload)
-          rslt
+          val result = cloneOf(io.pdAddrCacheQuery.req.payloadType)
+//      result.pdId := io.qpAttr.pdId
+          result.initiator := AddrQueryInitiator.SQ_REQ
+          result.assignSomeByName(io.sqReqCacheRead.req.payload)
+          result
         },
         io.sqRespCacheRead.req.translateWith {
-          val rslt = cloneOf(io.pdAddrCacheQuery.req.payloadType)
-//      rslt.pdId := io.qpAttr.pdId
-          rslt.initiator := AddrQueryInitiator.SQ_RESP
-          rslt.assignSomeByName(io.sqRespCacheRead.req.payload)
-          rslt
+          val result = cloneOf(io.pdAddrCacheQuery.req.payloadType)
+//      result.pdId := io.qpAttr.pdId
+          result.initiator := AddrQueryInitiator.SQ_RESP
+          result.assignSomeByName(io.sqRespCacheRead.req.payload)
+          result
         }
       )
     )
@@ -575,15 +575,15 @@ class QpAddrCacheAgent extends Component {
     io.sqRespCacheRead.resp
   ) <-/< StreamDemux(
     io.pdAddrCacheQuery.resp.translateWith {
-      val rslt = cloneOf(io.rqCacheRead.resp.payloadType)
-      rslt.assignSomeByName(io.pdAddrCacheQuery.resp.payload)
-//      rslt.sqpn := io.pdAddrCacheQuery.resp.sqpn
-//      rslt.psn := io.pdAddrCacheQuery.resp.psn
-//      rslt.keyValid := io.pdAddrCacheQuery.resp.keyValid
-//      rslt.sizeValid := io.pdAddrCacheQuery.resp.sizeValid
-//      rslt.accessValid := io.pdAddrCacheQuery.resp.accessValid
-//      rslt.pa := io.pdAddrCacheQuery.resp.pa
-      rslt
+      val result = cloneOf(io.rqCacheRead.resp.payloadType)
+      result.assignSomeByName(io.pdAddrCacheQuery.resp.payload)
+//      result.sqpn := io.pdAddrCacheQuery.resp.sqpn
+//      result.psn := io.pdAddrCacheQuery.resp.psn
+//      result.keyValid := io.pdAddrCacheQuery.resp.keyValid
+//      result.sizeValid := io.pdAddrCacheQuery.resp.sizeValid
+//      result.accessValid := io.pdAddrCacheQuery.resp.accessValid
+//      result.pa := io.pdAddrCacheQuery.resp.pa
+      result
     },
     select = txSel,
     portCount = 3

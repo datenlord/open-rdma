@@ -9,8 +9,8 @@ class SetSuite extends AnyFunSuite {
     @scala.annotation.tailrec
     def loop(n: Int, f: Int => Boolean): Unit = {
       if (n > 0) {
-        val rslt = f(n)
-        val nNext = if (rslt) n - 1 else n
+        val result = f(n)
+        val nNext = if (result) n - 1 else n
         loop(nNext, f)
       }
     }
