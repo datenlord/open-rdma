@@ -3,7 +3,7 @@ package rdma
 import spinal.core.sim._
 import ConstantSettings._
 import StreamSimUtil._
-import TypeReDef._
+import RdmaTypeReDef._
 import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -69,9 +69,9 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
 
       val cacheDataQueue = mutable.Queue[(PsnStart, PktNum, PktLen)]()
       val dmaRespQueue =
-        mutable.Queue[(RdmaFragData, PsnStart, PktLen, FragLast)]()
+        mutable.Queue[(PktFragData, PsnStart, PktLen, FragLast)]()
       val outputQueue = mutable.Queue[
-        (RdmaFragData, PsnStart, PsnStart, PktLen, PktLen, FragNum, FragLast)
+        (PktFragData, PsnStart, PsnStart, PktLen, PktLen, FragNum, FragLast)
       ]()
       val matchQueue = mutable.Queue[PsnStart]()
 

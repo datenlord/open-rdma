@@ -226,7 +226,7 @@ class AllQpModules(numMaxQPs: Int, busWidth: BusWidth) extends Component {
     val pdCreateOrDelete = slave(PdCreateOrDeleteBus())
     val pdAddrCreateOrDelete = slave(PdAddrDataCreateOrDeleteBus())
     val workReq = Vec(slave(Stream(WorkReq())), numMaxQPs)
-    val recvWorkReq = Vec(slave(Stream(RecvWorkReq())), numMaxQPs)
+    val rxWorkReq = Vec(slave(Stream(RxWorkReq())), numMaxQPs)
     val workComp = Vec(master(Stream(WorkComp())), numMaxQPs)
     val rx = slave(UdpDataBus(busWidth))
     val tx = master(UdpDataBus(busWidth))
@@ -252,7 +252,7 @@ class AllQpModules(numMaxQPs: Int, busWidth: BusWidth) extends Component {
     allQpCtrl.io.qpAttrVec(qpIdx) := qp.io.qpAttr
     qp.io.qpCreateOrModify << allQpCtrl.io.qpCreateOrModifyVec(qpIdx)
     qp.io.workReq << io.workReq(qpIdx)
-    qp.io.recvWorkReq << io.recvWorkReq(qpIdx)
+    qp.io.rxWorkReq << io.rxWorkReq(qpIdx)
     io.workComp(qpIdx) << qp.io.workComp
     qp
   })
@@ -301,7 +301,7 @@ class RoCEv2(numMaxQPs: Int, busWidth: BusWidth) extends Component {
     val pdCreateOrDelete = slave(PdCreateOrDeleteBus())
     val pdAddrCreateOrDelete = slave(PdAddrDataCreateOrDeleteBus())
     val workReq = Vec(slave(Stream(WorkReq())), numMaxQPs)
-    val recvWorkReq = Vec(slave(Stream(RecvWorkReq())), numMaxQPs)
+    val rxWorkReq = Vec(slave(Stream(RxWorkReq())), numMaxQPs)
     val workComp = Vec(master(Stream(WorkComp())), numMaxQPs)
     val rx = slave(UdpDataBus(busWidth))
     val tx = master(UdpDataBus(busWidth))
@@ -312,7 +312,7 @@ class RoCEv2(numMaxQPs: Int, busWidth: BusWidth) extends Component {
   allQpModules.io.pdCreateOrDelete << io.pdCreateOrDelete
   allQpModules.io.pdAddrCreateOrDelete << io.pdAddrCreateOrDelete
   allQpModules.io.workReq << io.workReq
-  allQpModules.io.recvWorkReq << io.recvWorkReq
+  allQpModules.io.rxWorkReq << io.rxWorkReq
   io.workComp << allQpModules.io.workComp
   allQpModules.io.rx << io.rx
 
@@ -332,6 +332,7 @@ object RoCEv2 {
       mode = SystemVerilog,
       oneFilePerComponent = true,
       targetDirectory = "./rtl",
+//      anonymSignalPrefix = "_zz_",
       verbose = true
     ).generate(new RoCEv2(numMaxQPs = 4, BusWidth.W512))
 //      .printPruned()

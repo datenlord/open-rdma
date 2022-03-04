@@ -195,7 +195,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
   // the only or first read responses or atomic responses
   val workReqCacheQueryCond =
     (pktFragStream: Stream[Fragment[RdmaDataPkt]]) =>
-      new Composite(pktFragStream, "queryCond") {
+      new Composite(pktFragStream, "workReqCacheQueryCond") {
         val isReadFirstOrOnlyRespOrAtomicResp = (opcode: Bits) => {
           OpCode.isFirstOrOnlyReadRespPkt(opcode) ||
             OpCode.isAtomicRespPkt(opcode)
@@ -207,7 +207,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
   // the only or last read responses or atomic responses
   val addrCacheQueryRespJoinCond =
     (pktFragStream: Stream[Fragment[RdmaDataPkt]]) =>
-      new Composite(pktFragStream, "queryCond") {
+      new Composite(pktFragStream, "addrCacheQueryRespJoinCond") {
         val isReadLastOrOnlyRespOrAtomicResp = (opcode: Bits) => {
           OpCode.isLastOrOnlyReadRespPkt(opcode) ||
             OpCode.isAtomicRespPkt(opcode)
@@ -217,7 +217,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
       }.result
 
   val (everyFirstReadAtomicRespPktFragStream, allReadAtomicRespPktFragStream) =
-    ConditionalStreamFork2(
+    StreamConditionalFork2(
       io.readAtomicResp.pktFrag.throwWhen(io.txQCtrl.wrongStateFlush),
       forkCond = workReqCacheQueryCond(io.readAtomicResp.pktFrag)
     )
@@ -383,7 +383,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 //      everyFirstReadAtomicRespPktFragStream,
 //      allReadAtomicRespPktFragStream
 //    ) =
-//      ConditionalStreamFork2(
+//      StreamConditionalFork2(
 //        resp4ReadAtomic.takeWhen(isReadResp || isAtomicResp),
 //        forkCond = workReqCacheQueryCond(io.rx.pktFrag)
 //      )
@@ -698,7 +698,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
 //      }.result
 //
 //  val (everyFirstInputPktFragStream, allInputPktFragStream) =
-//    ConditionalStreamFork2(
+//    StreamConditionalFork2(
 //      io.rx.pktFrag.throwWhen(io.txQCtrl.wrongStateFlush),
 //      forkCond = workReqCacheQueryCond(io.rx.pktFrag)
 //    )

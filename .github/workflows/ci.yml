@@ -4,7 +4,7 @@ on:
     branches: [master]
   push:
     branches: [master]
-  schedule: [cron: "0 * * * *"]
+  schedule: [cron: "*/15 * * * *"]
 
 jobs:
   build-and-simulate:
@@ -19,8 +19,7 @@ jobs:
           # Local install Cocotb and set PATH env
           pip3 install cocotb
           export PATH="$HOME/.local/bin:$PATH"
-          CI_ENV="true"
-          ./run.sh $CI_ENV
+          CI_ENV="true" ./run.sh
       - name: Setup tmate session
         if: ${{ failure() }}
         uses: mxschmitt/action-tmate@v3

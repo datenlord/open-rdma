@@ -74,21 +74,21 @@ class DmaReadRespHandler[T <: Data](
   io.reqAndDmaReadResp << StreamMux(
     select = txSel,
     inputs = Vec(
-      twoStreams(emptyReadIdx).translateWith {
+      twoStreams(emptyReadIdx) ~~ { payloadData =>
         val result =
           cloneOf(io.reqAndDmaReadResp.payloadType)
         result.dmaReadResp
           .setDefaultVal() // TODO: dmaReadResp.lenBytes set to zero explicitly
-        result.req := twoStreams(emptyReadIdx).payload
+        result.req := payloadData
         result.last := True
         result
       },
-      joinStream.translateWith {
+      joinStream ~~ { payloadData =>
         val result =
           cloneOf(io.reqAndDmaReadResp.payloadType)
-        result.dmaReadResp := joinStream._1
-        result.req := joinStream._2
-        result.last := joinStream.isLast
+        result.dmaReadResp := payloadData._1
+        result.req := payloadData._2
+        result.last := payloadData.last
         result
       }
     )
@@ -249,22 +249,22 @@ class CombineHeaderAndDmaResponse[T <: Data](
   val addHeaderStream = StreamAddHeader(
     input
       .throwWhen(io.flush)
-      .translateWith {
+      ~~ { payloadData =>
         val result = Fragment(DataAndMty(busWidth))
-        result.data := inputDmaDataFrag.data
-        result.mty := inputDmaDataFrag.mty
-        result.last := isLastDataFrag
+        result.data := payloadData.dmaReadResp.data
+        result.mty := payloadData.dmaReadResp.mty
+        result.last := payloadData.last
         result
       },
     headerStream,
     busWidth
   )
-  io.tx.pktFrag << addHeaderStream.translateWith {
+  io.tx.pktFrag << addHeaderStream ~~ { payloadData =>
     val result = Fragment(RdmaDataPkt(busWidth))
-    result.bth := addHeaderStream.header
-    result.data := addHeaderStream.data
-    result.mty := addHeaderStream.mty
-    result.last := addHeaderStream.last
+    result.bth := payloadData.header
+    result.data := payloadData.data
+    result.mty := payloadData.mty
+    result.last := payloadData.last
     result
   }
 }
@@ -308,10 +308,10 @@ object StreamZipByCondition {
     streamZipByCondition.io.rightFireCond := rightFireCond
     streamZipByCondition.io.bothFireCond := bothFireCond
     streamZipByCondition.io.zipOutputStream
-    //    (
-    //      streamZipByCondition.io.leftOutputStream,
-    //      streamZipByCondition.io.rightOutputStream
-    //    )
+//    (
+//      streamZipByCondition.io.leftOutputStream,
+//      streamZipByCondition.io.rightOutputStream
+//    )
   }
 }
 
@@ -400,6 +400,18 @@ class StreamZipByCondition[T1 <: Data, T2 <: Data](
   * The number of fragments to throw is specified by headerFragNum.
   * Note, headerFragNum should keep stable during the first fragment of inputStream.
   */
+object StreamDropHeader {
+  def apply[T <: Data](
+      inputStream: Stream[Fragment[T]],
+      headerFragNum: UInt
+  ): Stream[Fragment[T]] = {
+    val result = new StreamDropHeader(cloneOf(inputStream.fragmentType))
+    result.io.inputStream << inputStream
+    result.io.headerFragNum := headerFragNum
+    result.io.outputStream
+  }
+}
+
 class StreamDropHeader[T <: Data](dataType: HardType[T]) extends Component {
   val io = new Bundle {
     val inputStream = slave(Stream(Fragment(dataType())))
@@ -424,22 +436,22 @@ class StreamDropHeader[T <: Data](dataType: HardType[T]) extends Component {
   io.outputStream << io.inputStream.throwWhen(throwCond)
 }
 
-object StreamDropHeader {
-  def apply[T <: Data](
-      inputStream: Stream[Fragment[T]],
-      headerFragNum: UInt
-  ): Stream[Fragment[T]] = {
-    val result = new StreamDropHeader(cloneOf(inputStream.fragmentType))
-    result.io.inputStream << inputStream
-    result.io.headerFragNum := headerFragNum
-    result.io.outputStream
-  }
-}
-
 /** Segment the inputStream into multiple pieces,
   * Each piece is at most segmentLenBytes long, and segmentLenBytes cannot be zero.
   * Each piece is indicated by fragment last.
   */
+object StreamSegment {
+  def apply[T <: Data](
+      inputStream: Stream[Fragment[T]],
+      segmentFragNum: UInt
+  ): Stream[Fragment[T]] = {
+    val result = new StreamSegment(cloneOf(inputStream.fragmentType))
+    result.io.inputStream << inputStream
+    result.io.segmentFragNum := segmentFragNum
+    result.io.outputStream
+  }
+}
+
 class StreamSegment[T <: Data](dataType: HardType[T]) extends Component {
   val io = new Bundle {
     val inputStream = slave(Stream(Fragment(dataType())))
@@ -473,23 +485,11 @@ class StreamSegment[T <: Data](dataType: HardType[T]) extends Component {
     inputFragCnt.clear()
   }
 
-  io.outputStream << io.inputStream.translateWith {
-    val result = cloneOf(io.inputStream.payloadType) // Fragment(dataType())
-    result.fragment := inputData
+  io.outputStream << io.inputStream ~~ { payloadData =>
+    val result = cloneOf(io.outputStream.payloadType) // Fragment(dataType())
+    result.fragment := payloadData.fragment
     result.last := setLast
     result
-  }
-}
-
-object StreamSegment {
-  def apply[T <: Data](
-      inputStream: Stream[Fragment[T]],
-      segmentFragNum: UInt
-  ): Stream[Fragment[T]] = {
-    val result = new StreamSegment(cloneOf(inputStream.fragmentType))
-    result.io.inputStream << inputStream
-    result.io.segmentFragNum := segmentFragNum
-    result.io.outputStream
   }
 }
 
@@ -500,6 +500,24 @@ object StreamSegment {
   *
   * Each header is for a packet, from first fragment to last fragment.
   */
+object StreamAddHeader {
+  def apply[T <: Data](
+      inputStream: Stream[Fragment[DataAndMty]],
+      inputHeader: Stream[HeaderDataAndMty[T]],
+      busWidth: BusWidth
+  ): Stream[Fragment[HeaderDataAndMty[T]]] = {
+    require(
+      widthOf(inputStream.data) == busWidth.id,
+      s"widthOf(inputStream.data)=${widthOf(inputStream.data)} should == busWidth.id=${busWidth.id}"
+    )
+    val result =
+      new StreamAddHeader(inputHeader.headerType, busWidth)
+    result.io.inputStream << inputStream
+    result.io.inputHeader << inputHeader
+    result.io.outputStream
+  }
+}
+
 class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
     extends Component {
   val io = new Bundle {
@@ -681,28 +699,23 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
   io.outputStream << outputStream
 }
 
-object StreamAddHeader {
-  def apply[T <: Data](
-      inputStream: Stream[Fragment[DataAndMty]],
-      inputHeader: Stream[HeaderDataAndMty[T]],
-      busWidth: BusWidth
-  ): Stream[Fragment[HeaderDataAndMty[T]]] = {
-    require(
-      widthOf(inputStream.data) == busWidth.id,
-      s"widthOf(inputStream.data)=${widthOf(inputStream.data)} should == busWidth.id=${busWidth.id}"
-    )
-    val result =
-      new StreamAddHeader(inputHeader.headerType, busWidth)
-    result.io.inputStream << inputStream
-    result.io.inputHeader << inputHeader
-    result.io.outputStream
-  }
-}
-
 /** When remove header, it removes the first several bytes data from the first fragment,
   * StreamRemoveHeader will shift the remaining bits,
   * The output stream have valid data start from MSB for all fragments.
   */
+object StreamRemoveHeader {
+  def apply(
+      inputStream: Stream[Fragment[DataAndMty]],
+      headerLenBytes: UInt,
+      busWidth: BusWidth
+  ): Stream[Fragment[DataAndMty]] = {
+    val result = new StreamRemoveHeader(busWidth)
+    result.io.inputStream << inputStream
+    result.io.headerLenBytes := headerLenBytes
+    result.io.outputStream
+  }
+}
+
 class StreamRemoveHeader(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val inputStream = slave(Stream(Fragment(DataAndMty(busWidth))))
@@ -791,19 +804,6 @@ class StreamRemoveHeader(busWidth: BusWidth) extends Component {
   io.outputStream << inputStreamTranslate
 }
 
-object StreamRemoveHeader {
-  def apply(
-      inputStream: Stream[Fragment[DataAndMty]],
-      headerLenBytes: UInt,
-      busWidth: BusWidth
-  ): Stream[Fragment[DataAndMty]] = {
-    val result = new StreamRemoveHeader(busWidth)
-    result.io.inputStream << inputStream
-    result.io.headerLenBytes := headerLenBytes
-    result.io.outputStream
-  }
-}
-
 // TODO: remove this
 object SignalEdgeDrivenStream {
   def apply(signal: Bool): Stream[NoData] =
@@ -841,9 +841,28 @@ object FragmentStreamJoinStream {
   }
 }
 
-/** Join a stream A of fragments with a stream B only when condition is satisfied.
-  * When B will fire if condition satisfied, it only fires when the last fragment of A fires.
+/** Join a stream A of fragments with a stream B,
+  * and only fire B when condition is satisfied.
+  * When B fires if condition satisfied,
+  * it only fires at the same time when the last fragment of A fires.
   */
+object FragmentStreamConditionalJoinStream {
+  def apply[T1 <: Data, T2 <: Data](
+      inputFragmentStream: Stream[Fragment[T1]],
+      inputStream: Stream[T2],
+      joinCond: Bool
+  ): Stream[Fragment[TupleBundle2[T1, T2]]] = {
+    val join = new FragmentStreamConditionalJoinStream(
+      inputFragmentStream.fragmentType,
+      inputStream.payloadType
+    )
+    join.io.inputFragmentStream << inputFragmentStream
+    join.io.inputStream << inputStream
+    join.io.joinCond := joinCond
+    join.io.outputJoinStream
+  }
+}
+
 class FragmentStreamConditionalJoinStream[T1 <: Data, T2 <: Data](
     dataType1: HardType[T1],
     dataType2: HardType[T2]
@@ -868,38 +887,20 @@ class FragmentStreamConditionalJoinStream[T1 <: Data, T2 <: Data](
   }
 
   io.outputJoinStream << io.inputFragmentStream
-    .continueWhen(io.inputStream.valid)
-    .translateWith {
-      val result = cloneOf(io.outputJoinStream.payloadType)
-      result._1 := io.inputFragmentStream.fragment
-      result._2 := io.inputStream.payload
-      result.last := io.inputFragmentStream.isLast
-      result
-    }
-}
-
-object FragmentStreamConditionalJoinStream {
-  def apply[T1 <: Data, T2 <: Data](
-      inputFragmentStream: Stream[Fragment[T1]],
-      inputStream: Stream[T2],
-      joinCond: Bool
-  ): Stream[Fragment[TupleBundle2[T1, T2]]] = {
-    val join = new FragmentStreamConditionalJoinStream(
-      inputFragmentStream.fragmentType,
-      inputStream.payloadType
-    )
-    join.io.inputFragmentStream << inputFragmentStream
-    join.io.inputStream << inputStream
-    join.io.joinCond := joinCond
-    join.io.outputJoinStream
+    .continueWhen(io.inputStream.valid) ~~ { payloadData =>
+    val result = cloneOf(io.outputJoinStream.payloadType)
+    result._1 := payloadData.fragment
+    result._2 := io.inputStream.payload
+    result.last := payloadData.last
+    result
   }
 }
 
-/** ConditionalStreamFork will fork the input based on the condition.
+/** StreamConditionalFork will fork the input based on the condition.
   * If condition is true, then fork the input, otherwise not fork.
   * So the return streams have the last one as the original input stream.
   */
-object ConditionalStreamFork {
+object StreamConditionalFork {
   def apply[T <: Data](
       inputStream: Stream[T],
       forkCond: Bool,
@@ -915,23 +916,23 @@ object ConditionalStreamFork {
   }
 }
 
-/** ConditionalStreamFork2 will fork the input based on the condition.
+/** StreamConditionalFork2 will fork the input based on the condition.
   * If condition is true, then fork the input, otherwise not fork.
   * So the first return stream is the conditional forked input stream,
   * the second return stream is the original input stream.
   */
-object ConditionalStreamFork2 {
+object StreamConditionalFork2 {
   def apply[T <: Data](
       inputStream: Stream[T],
       forkCond: Bool
   ): (Stream[T], Stream[T]) = {
     val forkStreams =
-      ConditionalStreamFork(inputStream, forkCond, portCount = 1)
+      StreamConditionalFork(inputStream, forkCond, portCount = 1)
     (forkStreams(0), forkStreams(1))
   }
 }
 
-class ConditionalStreamFork[T <: Data](payloadType: HardType[T], portCount: Int)
+class StreamConditionalFork[T <: Data](payloadType: HardType[T], portCount: Int)
     extends Component {
   val io = new Bundle {
     val input = slave(Stream(payloadType()))
@@ -945,6 +946,51 @@ class ConditionalStreamFork[T <: Data](payloadType: HardType[T], portCount: Int)
   for (idx <- 0 until portCount) {
     io.shortOutStreams(idx) << forkStreams(idx).takeWhen(io.forkCond)
   }
+}
+
+/** FragmentStreamForkQueryJoinResp will send out query based on query
+  * condition, and join the response based on join condition.
+  * To avoid back-pressure / stall, FragmentStreamForkQueryJoinResp has
+  * internal queue to cache the pending inputs waiting for response to join.
+  */
+object FragmentStreamForkQueryJoinResp {
+  def apply[Tin <: Data, Tquery <: Data, Tresp <: Data](
+      inputStream: Stream[Fragment[Tin]],
+      queryStream: Stream[Tquery],
+      respStream: Stream[Tresp],
+      waitQueueDepth: Int,
+      buildQuery: Stream[Fragment[Tin]] => Tquery,
+      queryCond: Stream[Fragment[Tin]] => Bool,
+      expectResp: Stream[Fragment[Tin]] => Bool,
+      joinRespCond: Stream[Fragment[Tin]] => Bool
+  ): Stream[Fragment[TupleBundle2[Tin, Tresp]]] =
+    new Composite(inputStream, "FragmentStreamForkQueryJoinResp") {
+      val (input4QueryStream, originalInputStream) =
+        StreamConditionalFork2(inputStream, forkCond = queryCond(inputStream))
+      val originalInputQueue =
+        originalInputStream.queueLowLatency(waitQueueDepth)
+      queryStream <-/< input4QueryStream
+        .takeWhen(expectResp(input4QueryStream))
+        .translateWith(buildQuery(input4QueryStream))
+
+      // When not expect query response, join with StreamSource()
+      val stream4Join = StreamMux(
+        select = expectResp(originalInputQueue).asUInt,
+        inputs = Vec(
+          StreamSource().translateWith(
+            cloneOf(respStream.payloadType).assignDontCare()
+          ),
+          respStream
+        )
+      )
+      val joinStream =
+        FragmentStreamConditionalJoinStream(
+          originalInputQueue,
+          stream4Join,
+          joinCond = joinRespCond(originalInputQueue)
+        )
+
+    }.joinStream
 }
 
 /** Build an arbiter tree to arbitrate on many inputs.
@@ -1124,6 +1170,21 @@ object StreamDeMuxByConditions {
       )
     }
     StreamOneHotDeMux(input, oneHot)
+  }
+}
+
+/** StreamDeMuxByOneCondition will de-multiplex input stream into two output streams.
+  * The first output stream corresponds to the condition is false,
+  * the second output stream corresponds to the condition is true.
+  */
+object StreamDeMuxByOneCondition {
+  def apply[T <: Data](
+      input: Stream[T],
+      condition: Bool
+  ): (Stream[T], Stream[T]) = {
+    val (condFalseIdx, condTrueIdx) = (0, 1)
+    val outputs = StreamDemux(input, select = condition.asUInt, portCount = 2)
+    (outputs(condFalseIdx), outputs(condTrueIdx))
   }
 }
 
@@ -1359,7 +1420,9 @@ object PsnUtil {
       }
     }.result
 
-  /** psnA - psnB, always <= HALF_MAX_PSN
+  /** The diff between two PSNs.
+    * Since valid PSNs are within nPSN + 2^23,
+    * So psnA - psnB, always <= HALF_MAX_PSN
     */
   def diff(psnA: UInt, psnB: UInt): UInt =
     new Composite(psnA, "PsnUtil_diff") {
@@ -1395,9 +1458,12 @@ object PsnUtil {
     cmp(psnA, psnB, curPsn) === PsnCompResult.GREATER ||
       psnA === psnB
 
-  // Check if psn within range [start, end) or not
-  def withInRange(psn: UInt, start: UInt, end: UInt, curPsn: UInt): Bool =
-    gte(psn, start, curPsn) && lt(psn, end, curPsn)
+  // Check if psn within range [start, start + pktNum) or not
+  def withInRange(psn: UInt, start: UInt, pktNum: UInt, curPsn: UInt): Bool =
+    new Composite(curPsn, "PsnUtil_withInRange") {
+      val psnEnd = psn + pktNum
+      val result = gte(psn, start, curPsn) && lt(psn, psnEnd, curPsn)
+    }.result
 }
 
 object bufSizeCheck {
@@ -1608,32 +1674,33 @@ object ePsnIncrease {
 //========== Packet related utilities ==========
 
 object computePktNum {
-  def apply(len: UInt, pmtu: Bits): UInt =
-    new Composite(len) {
-      val result = UInt(PSN_WIDTH bits)
-      val shiftAmt = UInt(PMTU_WIDTH bits)
+  def apply(lenBytes: UInt, pmtu: Bits): UInt =
+    new Composite(lenBytes, "computePktNum") {
+//      val result = UInt(PSN_WIDTH bits)
       val residueMaxWidth = PMTU.U4096.id
+
+      val shiftAmt = UInt(PMTU_WIDTH bits)
       val residue = UInt(residueMaxWidth bits)
       switch(pmtu) {
         is(PMTU.U256.id) {
           shiftAmt := PMTU.U256.id
-          residue := len(0, PMTU.U256.id bits).resize(residueMaxWidth)
+          residue := lenBytes(0, PMTU.U256.id bits).resize(residueMaxWidth)
         }
         is(PMTU.U512.id) {
           shiftAmt := PMTU.U512.id
-          residue := len(0, PMTU.U512.id bits).resize(residueMaxWidth)
+          residue := lenBytes(0, PMTU.U512.id bits).resize(residueMaxWidth)
         }
         is(PMTU.U1024.id) {
           shiftAmt := PMTU.U1024.id
-          residue := len(0, PMTU.U1024.id bits).resize(residueMaxWidth)
+          residue := lenBytes(0, PMTU.U1024.id bits).resize(residueMaxWidth)
         }
         is(PMTU.U2048.id) {
           shiftAmt := PMTU.U2048.id
-          residue := len(0, PMTU.U2048.id bits).resize(residueMaxWidth)
+          residue := lenBytes(0, PMTU.U2048.id bits).resize(residueMaxWidth)
         }
         is(PMTU.U4096.id) {
           shiftAmt := PMTU.U4096.id
-          residue := len(0, PMTU.U4096.id bits).resize(residueMaxWidth)
+          residue := lenBytes(0, PMTU.U4096.id bits).resize(residueMaxWidth)
         }
         default {
           shiftAmt := 0
@@ -1646,12 +1713,43 @@ object computePktNum {
           )
         }
       }
+//      val (shiftAmt, residue) = pmtu.mux(
+//        PMTU.U256.id -> (
+//          U(PMTU.U256.id, PMTU_WIDTH bits),
+//          lenBytes(0, PMTU.U256.id bits).resize(residueMaxWidth)
+//        ),
+//        PMTU.U512.id -> (
+//          U(PMTU.U512.id, PMTU_WIDTH bits),
+//          lenBytes(0, PMTU.U512.id bits).resize(residueMaxWidth)
+//        ),
+//        PMTU.U1024.id -> (
+//          U(PMTU.U1024.id, PMTU_WIDTH bits),
+//          lenBytes(0, PMTU.U1024.id bits).resize(residueMaxWidth)
+//        ),
+//        PMTU.U2048.id -> (
+//          U(PMTU.U2048.id, PMTU_WIDTH bits),
+//          lenBytes(0, PMTU.U2048.id bits).resize(residueMaxWidth)
+//        ),
+//        PMTU.U4096.id -> (
+//          U(PMTU.U4096.id, PMTU_WIDTH bits),
+//          lenBytes(0, PMTU.U4096.id bits).resize(residueMaxWidth)
+//        ),
+//        default -> {
+//          report(
+//            message =
+//              L"${REPORT_TIME} time: computePktNum encounters invalid PMTU=${pmtu}",
+//            severity = FAILURE
+//          )
+//
+//          (U(0, PMTU_WIDTH bits), U(0, residueMaxWidth bits))
+//        }
+//      )
 
-      val pktNum = (len >> shiftAmt) + (residue.orR).asUInt
+      val pktNum = (lenBytes >> shiftAmt) + (residue.orR).asUInt
       // This downsize is safe, since max length is 2^32 bytes,
       // And the min packet size is 256=2^8 bytes,
       // So the max packet number is 2^PSN_WIDTH=2^24
-      result := pktNum.resize(PSN_WIDTH)
+      val result = pktNum.resize(PSN_WIDTH)
     }.result
 }
 
