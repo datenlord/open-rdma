@@ -556,7 +556,7 @@ class QP(busWidth: BusWidth) extends Component {
     val qpAttr = out(QpAttrData())
     val qpCreateOrModify = slave(QpCreateOrModifyBus())
     val workReq = slave(Stream(WorkReq()))
-    val recvWorkReq = slave(Stream(RecvWorkReq()))
+    val rxWorkReq = slave(Stream(RxWorkReq()))
     val workComp = master(Stream(WorkComp()))
     val rx = slave(RdmaDataBus(busWidth))
     val tx = master(RdmaDataBus(busWidth))
@@ -590,7 +590,7 @@ class QP(busWidth: BusWidth) extends Component {
   rq.io.qpAttr := io.qpAttr
   rq.io.rxQCtrl := qpCtrl.io.rxQCtrl
   rq.io.rx << reqRespSplitter.io.txReq
-  rq.io.recvWorkReq << io.recvWorkReq
+  rq.io.rxWorkReq << io.rxWorkReq
 
   // TODO: connect WC
   val workCompOut = new WorkCompOut()

@@ -237,7 +237,7 @@ class WorkReqValidator extends Component {
       assert(
         assertion = inputCachedWorkReq.psnStart === io.addrCacheRead.resp.psn,
         message =
-          L"${REPORT_TIME} time: addrCacheReadResp.resp has PSN=${io.addrCacheRead.resp.psn} not match input PSN=${inputCachedWorkReq.psnStart}",
+          L"${REPORT_TIME} time: addrCacheReadResp.resp has PSN=${io.addrCacheRead.resp.psn} not match SQ query PSN=${inputCachedWorkReq.psnStart}",
         severity = FAILURE
       )
     }

@@ -8,14 +8,15 @@ import org.scalatest.funsuite.AnyFunSuite
 import ConstantSettings._
 import RdmaConstants._
 import StreamSimUtil._
-import TypeReDef._
+import RdmaTypeReDef._
+import PsnSim._
 
 class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
 
   def randomRetryStartPsn(psnStart: Int, pktNum: Int): Int = {
     // RDMA max packet length 2GB=2^31
-    (psnStart + scala.util.Random.nextInt(pktNum)) % TOTAL_PSN
+    psnStart +% scala.util.Random.nextInt(pktNum)
   }
 
   val simCfg = SimConfig.allOptimisation.withWave

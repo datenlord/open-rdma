@@ -6,7 +6,7 @@ import spinal.lib._
 
 import ConstantSettings._
 import RdmaConstants._
-import TypeReDef._
+import RdmaTypeReDef._
 
 import scala.collection.mutable
 import scala.util.Random
@@ -702,7 +702,7 @@ object MiscUtils {
       clockDomain: ClockDomain,
       inputDataQueue: mutable.Queue[(BigInt, BigInt, Int, Int, Long, Boolean)],
       outputDataQueue: mutable.Queue[(BigInt, BigInt, Int, Boolean)],
-      busWidth: BusWidth.BusWidth
+      busWidth: BusWidth.Value
   ) = {
     val mtyWidth = busWidth.id / BYTE_WIDTH
     val matchPsnQueue = mutable.Queue[Boolean]()

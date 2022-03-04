@@ -3,7 +3,7 @@ package rdma
 import spinal.core.sim._
 import ConstantSettings._
 import StreamSimUtil._
-import TypeReDef._
+import RdmaTypeReDef._
 
 import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite

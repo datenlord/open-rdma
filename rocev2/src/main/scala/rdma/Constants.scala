@@ -1,7 +1,6 @@
 package rdma
 
 import spinal.core._
-import RdmaConstants._
 
 /** ibv_device_attr fields definition:
   * https://www.mellanox.com/related-docs/prod_software/RDMA_Aware_Programming_user_manual.pdf
@@ -99,11 +98,6 @@ object ConstantSettings {
 
   val IPV4_WIDTH = 32
   val IPV6_WIDTH = 128
-
-  val TOTAL_PSN = (1 << PSN_WIDTH)
-  val HALF_MAX_PSN = 1 << (PSN_WIDTH - 1)
-  val PSN_MASK = (1 << PSN_WIDTH) - 1
-//  val PSN_COMP_RESULT_WIDTH = 2
 
   val ACK_TYPE_WIDTH = 3
 
@@ -240,6 +234,10 @@ object RdmaConstants {
   val MAX_RESP_TIMEOUT = 8800 sec
 
   val INFINITE_RESP_TIMEOUT = 0
+
+  val TOTAL_PSN = (1 << PSN_WIDTH)
+  val HALF_MAX_PSN = 1 << (PSN_WIDTH - 1)
+  val PSN_MASK = (1 << PSN_WIDTH) - 1
 }
 
 object QpAttrMask extends Enumeration {

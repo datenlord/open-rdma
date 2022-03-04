@@ -1305,13 +1305,13 @@ case class WorkReq() extends Bundle {
   }
 }
 
-case class RecvWorkReq() extends Bundle {
+case class RxWorkReq() extends Bundle {
   val sqpn = UInt(QPN_WIDTH bits)
   val id = Bits(WR_ID_WIDTH bits)
   val addr = UInt(MEM_ADDR_WIDTH bits)
   val lkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
   // TODO: assume single SG
-  val len = UInt(RDMA_MAX_LEN_WIDTH bits)
+  val lenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
@@ -1319,7 +1319,7 @@ case class RecvWorkReq() extends Bundle {
     id := 0
     addr := 0
     lkey := 0
-    len := 0
+    lenBytes := 0
     this
   }
 }
@@ -1345,8 +1345,8 @@ case class CachedWorkReq() extends Bundle {
 
   def psnWithIn(psn: UInt, curPsn: UInt): Bool =
     new Composite(this) {
-      val psnEnd = psnStart + pktNum
-      val result = PsnUtil.withInRange(psn, psnStart, psnEnd, curPsn)
+//      val psnEnd = psnStart + pktNum
+      val result = PsnUtil.withInRange(psn, psnStart, pktNum, curPsn)
     }.result
 
   def incRnrOrRetryCnt(retryReason: SpinalEnumCraft[RetryReason.type]) =
@@ -1573,8 +1573,8 @@ case class WorkComp() extends Bundle {
   val status = WorkCompStatus() // Bits(WC_STATUS_WIDTH bits)
   val immDtOrRmtKeyToInv = Bits(LRKEY_IMM_DATA_WIDTH bits)
 
-  def setSuccessFromRecvWorkReq(
-      recvWorkReq: RecvWorkReq,
+  def setSuccessFromRxWorkReq(
+      recvWorkReq: RxWorkReq,
       reqOpCode: Bits,
       dqpn: UInt,
       reqTotalLenBytes: UInt,
@@ -1582,7 +1582,7 @@ case class WorkComp() extends Bundle {
   ): this.type = {
 //    val status = Bits(WC_STATUS_WIDTH bits)
     val status = WorkCompStatus.SUCCESS
-    setFromRecvWorkReq(
+    setFromRxWorkReq(
       recvWorkReq,
       reqOpCode,
       dqpn,
@@ -1592,8 +1592,8 @@ case class WorkComp() extends Bundle {
     )
   }
 
-  def setFromRecvWorkReq(
-      recvWorkReq: RecvWorkReq,
+  def setFromRxWorkReq(
+      recvWorkReq: RxWorkReq,
       reqOpCode: Bits,
       dqpn: UInt,
       status: SpinalEnumCraft[WorkCompStatus.type],
@@ -2100,7 +2100,7 @@ case class ReqPsnRange() extends Bundle {
 
 case class UdpMetaData() extends Bundle {
   val ip = Bits(IPV4_WIDTH bits) // IPv4 only
-  val len = UInt(RDMA_MAX_LEN_WIDTH bits)
+  val lenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
 }
 
 case class UdpData(busWidth: BusWidth) extends Bundle {
@@ -2165,8 +2165,7 @@ case class SqReadAtomicRespWithDmaInfoBus(busWidth: BusWidth)
   override def asMaster(): Unit = master(respWithDmaInfo)
 }
 
-// DmaCommHeader has the same layout as RETH
-case class DmaCommHeader() extends Bundle {
+case class DmaInfo() extends Bundle {
   val va = UInt(MEM_ADDR_WIDTH bits)
   val pa = UInt(MEM_ADDR_WIDTH bits)
   val lrkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
@@ -2191,29 +2190,29 @@ case class RqReqCheckRst() extends Bundle {
   val epsn = UInt(PSN_WIDTH bits)
 }
 
-case class RqReqWithRecvBuf(busWidth: BusWidth) extends Bundle {
+case class RqReqWithRxBuf(busWidth: BusWidth) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
   val nakAeth = AETH()
-  // RecvWorkReq is only valid at the first or only fragment for send,
+  // RxWorkReq is only valid at the first or only fragment for send,
   // or valid at the last or only fragment for write imm
-  val recvBufValid = Bool()
-  val recvBuffer = RecvWorkReq()
+  val rxBufValid = Bool()
+  val rxBuf = RxWorkReq()
 }
 
-case class RqReqWithRecvBufBus(busWidth: BusWidth)
+case class RqReqWithRxBufBus(busWidth: BusWidth)
     extends Bundle
     with IMasterSlave {
-  val reqWithRecvBuf = Stream(Fragment(RqReqWithRecvBuf(busWidth)))
+  val reqWithRxBuf = Stream(Fragment(RqReqWithRxBuf(busWidth)))
 
-  def >>(that: RqReqWithRecvBufBus): Unit = {
-    this.reqWithRecvBuf >> that.reqWithRecvBuf
+  def >>(that: RqReqWithRxBufBus): Unit = {
+    this.reqWithRxBuf >> that.reqWithRxBuf
   }
 
-  def <<(that: RqReqWithRecvBufBus): Unit = that >> this
+  def <<(that: RqReqWithRxBufBus): Unit = that >> this
 
-  override def asMaster(): Unit = master(reqWithRecvBuf)
+  override def asMaster(): Unit = master(reqWithRxBuf)
 }
 
 case class RqReqCheckInternalOutput(busWidth: BusWidth) extends Bundle {
@@ -2228,21 +2227,21 @@ case class RqReqCheckStageOutput(busWidth: BusWidth) extends Bundle {
   val nakAeth = AETH()
 }
 
-case class RqReqCommCheckStageOutputBus(busWidth: BusWidth)
+case class RqReqCommCheckRstBus(busWidth: BusWidth)
     extends Bundle
     with IMasterSlave {
-  val checkOutput = Stream(Fragment(RqReqCheckStageOutput(busWidth)))
+  val checkRst = Stream(Fragment(RqReqCheckStageOutput(busWidth)))
 
-  def >>(that: RqReqCommCheckStageOutputBus): Unit = {
-    this.checkOutput >> that.checkOutput
+  def >>(that: RqReqCommCheckRstBus): Unit = {
+    this.checkRst >> that.checkRst
   }
 
-  def <<(that: RqReqCommCheckStageOutputBus): Unit = that >> this
+  def <<(that: RqReqCommCheckRstBus): Unit = that >> this
 
-  override def asMaster(): Unit = master(checkOutput)
+  override def asMaster(): Unit = master(checkRst)
 }
 
-case class RqReqWithRecvBufAndDmaInfo(busWidth: BusWidth) extends Bundle {
+case class RqReqWithRxBufAndDmaInfo(busWidth: BusWidth) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
@@ -2250,30 +2249,30 @@ case class RqReqWithRecvBufAndDmaInfo(busWidth: BusWidth) extends Bundle {
   // reqTotalLenValid is only for the last fragment of send/write request packet
   val reqTotalLenValid = Bool()
   val reqTotalLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
-  // RecvWorkReq is only valid at the first or only fragment for send,
+  // RxWorkReq is only valid at the first or only fragment for send,
   // or valid at the last or only fragment for write imm
-  val recvBufValid = Bool()
-  val recvBuffer = RecvWorkReq()
-  // DmaCommHeader is only valid at the first or only fragment
-  val dmaHeaderValid =
-    Bool() // TODO: remove this, DMA info should be always valid
-  val dmaCommHeader = DmaCommHeader()
+  val rxBufValid = Bool()
+  val rxBuf = RxWorkReq()
+  // DmaInfo is only valid at the first or only fragment
+  // TODO: remove this, DMA info should be always valid
+//  val dmaHeaderValid = Bool()
+  val dmaInfo = DmaInfo()
 }
 
-case class RqReqWithRecvBufAndDmaInfoBus(busWidth: BusWidth)
+case class RqReqWithRxBufAndDmaInfoBus(busWidth: BusWidth)
     extends Bundle
     with IMasterSlave {
-  val reqWithRecvBufAndDmaInfo = Stream(
-    Fragment(RqReqWithRecvBufAndDmaInfo(busWidth))
+  val reqWithRxBufAndDmaInfo = Stream(
+    Fragment(RqReqWithRxBufAndDmaInfo(busWidth))
   )
 
-  def >>(that: RqReqWithRecvBufAndDmaInfoBus): Unit = {
-    this.reqWithRecvBufAndDmaInfo >> that.reqWithRecvBufAndDmaInfo
+  def >>(that: RqReqWithRxBufAndDmaInfoBus): Unit = {
+    this.reqWithRxBufAndDmaInfo >> that.reqWithRxBufAndDmaInfo
   }
 
-  def <<(that: RqReqWithRecvBufAndDmaInfoBus): Unit = that >> this
+  def <<(that: RqReqWithRxBufAndDmaInfoBus): Unit = that >> this
 
-  override def asMaster(): Unit = master(reqWithRecvBufAndDmaInfo)
+  override def asMaster(): Unit = master(reqWithRxBufAndDmaInfo)
 }
 
 sealed abstract class RdmaBasePacket extends Bundle {

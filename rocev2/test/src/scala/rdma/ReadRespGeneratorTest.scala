@@ -3,7 +3,7 @@ package rdma
 import spinal.core.sim._
 import ConstantSettings._
 import StreamSimUtil._
-import TypeReDef._
+import RdmaTypeReDef._
 
 import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
@@ -72,8 +72,8 @@ class ReadRespGeneratorTest extends AnyFunSuite {
       val mtyWidth = SendWriteReqReadRespInputGen.busWidthBytes(busWidth)
 
       val inputDataQueue =
-        mutable.Queue[(RdmaFragData, MTY, PktNum, PsnStart, PktLen, FragLast)]()
-      val outputDataQueue = mutable.Queue[(RdmaFragData, MTY, PSN, FragLast)]()
+        mutable.Queue[(PktFragData, MTY, PktNum, PsnStart, PktLen, FragLast)]()
+      val outputDataQueue = mutable.Queue[(PktFragData, MTY, PSN, FragLast)]()
 
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.rxQCtrl.stateErrFlush #= false
@@ -111,7 +111,10 @@ class ReadRespGeneratorTest extends AnyFunSuite {
             if (residue == 0) {
               setAllBits(mtyWidth) // Last fragment has full valid data
             } else {
-              setAllBits(residue) // Last fragment has partial valid data
+              val leftShiftAmt = mtyWidth - residue
+              setAllBits(
+                residue
+              ) << leftShiftAmt // Last fragment has partial valid data
             }
           } else {
             setAllBits(mtyWidth)

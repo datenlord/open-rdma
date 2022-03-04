@@ -7,7 +7,8 @@ import RdmaConstants._
 import StreamSimUtil._
 import AethSim._
 import BthSim._
-import TypeReDef._
+import PsnSim._
+import RdmaTypeReDef._
 
 import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
@@ -80,13 +81,13 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
         val randOpCode = WorkReqSim.randomSendWriteOpCode()
         dut.io.cachedWorkReqPop.workReq.opcode #= randOpCode
         // NOTE: if PSN comparison is involved, it must update nPSN too
-        dut.io.qpAttr.npsn #= (psnStart + pktNum) % TOTAL_PSN
+        dut.io.qpAttr.npsn #= psnStart +% pktNum
         dut.io.cachedWorkReqPop.pktNum #= pktNum
         dut.io.cachedWorkReqPop.psnStart #= psnStart
         dut.io.cachedWorkReqPop.workReq.lenBytes #= totalLenBytes
 
         // Set input to dut.io.rx
-        val ackPsn = (psnStart - 1 + TOTAL_PSN) % TOTAL_PSN
+        val ackPsn = psnStart -% 1
         dut.io.rx.bth.psn #= ackPsn
         dut.io.rx.bth.setTransportAndOpCode(Transports.RC, OpCode.ACKNOWLEDGE)
         dut.io.rx.aeth.setAsNormalAck()
@@ -160,7 +161,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
         val psnStart = psnStartItr.next()
         val lenBytes = totalLenItr.next()
         // NOTE: if PSN comparison is involved, it must update nPSN too
-        dut.io.qpAttr.npsn #= (psnStart + pktNum) % TOTAL_PSN
+        dut.io.qpAttr.npsn #= psnStart +% pktNum
         cachedWorkReqQueue.enqueue((pktNum, psnStart, lenBytes.toLong))
 //        println(
 //          f"${simTime()} time: cachedWorkReqQueue enqueue: pktNum=${pktNum}%X, psnStart=${psnStart}%X, lenBytes=${lenBytes}%X"
@@ -184,7 +185,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
             val psnStart = psnStartItr.next()
             val lenBytes = totalLenItr.next()
             // NOTE: if PSN comparison is involved, it must update nPSN too
-            dut.io.qpAttr.npsn #= (psnStart + pktNum) % TOTAL_PSN
+            dut.io.qpAttr.npsn #= psnStart +% pktNum
             cachedWorkReqQueue.enqueue((pktNum, psnStart, lenBytes.toLong))
             if ((idx % pendingReqNum) == (pendingReqNum - 1)) {
               explicitAckQueue.enqueue((pktNum, psnStart, AckType.NAK_RNR))
@@ -224,7 +225,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
 
       streamMasterDriver(dut.io.rx, dut.clockDomain) {
         val (pktNum, psnStart, ackType) = explicitAckQueue.dequeue()
-        val ackPsn = (psnStart + pktNum - 1) % TOTAL_PSN
+        val ackPsn = psnStart +% pktNum -% 1
 //        dut.io.qpAttr.npsn #= ackPsn
         dut.io.rx.bth.psn #= ackPsn
         dut.io.rx.bth.setTransportAndOpCode(Transports.RC, OpCode.ACKNOWLEDGE)
@@ -300,7 +301,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
               workCompStatusOut
             ) =
               MiscUtils.safeDeQueue(outputWorkCompAndAckQueue, dut.clockDomain)
-            val workReqEndPsn = (psnStartInIn + pktNumIn - 1) % TOTAL_PSN
+            val workReqEndPsn = psnStartInIn +% pktNumIn -% 1
 //            println(
 //              f"${simTime()} time: WR: workReqOpCodeIn=${workReqOpCodeIn}, psnStartInIn=${psnStartInIn}=${psnStartInIn}%X, workReqEndPsn=${workReqEndPsn}=${workReqEndPsn}%X, ackPsnOut=${ackPsnOut}=${ackPsnOut}%X, pktNumIn=${pktNumIn}=${pktNumIn}%X"
 //            )
@@ -366,6 +367,8 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
 
 class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
+  val pmtuLen = PMTU.U256
+  val maxFragNum = 137
 
   val simCfg = SimConfig.allOptimisation.withWave
     .withConfig(
@@ -421,15 +424,13 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
       dut.io.txQCtrl.retryFlush #= false
 
       // Input to DUT
-      val pmtuLen = PMTU.U256
-      val maxFragNum = 17
       val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
         SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
 
       val readRespMetaDataQueue = mutable.Queue[(PsnStart, FragNum)]()
-      val rxReadRespQueue = mutable.Queue[(PSN, RdmaFragData, FragLast)]()
+      val rxReadRespQueue = mutable.Queue[(PSN, PktFragData, FragLast)]()
       val txReadRespQueue =
-        mutable.Queue[(PSN, Addr, WorkReqId, RdmaFragData, FragLast)]()
+        mutable.Queue[(PSN, Addr, WorkReqId, PktFragData, FragLast)]()
       val workReqQueryReqQueue = mutable.Queue[PSN]()
       val workReqQueryRespQueue = mutable.Queue[(PSN, Addr, WorkReqId)]()
       val addrCacheReadReqQueue = mutable.Queue[(PSN, Addr)]()
@@ -620,6 +621,8 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
 
 class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
+  val pmtuLen = PMTU.U256
+  val maxFragNum = 137
 
   val simCfg = SimConfig.allOptimisation.withWave
     .withConfig(
@@ -637,17 +640,13 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
       dut.io.txQCtrl.retryFlush #= false
 
       // Input to DUT
-      val pmtuLen = PMTU.U256
-      val maxFragNum = 17
       val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
         SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
 
-//      val readRespMetaDataQueue = mutable.Queue[(PsnStart, FragNum)]()
       val rxReadRespQueue =
-        mutable.Queue[(PSN, Addr, WorkReqId, RdmaFragData, FragLast)]()
+        mutable.Queue[(PSN, Addr, WorkReqId, PktFragData, FragLast)]()
       val readRespDmaWriteReqQueue =
-        mutable.Queue[(PSN, Addr, WorkReqId, RdmaFragData, FragLast)]()
-//      val matchQueue = mutable.Queue[PSN]()
+        mutable.Queue[(PSN, Addr, WorkReqId, PktFragData, FragLast)]()
 
       pktFragStreamMasterDriver(
         dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo,
@@ -660,7 +659,6 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
 //        println(
 //          f"${simTime()} time: pktNum=${pktNum}, totalFragNum=${totalFragNum}, psnStart=${psnStart}, totalLenBytes=${totalLenBytes}"
 //        )
-//        readRespMetaDataQueue.enqueue((psnStart, totalFragNum))
         (psnStart, totalFragNum, pktNum, pmtuLen, busWidth, totalLenBytes)
       } { (psn, _, fragLast, _, _, pktIdx, pktNum, _) =>
         // Only RC is supported
