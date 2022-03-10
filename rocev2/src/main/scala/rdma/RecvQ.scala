@@ -889,15 +889,24 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
 
   val pktFragLenBytes =
     CountOne(inputPktFrag.mty).resize(RDMA_MAX_LEN_WIDTH)
+  when(inputValid) {
+    assert(
+      assertion = inputPktFrag.mty =/= 0,
+      message =
+        L"invalid MTY=${inputPktFrag.mty}, opcode=${inputPktFrag.bth.opcode}, PSN=${inputPktFrag.bth.psn}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}",
+      severity = FAILURE
+    )
+  }
   val dmaTargetLenBytes = io.rx.reqWithRxBufAndDmaInfo.dmaInfo.dlen
   val bthLenBytes = widthOf(BTH()) / BYTE_WIDTH
   val rethLenBytes = widthOf(RETH()) / BYTE_WIDTH
   val immDtLenBytes = widthOf(ImmDt()) / BYTE_WIDTH
   val iethLenBytes = widthOf(IETH()) / BYTE_WIDTH
 
-  when(io.rx.reqWithRxBufAndDmaInfo.rxBufValid) {
+  when(inputValid && io.rx.reqWithRxBufAndDmaInfo.rxBufValid) {
     assert(
-      assertion = OpCode.isSendReqPkt(inputPktFrag.bth.opcode),
+      assertion = OpCode.isSendReqPkt(inputPktFrag.bth.opcode) ||
+        OpCode.isWriteWithImmReqPkt(inputPktFrag.bth.opcode),
       message =
         L"${REPORT_TIME} time: it should be send requests that require receive buffer, but opcode=${inputPktFrag.bth.opcode}",
       severity = FAILURE
@@ -918,19 +927,32 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
     iethLenAdjust := iethLenBytes
   }
 
-  val pktLenBytesReg = Reg(UInt(RDMA_MAX_LEN_WIDTH bits))
-  val reqTotalLenBytesReg = Reg(UInt(RDMA_MAX_LEN_WIDTH bits))
+  val pktLenBytesReg = RegInit(U(0, RDMA_MAX_LEN_WIDTH bits))
+  val reqTotalLenBytesReg = RegInit(U(0, RDMA_MAX_LEN_WIDTH bits))
   when(io.rxQCtrl.stateErrFlush) {
     pktLenBytesReg := 0
     reqTotalLenBytesReg := 0
   }
 
   // All the packet length adjustments used when isFirstFrag
-  val firstPktAdjust = bthLenBytes + rethLenAdjust
-  val midPktAdjust = bthLenBytes
-  val lastPktEthAdjust = padCntAdjust + immDtLenAdjust + iethLenAdjust
-  val lastPktAdjust = bthLenBytes + lastPktEthAdjust
-  val onlyPktAdjust = firstPktAdjust + lastPktEthAdjust
+  val firstPktAdjust = bthLenBytes +^ rethLenAdjust
+  val midPktAdjust = U(bthLenBytes)
+  val lastPktEthAdjust = padCntAdjust +^ immDtLenAdjust +^ iethLenAdjust
+  val lastPktAdjust = bthLenBytes +^ lastPktEthAdjust
+  val onlyPktAdjust = firstPktAdjust +^ lastPktEthAdjust
+//  val headerAdjustWidth = MAX_HEADER_LEN_WIDTH + 1
+//  val firstPktAdjust = UInt(headerAdjustWidth bits)
+//  firstPktAdjust := (bthLenBytes +^ rethLenAdjust).resize(headerAdjustWidth)
+//  val midPktAdjust = U(bthLenBytes, headerAdjustWidth bits)
+//  val lastPktEthAdjust = UInt(headerAdjustWidth bits)
+//  lastPktEthAdjust := (padCntAdjust +^ immDtLenAdjust +^ iethLenAdjust)
+//    .resize(headerAdjustWidth)
+//  val lastPktAdjust = UInt(headerAdjustWidth bits)
+//  lastPktAdjust := (bthLenBytes +^ lastPktEthAdjust).resize(headerAdjustWidth)
+//  val onlyPktAdjust = UInt(headerAdjustWidth bits)
+//  onlyPktAdjust := (firstPktAdjust +^ lastPktEthAdjust).resize(
+//    headerAdjustWidth
+//  )
   val curPktFragLenBytesFirstPktAdjust = pktFragLenBytes - firstPktAdjust
   val curPktFragLenBytesMidPktAdjust = pktFragLenBytes - midPktAdjust
   val curPktFragLenBytesLastPktAdjust = pktFragLenBytes - lastPktAdjust
@@ -963,7 +985,7 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
         } otherwise {
           report(
             message =
-              L"illegal opcode=${inputPktFrag.bth.opcode} when isFirstFrag=${isFirstFrag} and isLastFrag=${isLastFrag}",
+              L"${REPORT_TIME} time: illegal opcode=${inputPktFrag.bth.opcode} when isFirstFrag=${isFirstFrag} and isLastFrag=${isLastFrag}",
             severity = FAILURE
           )
         }
@@ -982,9 +1004,10 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
             curPktLenBytes =/= pmtuPktLenBytes(io.qpAttr.pmtu) ||
               padCntAdjust =/= 0
           assert(
-            assertion = isPktLenCheckErr,
+            assertion = !isPktLenCheckErr,
             message =
-              L"first request length check failed, opcode=${inputPktFrag.bth.opcode}, curPktLenBytes=${curPktLenBytes} padCnt=${padCntAdjust}"
+              L"${REPORT_TIME} time: first request packet length check failed, opcode=${inputPktFrag.bth.opcode}, PSN=${inputPktFrag.bth.psn}, curPktLenBytes=${curPktLenBytes}, padCnt=${padCntAdjust}",
+            severity = ERROR
           )
         } elsewhen (OpCode.isMidReqPkt(inputPktFrag.bth.opcode)) {
           reqTotalLenBytesReg := curReqTotalLenBytes
@@ -993,9 +1016,10 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
             curPktLenBytes =/= pmtuPktLenBytes(io.qpAttr.pmtu) ||
               padCntAdjust =/= 0
           assert(
-            assertion = isPktLenCheckErr,
+            assertion = !isPktLenCheckErr,
             message =
-              L"middle request length check failed, opcode=${inputPktFrag.bth.opcode}, curPktLenBytes=${curPktLenBytes} padCnt=${padCntAdjust}"
+              L"${REPORT_TIME} time: middle request packet length check failed, opcode=${inputPktFrag.bth.opcode}, PSN=${inputPktFrag.bth.psn}, curPktLenBytes=${curPktLenBytes}, padCnt=${padCntAdjust}",
+            severity = ERROR
           )
         }
       }
@@ -1013,7 +1037,7 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
         } elsewhen (OpCode.isFirstOrMidReqPkt(inputPktFrag.bth.opcode)) {
           report(
             message =
-              L"first or middle request packet length check failed, opcode=${inputPktFrag.bth.opcode}, when isFirstFrag=${isFirstFrag} and isLastFrag=${isLastFrag}",
+              L"${REPORT_TIME} time: first or middle request packet length check failed, opcode=${inputPktFrag.bth.opcode}, when isFirstFrag=${isFirstFrag} and isLastFrag=${isLastFrag}",
             severity = FAILURE
           )
 
@@ -1031,10 +1055,12 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
       (isSendReq && reqTotalLenBytes > dmaTargetLenBytes) ||
         (isWriteReq && reqTotalLenBytes =/= dmaTargetLenBytes)
     assert(
-      assertion = isReqTotalLenCheckErr,
+      assertion = !isReqTotalLenCheckErr,
       message =
-        L"request length check failed, opcode=${inputPktFrag.bth.opcode}, reqTotalLenBytes=${reqTotalLenBytes}, dmaTargetLenBytes=${dmaTargetLenBytes}",
-      severity = FAILURE
+        L"${REPORT_TIME} time: request total length check failed, opcode=${inputPktFrag.bth.opcode}, PSN=${inputPktFrag.bth.psn}, dmaTargetLenBytes=${dmaTargetLenBytes}, reqTotalLenBytes=${reqTotalLenBytes} = (reqTotalLenBytesReg=${reqTotalLenBytesReg} + pktLenBytesReg=${pktLenBytesReg} + pktFragLenBytes=${pktFragLenBytes}), inputPktFrag.mty=${inputPktFrag.mty}, CountOne(inputPktFrag.mty)=${CountOne(
+          inputPktFrag.mty
+        )}, bthLenBytes=${U(bthLenBytes)}, rethLenAdjust=${rethLenAdjust}, immDtLenAdjust=${immDtLenAdjust}, iethLenAdjust=${iethLenAdjust}, padCntAdjust=${padCntAdjust}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}",
+      severity = ERROR
     )
   }
 
@@ -1111,11 +1137,12 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
 //    }
 //  }
 
-  val isLenCheckErr = isReqTotalLenCheckErr || isPktLenCheckErr
+  val hasLenCheckErr = isReqTotalLenCheckErr || isPktLenCheckErr
   val nakInvAeth = AETH().set(AckType.NAK_INV)
   val nakAeth = cloneOf(io.rx.reqWithRxBufAndDmaInfo.nakAeth)
+  val outputHasNak = inputHasNak || hasLenCheckErr
   nakAeth := io.rx.reqWithRxBufAndDmaInfo.nakAeth
-  when(isLenCheckErr && !inputHasNak) {
+  when(hasLenCheckErr && !inputHasNak) {
     // TODO: if rdmaAck is retry NAK, should it be replaced by this NAK_INV or NAK_RMT_ACC?
     nakAeth := nakInvAeth
   }
@@ -1126,7 +1153,7 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
       val result = cloneOf(io.rx.reqWithRxBufAndDmaInfo.payloadType)
       result.pktFrag := inputPktFrag
       result.preOpCode := io.rx.reqWithRxBufAndDmaInfo.preOpCode
-      result.hasNak := isLenCheckErr
+      result.hasNak := outputHasNak
       result.nakAeth := nakAeth
       result.rxBufValid := io.rx.reqWithRxBufAndDmaInfo.rxBufValid
       result.rxBuf := inputRxBuf

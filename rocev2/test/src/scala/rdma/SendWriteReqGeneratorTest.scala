@@ -12,6 +12,7 @@ import org.scalatest.funsuite.AnyFunSuite
 abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
     extends AnyFunSuite {
   val busWidth = BusWidth.W512
+  val pmtuLen = PMTU.U1024
 
   def simCfg: SimCompiled[T]
   def workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
@@ -24,7 +25,6 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
       val outputPsnQueue = mutable.Queue[PSN]()
       val naturalNumItr = NaturalNumber.from(1).iterator
 
-      val pmtuLen = PMTU.U1024
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.txQCtrl.wrongStateFlush #= false
 
@@ -65,9 +65,6 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
-      val pmtuLen = PMTU.U1024
-      val mtyWidth = SendWriteReqReadRespInputGen.busWidthBytes(busWidth)
-
       val inputDataQueue =
         mutable.Queue[(PktFragData, MTY, PktNum, PSN, PktLen, FragLast)]()
       val outputDataQueue = mutable.Queue[(PktFragData, MTY, PSN, FragLast)]()
@@ -101,21 +98,27 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
             pktNum,
             totalLenBytes
         ) =>
-          val isLastInputFrag = fragIdx == totalFragNum - 1
-
-          val mty = if (isLastInputFrag) {
-            val residue = (totalLenBytes % mtyWidth).toInt
-            if (residue == 0) {
-              setAllBits(mtyWidth) // Last fragment has full valid data
-            } else {
-              val leftShiftAmt = mtyWidth - residue
-              setAllBits(
-                residue
-              ) << leftShiftAmt // Last fragment has partial valid data
-            }
-          } else {
-            setAllBits(mtyWidth)
-          }
+//          val isLastInputFrag = fragIdx == totalFragNum - 1
+//          val mty = if (isLastInputFrag) {
+//            val residue = (totalLenBytes % mtyWidth).toInt
+//            if (residue == 0) {
+//              setAllBits(mtyWidth) // Last fragment has full valid data
+//            } else {
+//              val leftShiftAmt = mtyWidth - residue
+//              setAllBits(
+//                residue
+//              ) << leftShiftAmt // Last fragment has partial valid data
+//            }
+//          } else {
+//            setAllBits(mtyWidth)
+//          }
+          DmaReadRespSim.setMtyAndLen(
+            dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp,
+            fragIdx,
+            totalFragNum,
+            totalLenBytes.toLong,
+            busWidth
+          )
 //        println(
 //          f"${simTime()} time: fragIdx=${fragIdx}, fragNum=${fragNum}, isLastInputFrag=${isLastInputFrag}, isLastFragPerPkt=${isLastFragPerPkt}, fragLast=${fragLast}, totalLenBytes=${totalLenBytes}, pktNum=${pktNum}, mtyWidth=${mtyWidth}, residue=${totalLenBytes % mtyWidth}, mty=${mty}%X"
 //        )
@@ -125,8 +128,8 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
           dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes #= totalLenBytes
           dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode #= workReqOpCode
           dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.pktNum #= pktNum
-          dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.lenBytes #= totalLenBytes
-          dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.mty #= mty
+//          dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.lenBytes #= totalLenBytes
+//          dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.mty #= mty
           dut.io.cachedWorkReqAndDmaReadResp.last #= fragLast
       }
 

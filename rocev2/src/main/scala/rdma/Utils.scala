@@ -1165,7 +1165,7 @@ object StreamDeMuxByConditions {
       assert(
         assertion = CountOne(oneHot) === 1,
         message =
-          L"de-mux conditions=${oneHot} should have exact one true condition when input stream is valid",
+          L"${REPORT_TIME} time: de-mux conditions=${oneHot} should have exact one true condition when input stream is valid",
         severity = FAILURE
       )
     }

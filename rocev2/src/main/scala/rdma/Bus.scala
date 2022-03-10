@@ -151,7 +151,7 @@ case class SqErrNotifier() extends Bundle {
       assert(
         assertion = errType =/= SqErrType.NO_ERR,
         message =
-          L"SqErrNotifier.pulse=${pulse}, but errType=${errType} shows no error",
+          L"${REPORT_TIME} time: SqErrNotifier.pulse=${pulse}, but errType=${errType} shows no error",
         severity = FAILURE
       )
     }
@@ -162,7 +162,7 @@ case class SqErrNotifier() extends Bundle {
     assert(
       assertion = !(this.hasFatalErr() && that.hasFatalErr()),
       message =
-        L"cannot merge two SqErrNotifier both have fatal error, this.pulse=${this.pulse}, this.errType=${this.errType}, that.pulse=${that.pulse}, that.errType=${that.errType}",
+        L"${REPORT_TIME} time: cannot merge two SqErrNotifier both have fatal error, this.pulse=${this.pulse}, this.errType=${this.errType}, that.pulse=${that.pulse}, that.errType=${that.errType}",
       severity = FAILURE
     )
     val result = SqErrNotifier()
@@ -1365,7 +1365,7 @@ case class CachedWorkReq() extends Bundle {
         default {
           report(
             message =
-              L"input retryReason=${retryReason} should be valid reason",
+              L"${REPORT_TIME} time: input retryReason=${retryReason} should be valid reason",
             severity = FAILURE
           )
         }

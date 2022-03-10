@@ -43,7 +43,7 @@ class HeadVerifier(numMaxQPs: Int, busWidth: BusWidth) extends Component {
     val dqpAttr = io.qpAttrVec.oneHotAccess(dqpIdxOH)
     val dqpState = dqpAttr.state
     report(
-      L"${REPORT_TIME} time: HeadVerifier dropped one packet, psn=${rdmaData.bth.psn}, opcode=${rdmaData.bth.opcode}, dqpn=${rdmaData.bth.dqpn}, dqpIdxOH=${dqpIdxOH}, dqpState=${dqpState}"
+      L"${REPORT_TIME} time: HeadVerifier dropped one packet, PSN=${rdmaData.bth.psn}, opcode=${rdmaData.bth.opcode}, dqpn=${rdmaData.bth.dqpn}, dqpIdxOH=${dqpIdxOH}, dqpState=${dqpState}"
     )
   }
   io.tx.pktFrag <-/< io.rx.pktFrag.throwWhen(cond).translateWith(rdmaData)
@@ -332,7 +332,6 @@ object RoCEv2 {
       mode = SystemVerilog,
       oneFilePerComponent = true,
       targetDirectory = "./rtl",
-//      anonymSignalPrefix = "_zz_",
       verbose = true
     ).generate(new RoCEv2(numMaxQPs = 4, BusWidth.W512))
 //      .printPruned()

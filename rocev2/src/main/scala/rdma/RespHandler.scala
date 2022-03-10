@@ -177,7 +177,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
       io.errNotifier.setLocalErr()
       report(
         message =
-          L"read response opcode sequence error: previous opcode=${preReadRespPktOpCodeReg}, current opcode=${io.readAtomicResp.pktFrag.bth.opcode}",
+          L"${REPORT_TIME} time: read response opcode sequence error: previous opcode=${preReadRespPktOpCodeReg}, current opcode=${io.readAtomicResp.pktFrag.bth.opcode}",
         severity = FAILURE
       )
     }
