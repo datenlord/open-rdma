@@ -10,6 +10,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class ReadRespGeneratorTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
+  val pmtuLen = PMTU.U1024
 
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new ReadRespGenerator(busWidth))
@@ -22,7 +23,6 @@ class ReadRespGeneratorTest extends AnyFunSuite {
       val outputPsnQueue = mutable.Queue[PSN]()
       val naturalNumItr = NaturalNumber.from(1).iterator
 
-      val pmtuLen = PMTU.U1024
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.rxQCtrl.stateErrFlush #= false
 
@@ -68,9 +68,6 @@ class ReadRespGeneratorTest extends AnyFunSuite {
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
-      val pmtuLen = PMTU.U1024
-      val mtyWidth = SendWriteReqReadRespInputGen.busWidthBytes(busWidth)
-
       val inputDataQueue =
         mutable.Queue[(PktFragData, MTY, PktNum, PsnStart, PktLen, FragLast)]()
       val outputDataQueue = mutable.Queue[(PktFragData, MTY, PSN, FragLast)]()
@@ -78,7 +75,6 @@ class ReadRespGeneratorTest extends AnyFunSuite {
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.rxQCtrl.stateErrFlush #= false
       dut.io.readRstCacheDataAndDmaReadRespSegment.valid #= false
-//      dut.clockDomain.waitSampling()
 
       // Input to DUT
       val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
@@ -104,21 +100,27 @@ class ReadRespGeneratorTest extends AnyFunSuite {
             pktNum,
             totalLenBytes
         ) =>
-          val isLastInputFrag = fragIdx == totalFragNum - 1
-
-          val mty = if (isLastInputFrag) {
-            val residue = (totalLenBytes % mtyWidth).toInt
-            if (residue == 0) {
-              setAllBits(mtyWidth) // Last fragment has full valid data
-            } else {
-              val leftShiftAmt = mtyWidth - residue
-              setAllBits(
-                residue
-              ) << leftShiftAmt // Last fragment has partial valid data
-            }
-          } else {
-            setAllBits(mtyWidth)
-          }
+//          val isLastInputFrag = fragIdx == totalFragNum - 1
+//          val mty = if (isLastInputFrag) {
+//            val residue = (totalLenBytes % mtyWidth).toInt
+//            if (residue == 0) {
+//              setAllBits(mtyWidth) // Last fragment has full valid data
+//            } else {
+//              val leftShiftAmt = mtyWidth - residue
+//              setAllBits(
+//                residue
+//              ) << leftShiftAmt // Last fragment has partial valid data
+//            }
+//          } else {
+//            setAllBits(mtyWidth)
+//          }
+          DmaReadRespSim.setMtyAndLen(
+            dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp,
+            fragIdx,
+            totalFragNum,
+            totalLenBytes.toLong,
+            busWidth
+          )
 //        println(
 //          f"${simTime()} time: fragIdx=${fragIdx}, fragNum=${fragNum}, isLastInputFrag=${isLastInputFrag}, isLastFragPerPkt=${isLastFragPerPkt}, fragLast=${fragLast}, totalLenBytes=${totalLenBytes}, pktNum=${pktNum}, mtyWidth=${mtyWidth}, residue=${totalLenBytes % mtyWidth}, mty=${mty}%X"
 //        )
@@ -127,8 +129,8 @@ class ReadRespGeneratorTest extends AnyFunSuite {
           dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.psnStart #= psnStart
           dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.dlen #= totalLenBytes
           dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.pktNum #= pktNum
-          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes #= totalLenBytes
-          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.mty #= mty
+//          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes #= totalLenBytes
+//          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.mty #= mty
           dut.io.readRstCacheDataAndDmaReadRespSegment.last #= fragLast
       }
       onStreamFire(

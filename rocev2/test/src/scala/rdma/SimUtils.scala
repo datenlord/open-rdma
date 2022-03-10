@@ -33,7 +33,7 @@ case class PktNumItr(pktNumItr: Iterator[Int]) {
   }
 }
 
-case class TotalLenItr(totalLenItr: Iterator[Int]) {
+case class PayloadLenItr(totalLenItr: Iterator[Int]) {
   def next(): Int = {
     val totalLen = totalLenItr.next()
     assert(
@@ -46,7 +46,22 @@ case class TotalLenItr(totalLenItr: Iterator[Int]) {
 
 object SendWriteReqReadRespInputGen {
   val maxReqRespLen = 1L << (RDMA_MAX_LEN_WIDTH - 1) // 2GB
+
   def busWidthBytes(busWidth: BusWidth.Value): Int = busWidth.id / BYTE_WIDTH
+
+  def pmtuLenBytes(pmtu: PMTU.Value): Int = {
+    pmtu match {
+      case PMTU.U256  => 256
+      case PMTU.U512  => 512
+      case PMTU.U1024 => 1024
+      case PMTU.U2048 => 2048
+      case PMTU.U4096 => 4096
+      case _ => {
+        println(f"${simTime()} time: invalid PMTU=${pmtu}")
+        ???
+      }
+    }
+  }
 
   def maxFragNumPerPkt(pmtuLen: PMTU.Value, busWidth: BusWidth.Value): Int = {
     val mtyWidth = busWidthBytes(busWidth)
@@ -54,13 +69,13 @@ object SendWriteReqReadRespInputGen {
     maxFragNum
   }
 
-  def maxTotalFragNumPerReqResp(busWidth: BusWidth.Value): Int = {
+  def maxPayloadFragNumPerReqOrResp(busWidth: BusWidth.Value): Int = {
     val mtyWidth = busWidthBytes(busWidth)
     val maxFragNum = (1L << RDMA_MAX_LEN_WIDTH) / mtyWidth
     maxFragNum.toInt
   }
 
-  private def genTotalLen() = {
+  private def genPayloadLen() = {
     val avgReqRespLen = maxReqRespLen / PENDING_REQ_NUM
     val dmaRespIdxGen = NaturalNumber.from(0)
 
@@ -72,7 +87,7 @@ object SendWriteReqReadRespInputGen {
     totalLenGen
   }
 
-  private def genTotalLen(busWidth: BusWidth.Value, maxFragNum: Int) = {
+  private def genPayloadLen(busWidth: BusWidth.Value, maxFragNum: Int) = {
     val mtyWidth = busWidthBytes(busWidth)
     require(
       mtyWidth > 0,
@@ -101,7 +116,7 @@ object SendWriteReqReadRespInputGen {
     totalLenGen
   }
 
-  private def genTotalLen(randSeed: Int) = {
+  private def genPayloadLen(randSeed: Int) = {
     val dmaRespIdxGen = NaturalNumber.from(0)
 
     // The total request/response length is from 1 byte to 2G=2^31 bytes
@@ -112,49 +127,49 @@ object SendWriteReqReadRespInputGen {
   }
 
   private def genOtherItr(
-      totalLenGen: LazyList[Int],
+      payloadLenGen: LazyList[Int],
       pmtuLen: PMTU.Value,
       busWidth: BusWidth.Value
   ) = {
-    val totalFragNumGen =
-      totalLenGen.map(totalLen =>
-        MiscUtils.computeFragNum(totalLen.toLong, busWidth)
+    val payloadFragNumGen =
+      payloadLenGen.map(payloadLen =>
+        MiscUtils.computeFragNum(payloadLen.toLong, busWidth)
       )
-    val pktNumGen = totalLenGen.map(totalLen =>
-      MiscUtils.computePktNum(totalLen.toLong, pmtuLen)
+    val pktNumGen = payloadLenGen.map(payloadLen =>
+      MiscUtils.computePktNum(payloadLen.toLong, pmtuLen)
     )
     // psnStartGen uses Long to avoid overflow, since Scala has not unsigned number
     val psnStartGen = pktNumGen.map(_.toLong).scan(0L)(_ + _)
-    val totalFragNumItr = totalFragNumGen.iterator
+    val payloadFragNumItr = payloadFragNumGen.iterator
     val pktNumItr = pktNumGen.iterator
     val psnStartItr = psnStartGen.iterator
-    val totalLenItr = totalLenGen.iterator
+    val payloadLenItr = payloadLenGen.iterator
 
 //    for (idx <- 0 until 10) {
 //      println(f"${simTime()} time: idx=$idx, fragNum=${fragNumItr.next()}, pktNum=${pktNumItr
 //        .next()}, psnStart=${psnItr.next()}, totalLenBytes=${totalLenItr.next()}")
 //    }
     (
-      totalFragNumItr,
+      payloadFragNumItr,
       PktNumItr(pktNumItr),
       PsnStartItr(psnStartItr),
-      TotalLenItr(totalLenItr)
+      PayloadLenItr(payloadLenItr)
     )
   }
 
   def getItr(pmtuLen: PMTU.Value, busWidth: BusWidth.Value) = {
-    val totalLenGen = genTotalLen()
-    genOtherItr(totalLenGen, pmtuLen, busWidth)
+    val payloadLenGen = genPayloadLen()
+    genOtherItr(payloadLenGen, pmtuLen, busWidth)
   }
 
   def getItr(maxFragNum: Int, pmtuLen: PMTU.Value, busWidth: BusWidth.Value) = {
-    val totalLenGen = genTotalLen(busWidth, maxFragNum)
-    genOtherItr(totalLenGen, pmtuLen, busWidth)
+    val payloadLenGen = genPayloadLen(busWidth, maxFragNum)
+    genOtherItr(payloadLenGen, pmtuLen, busWidth)
   }
 
   def getItr(pmtuLen: PMTU.Value, busWidth: BusWidth.Value, randSeed: Int) = {
-    val totalLenGen = genTotalLen(randSeed)
-    genOtherItr(totalLenGen, pmtuLen, busWidth)
+    val payloadLenGen = genPayloadLen(randSeed)
+    genOtherItr(payloadLenGen, pmtuLen, busWidth)
   }
 }
 
@@ -396,7 +411,7 @@ object StreamSimUtil {
           val fragLast =
             ((fragIdx % maxFragNumPerPkt) == (maxFragNumPerPkt - 1)) || (fragIdx == totalFragNum - 1)
 //          println(
-//            f"${simTime()} time: pktIdx=${pktIdx}%X, pktNum=${pktNum}%X, fragIdx=${fragIdx}%X, totalFragNum=${totalFragNum}%X, fragLast=${fragLast}, psn=${psn}%X, maxFragNumPerPkt=${maxFragNumPerPkt}%X"
+//            f"${simTime()} time: pktIdx=${pktIdx}%X, pktNum=${pktNum}%X, fragIdx=${fragIdx}%X, totalFragNum=${totalFragNum}%X, fragLast=${fragLast}, PSN=${psn}%X, maxFragNumPerPkt=${maxFragNumPerPkt}%X"
 //          )
           stream.valid #= true
           stream.payload.randomize()
@@ -467,7 +482,7 @@ object StreamSimUtil {
           val fragLast =
             ((fragIdx % maxFragNumPerPkt) == (maxFragNumPerPkt - 1)) || (fragIdx == totalFragNum - 1)
 //          println(
-//            f"${simTime()} time: pktIdx=${pktIdx}%X, pktNum=${pktNum}%X, fragIdx=${fragIdx}%X, totalFragNum=${totalFragNum}%X, fragLast=${fragLast}, psn=${psn}%X, maxFragNumPerPkt=${maxFragNumPerPkt}%X"
+//            f"${simTime()} time: pktIdx=${pktIdx}%X, pktNum=${pktNum}%X, fragIdx=${fragIdx}%X, totalFragNum=${totalFragNum}%X, fragLast=${fragLast}, PSN=${psn}%X, maxFragNumPerPkt=${maxFragNumPerPkt}%X"
 //          )
 
           do {

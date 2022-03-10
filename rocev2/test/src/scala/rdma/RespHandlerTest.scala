@@ -92,7 +92,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
         dut.io.rx.bth.setTransportAndOpCode(Transports.RC, OpCode.ACKNOWLEDGE)
         dut.io.rx.aeth.setAsNormalAck()
 //        println(
-//          f"${simTime()} time: ACK psn=${ackPsn}=${ackPsn}%X, psnStart=${psnStart}=${psnStart}%X, pktNum=${pktNum}=${pktNum}%X"
+//          f"${simTime()} time: ACK PSN=${ackPsn}=${ackPsn}%X, psnStart=${psnStart}=${psnStart}%X, pktNum=${pktNum}=${pktNum}%X"
 //        )
       }
       onStreamFire(dut.io.rx, dut.clockDomain) {
@@ -231,7 +231,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
         dut.io.rx.bth.setTransportAndOpCode(Transports.RC, OpCode.ACKNOWLEDGE)
         dut.io.rx.aeth.setAs(ackType)
 //        println(
-//          f"${simTime()} time: ACK ackType=${ackType} psn=${ackPsn}=${ackPsn}%X, psnStart=${psnStart}=${psnStart}%X, pktNum=${pktNum}=${pktNum}%X"
+//          f"${simTime()} time: ACK ackType=${ackType} PSN=${ackPsn}=${ackPsn}%X, psnStart=${psnStart}=${psnStart}%X, pktNum=${pktNum}=${pktNum}%X"
 //        )
       }
       onStreamFire(dut.io.rx, dut.clockDomain) {
@@ -371,9 +371,11 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
   val maxFragNum = 137
 
   val simCfg = SimConfig.allOptimisation.withWave
-    .withConfig(
-      new SpinalConfig(defaultClockDomainFrequency = FixedFrequency(200 MHz))
-    )
+//    .withConfig(
+//      new SpinalConfig(
+//        defaultClockDomainFrequency = FixedFrequency(FREQUENCY MHz)
+//      )
+//    )
     .compile(new ReadAtomicRespVerifierAndFatalNakNotifier(busWidth))
 
 // TODO: test("ReadAtomicRespVerifierAndFatalNakNotifier error flush test")
@@ -497,7 +499,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
         dut.io.workReqQuery.resp.cachedWorkReq.psnStart #= psn
         dut.io.workReqQuery.resp.found #= true
 
-//        println(f"${simTime()} time: dut.io.workReqQuery.resp psn=${psn}%X")
+//        println(f"${simTime()} time: dut.io.workReqQuery.resp PSN=${psn}%X")
       }
       onStreamFire(dut.io.workReqQuery.resp, dut.clockDomain) {
         workReqQueryRespQueue.enqueue(
@@ -521,7 +523,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
           )
         )
 //        println(
-//          f"${simTime()} time: dut.io.addrCacheRead.req received psn=${dut.io.addrCacheRead.req.psn.toInt}%X"
+//          f"${simTime()} time: dut.io.addrCacheRead.req received PSN=${dut.io.addrCacheRead.req.psn.toInt}%X"
 //        )
       } {
         val (psn, _) = addrCacheReadReqQueue.dequeue()
@@ -535,7 +537,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
           )
         )
 //        println(
-//          f"${simTime()} time: dut.io.addrCacheRead.resp psn=${dut.io.addrCacheRead.resp.psn.toInt}%X"
+//          f"${simTime()} time: dut.io.addrCacheRead.resp PSN=${dut.io.addrCacheRead.resp.psn.toInt}%X"
 //        )
       }
 
@@ -625,9 +627,11 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
   val maxFragNum = 137
 
   val simCfg = SimConfig.allOptimisation.withWave
-    .withConfig(
-      new SpinalConfig(defaultClockDomainFrequency = FixedFrequency(200 MHz))
-    )
+//    .withConfig(
+//      new SpinalConfig(
+//        defaultClockDomainFrequency = FixedFrequency(FREQUENCY MHz)
+//      )
+//    )
     .compile(new ReadAtomicRespDmaReqInitiator(busWidth))
 
   test("ReadAtomicRespDmaReqInitiator normal behavior test") {
