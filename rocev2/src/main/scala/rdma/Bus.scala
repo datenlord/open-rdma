@@ -191,19 +191,19 @@ case class RqNakNotifier() extends Bundle {
       setRnrNak(pulse, preOpCode, psn)
     } elsewhen (aeth.isSeqNak()) {
       setSeqErr(pulse, preOpCode, psn)
-    } elsewhen (aeth.isInvReqNak()) {
+    } elsewhen (aeth.isInvReqNak() && pulse) {
       setInvReq()
-    } elsewhen (aeth.isRmtAccNak()) {
+    } elsewhen (aeth.isRmtAccNak() && pulse) {
       setRmtAcc()
-    } elsewhen (aeth.isRmtOpNak()) {
+    } elsewhen (aeth.isRmtOpNak() && pulse) {
       setRmtOp()
     } otherwise {
       report(
         message =
           L"${REPORT_TIME} time: illegal AETH to set NakNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}",
-        severity = FAILURE
+        severity = WARNING
       )
-      setInvReq()
+      this.assignDontCare() // setInvReq()
     }
     this
   }
@@ -1670,12 +1670,12 @@ case class WorkComp() extends Bundle {
     } elsewhen (OpCode.isWriteWithImmReqPkt(reqOpCode)) {
       opcode := WorkCompOpCode.RECV_RDMA_WITH_IMM
     } otherwise {
-      report(
-        message =
-          L"${REPORT_TIME} time: unmatched WC opcode at RQ site for request opcode=${reqOpCode}",
-        severity = FAILURE
-      )
-      opcode := WorkCompOpCode.SEND // Default WC opcode
+//      report(
+//        message =
+//          L"${REPORT_TIME} time: unmatched WC opcode at RQ side for request opcode=${reqOpCode}",
+//        severity = WARNING
+//      )
+      opcode.assignDontCare()
     }
     this
   }
