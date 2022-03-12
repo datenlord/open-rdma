@@ -43,6 +43,7 @@ fi
 ./mill rocev2.test.testOnly rdma.ReadRespGeneratorTest
 ./mill rocev2.test.testOnly rdma.ReqAddrValidatorTest
 ./mill rocev2.test.testOnly rdma.ReqCommCheckTest
+./mill rocev2.test.testOnly rdma.RqDmaReqInitiatorAndNakGenTest
 ./mill rocev2.test.testOnly rdma.RqReadDmaRespHandlerTest
 ./mill rocev2.test.testOnly rdma.SendReqGeneratorTest
 ./mill rocev2.test.testOnly rdma.WriteReqGeneratorTest

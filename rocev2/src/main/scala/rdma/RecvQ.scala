@@ -167,7 +167,7 @@ class RecvQ(busWidth: BusWidth) extends Component {
   rqSendWriteWorkCompGenerator.io.rxQCtrl := io.rxQCtrl
   rqSendWriteWorkCompGenerator.io.dmaWriteResp.resp << io.dma.sendWrite.resp
   rqSendWriteWorkCompGenerator.io.sendWriteWorkCompNormal << respGenLogic.sendWriteRespGenerator.io.sendWriteWorkCompAndAck
-  rqSendWriteWorkCompGenerator.io.sendWriteWorkCompErr << dmaReqLogic.rqDmaReqInitiatorAndNakGen.io.sendWriteWorkCompAndNak
+  rqSendWriteWorkCompGenerator.io.sendWriteWorkCompErr << dmaReqLogic.rqDmaReqInitiatorAndNakGen.io.sendWriteWorkCompErrAndNak
   io.sendWriteWorkComp << rqSendWriteWorkCompGenerator.io.sendWriteWorkCompOut
 
   val rqOut = new RqOut(busWidth)
@@ -935,24 +935,13 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
   }
 
   // All the packet length adjustments used when isFirstFrag
+  // NOTE: use +^ to avoid addition overflow
   val firstPktAdjust = bthLenBytes +^ rethLenAdjust
   val midPktAdjust = U(bthLenBytes)
   val lastPktEthAdjust = padCntAdjust +^ immDtLenAdjust +^ iethLenAdjust
   val lastPktAdjust = bthLenBytes +^ lastPktEthAdjust
   val onlyPktAdjust = firstPktAdjust +^ lastPktEthAdjust
-//  val headerAdjustWidth = MAX_HEADER_LEN_WIDTH + 1
-//  val firstPktAdjust = UInt(headerAdjustWidth bits)
-//  firstPktAdjust := (bthLenBytes +^ rethLenAdjust).resize(headerAdjustWidth)
-//  val midPktAdjust = U(bthLenBytes, headerAdjustWidth bits)
-//  val lastPktEthAdjust = UInt(headerAdjustWidth bits)
-//  lastPktEthAdjust := (padCntAdjust +^ immDtLenAdjust +^ iethLenAdjust)
-//    .resize(headerAdjustWidth)
-//  val lastPktAdjust = UInt(headerAdjustWidth bits)
-//  lastPktAdjust := (bthLenBytes +^ lastPktEthAdjust).resize(headerAdjustWidth)
-//  val onlyPktAdjust = UInt(headerAdjustWidth bits)
-//  onlyPktAdjust := (firstPktAdjust +^ lastPktEthAdjust).resize(
-//    headerAdjustWidth
-//  )
+
   val curPktFragLenBytesFirstPktAdjust = pktFragLenBytes - firstPktAdjust
   val curPktFragLenBytesMidPktAdjust = pktFragLenBytes - midPktAdjust
   val curPktFragLenBytesLastPktAdjust = pktFragLenBytes - lastPktAdjust
@@ -1007,7 +996,7 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
             assertion = !isPktLenCheckErr,
             message =
               L"${REPORT_TIME} time: first request packet length check failed, opcode=${inputPktFrag.bth.opcode}, PSN=${inputPktFrag.bth.psn}, curPktLenBytes=${curPktLenBytes}, padCnt=${padCntAdjust}",
-            severity = ERROR
+            severity = NOTE
           )
         } elsewhen (OpCode.isMidReqPkt(inputPktFrag.bth.opcode)) {
           reqTotalLenBytesReg := curReqTotalLenBytes
@@ -1019,7 +1008,7 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
             assertion = !isPktLenCheckErr,
             message =
               L"${REPORT_TIME} time: middle request packet length check failed, opcode=${inputPktFrag.bth.opcode}, PSN=${inputPktFrag.bth.psn}, curPktLenBytes=${curPktLenBytes}, padCnt=${padCntAdjust}",
-            severity = ERROR
+            severity = NOTE
           )
         }
       }
@@ -1038,7 +1027,7 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
           report(
             message =
               L"${REPORT_TIME} time: first or middle request packet length check failed, opcode=${inputPktFrag.bth.opcode}, when isFirstFrag=${isFirstFrag} and isLastFrag=${isLastFrag}",
-            severity = FAILURE
+            severity = FAILURE // TODO: change to NOTE
           )
 
           isPktLenCheckErr := True
@@ -1060,82 +1049,9 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
         L"${REPORT_TIME} time: request total length check failed, opcode=${inputPktFrag.bth.opcode}, PSN=${inputPktFrag.bth.psn}, dmaTargetLenBytes=${dmaTargetLenBytes}, reqTotalLenBytes=${reqTotalLenBytes} = (reqTotalLenBytesReg=${reqTotalLenBytesReg} + pktLenBytesReg=${pktLenBytesReg} + pktFragLenBytes=${pktFragLenBytes}), inputPktFrag.mty=${inputPktFrag.mty}, CountOne(inputPktFrag.mty)=${CountOne(
           inputPktFrag.mty
         )}, bthLenBytes=${U(bthLenBytes)}, rethLenAdjust=${rethLenAdjust}, immDtLenAdjust=${immDtLenAdjust}, iethLenAdjust=${iethLenAdjust}, padCntAdjust=${padCntAdjust}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}",
-      severity = ERROR
+      severity = NOTE
     )
   }
-
-//  when(inputValid) {
-//    switch(isFirstFrag ## isLastFrag) {
-//      is(True ## True) { // isFirstFrag && isLastFrag // Only one fragment
-//        pktLenBytesReg := 0
-//        reqTotalLenBytesReg := 0
-////        dmaTargetLenBytesReg := 0
-//
-//        when(OpCode.isWriteOnlyReqPkt(inputPktFrag.bth.opcode)) {
-//          isReqTotalLenCheckErr := (pktFragLenBytes - bthLenBytes - writeExtHeaderLenAdjust - padCntAdjust) =/= inputDmaInfo.dlen
-//        } elsewhen (OpCode.isSendOnlyReqPkt(inputPktFrag.bth.opcode)) {
-//          isReqTotalLenCheckErr := (pktFragLenBytes - bthLenBytes - sendExtHeaderLenAdjust - padCntAdjust) > inputRxBuf.lenBytes
-//        } elsewhen (OpCode.isWriteLastReqPkt(inputPktFrag.bth.opcode)) {
-//          isReqTotalLenCheckErr := (reqTotalLenBytesReg + pktFragLenBytes - bthLenBytes - writeExtHeaderLenAdjust - padCntAdjust) =/= dmaTargetLenBytes
-//        } elsewhen (OpCode.isSendLastReqPkt(inputPktFrag.bth.opcode)) {
-//          // The send last request packet has only one fragment
-//          isReqTotalLenCheckErr := (reqTotalLenBytesReg + pktFragLenBytes - bthLenBytes - sendExtHeaderLenAdjust - padCntAdjust) > dmaTargetLenBytes
-//        } elsewhen (OpCode.isFirstOrMidReqPkt(inputPktFrag.bth.opcode)) {
-//          report(
-//            message =
-//              L"illegal first or middle request packet, opcode=${inputPktFrag.bth.opcode}, pktFragLenBytes=${pktLenBytesReg}, mty=${inputPktFrag.mty}",
-//            severity = FAILURE
-//          )
-//        } otherwise {
-//          assert(
-//            assertion = OpCode.isReadReqPkt(inputPktFrag.bth.opcode) ||
-//              OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode),
-//            message =
-//              L"only read/atomic request has single fragment packet, but opcode=${inputPktFrag.bth.opcode}",
-//            severity = FAILURE
-//          )
-//        }
-//      }
-//      is(True ## False) { // isFirstFrag && !isLastFrag // First fragment should consider RDMA header adjustment
-//        when(OpCode.isFirstReqPkt(inputPktFrag.bth.opcode)) {
-//          pktLenBytesReg := pktFragLenBytes - bthLenBytes - rethLenAdjust
-//          reqTotalLenBytesReg := 0
-//        } elsewhen (OpCode.isMidReqPkt(inputPktFrag.bth.opcode)) {
-//          pktLenBytesReg := pktLenBytesReg + pktFragLenBytes - bthLenBytes
-//        } elsewhen (OpCode.isLastReqPkt(inputPktFrag.bth.opcode)) {
-//          pktLenBytesReg := pktLenBytesReg + pktFragLenBytes - bthLenBytes - immDtLenAdjust - iethLenAdjust
-//        } elsewhen (OpCode.isOnlyReqPkt(inputPktFrag.bth.opcode)) {
-//          pktLenBytesReg := pktFragLenBytes - bthLenBytes - rethLenAdjust - immDtLenAdjust - iethLenAdjust
-//          reqTotalLenBytesReg := 0
-//        }
-//      }
-//      is(False ## True) { // !isFirstFrag && isLastFrag // Last fragment should consider pad count adjustment
-//        pktLenBytesReg := 0
-//        reqTotalLenBytes := reqTotalLenBytesReg + pktLenBytesReg + pktFragLenBytes
-//        reqTotalLenBytesReg := reqTotalLenBytes
-//
-//        when(OpCode.isWriteLastOrOnlyReqPkt(inputPktFrag.bth.opcode)) {
-//          reqTotalLenValid := True
-//          reqTotalLenBytes := reqTotalLenBytesReg + pktLenBytesReg + pktFragLenBytes - padCntAdjust
-//          isReqTotalLenCheckErr := reqTotalLenBytes =/= dmaTargetLenBytes
-//          reqTotalLenBytesReg := 0
-////          dmaTargetLenBytesReg := 0
-//        } elsewhen (OpCode.isSendLastOrOnlyReqPkt(inputPktFrag.bth.opcode)) {
-//          reqTotalLenValid := True
-//          reqTotalLenBytes := reqTotalLenBytesReg + pktLenBytesReg + pktFragLenBytes - padCntAdjust
-//          isReqTotalLenCheckErr := reqTotalLenBytes > dmaTargetLenBytes
-//          reqTotalLenBytesReg := 0
-////          dmaTargetLenBytesReg := 0
-//        } elsewhen (OpCode.isFirstOrMidReqPkt(inputPktFrag.bth.opcode)) {
-//          isPktLenCheckErr := padCntAdjust =/= 0 ||
-//          (pktLenBytesReg + pktFragLenBytes) =/= pmtuPktLenBytes(io.qpAttr.pmtu)
-//        }
-//      }
-//      is(False ## False) { // !isFirstFrag && !isLastFrag // Middle fragment
-//        pktLenBytesReg := pktLenBytesReg + pktFragLenBytes
-//      }
-//    }
-//  }
 
   val hasLenCheckErr = isReqTotalLenCheckErr || isPktLenCheckErr
   val nakInvAeth = AETH().set(AckType.NAK_INV)
@@ -1174,10 +1090,9 @@ class RqDmaReqInitiatorAndNakGen(busWidth: BusWidth) extends Component {
     val txSendWrite = master(RqReqWithRxBufAndDmaInfoBus(busWidth))
     val readDmaReq = master(DmaReadReqBus())
     val sendWriteDmaReq = master(DmaWriteReqBus(busWidth))
-//    val dma = master(DmaBus(busWidth))
     val nakNotifier = out(RqNakNotifier())
     val txErrResp = master(Stream(Acknowledge()))
-    val sendWriteWorkCompAndNak = master(Stream(WorkCompAndAck()))
+    val sendWriteWorkCompErrAndNak = master(Stream(WorkCompAndAck()))
   }
 
   val inputHasNak = io.rx.reqWithRxBufAndDmaInfo.hasNak
@@ -1186,37 +1101,21 @@ class RqDmaReqInitiatorAndNakGen(busWidth: BusWidth) extends Component {
   val isLastFrag = io.rx.reqWithRxBufAndDmaInfo.last
   val inputDmaHeader = io.rx.reqWithRxBufAndDmaInfo.dmaInfo
   val isEmptyReq = inputValid && inputDmaHeader.dlen === 0
-//    io.rx.reqWithRxBufAndDmaInfo.dmaHeaderValid && inputDmaHeader.dlen === 0
 
   val isSendReq = OpCode.isSendReqPkt(inputPktFrag.bth.opcode)
   val isWriteReq = OpCode.isWriteReqPkt(inputPktFrag.bth.opcode)
   val isReadReq = OpCode.isReadReqPkt(inputPktFrag.bth.opcode)
   val isAtomicReq = OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode)
 
-  val txSel = UInt(2 bits)
-  val (sendWriteIdx, readAtomicIdx, errRespIdx, otherIdx) = (0, 1, 2, 3)
-  when(inputHasNak) {
-    txSel := errRespIdx
-  } elsewhen (isSendReq || isWriteReq) {
-    txSel := sendWriteIdx
-  } elsewhen (isReadReq || isAtomicReq) {
-    txSel := readAtomicIdx
-  } otherwise {
-    report(
-      message =
-        L"${REPORT_TIME} time: invalid opcode=${inputPktFrag.bth.opcode}, should be send/write/read/atomic requests",
-      severity = FAILURE
-    )
-    txSel := otherIdx
-  }
-  val fourStreams = StreamDemux(
+  val (errRespIdx, sendWriteIdx, readAtomicIdx) = (0, 1, 2)
+  val threeStreams = StreamDeMuxByConditions(
     io.rx.reqWithRxBufAndDmaInfo.throwWhen(io.rxQCtrl.stateErrFlush),
-    select = txSel,
-    portCount = 4
+    inputHasNak,
+    !inputHasNak && (isSendReq || isWriteReq),
+    !inputHasNak && (isReadReq || isAtomicReq)
   )
-  StreamSink(NoData) << fourStreams(otherIdx).translateWith(NoData)
 
-  val readAtomicReqStream = fourStreams(readAtomicIdx)
+  val readAtomicReqStream = threeStreams(readAtomicIdx)
   val (forkReadAtomicReqStream4DmaRead, forkReadAtomicReqStream4Output) =
     StreamFork2(readAtomicReqStream)
 
@@ -1234,11 +1133,7 @@ class RqDmaReqInitiatorAndNakGen(busWidth: BusWidth) extends Component {
     }
   io.txReadAtomic.reqWithRxBufAndDmaInfo <-/< forkReadAtomicReqStream4Output
 
-  val dmaAddrReg = Reg(UInt(MEM_ADDR_WIDTH bits))
-  when(inputValid) { // && io.rx.reqWithRxBufAndDmaInfo.dmaHeaderValid) {
-    dmaAddrReg := inputDmaHeader.pa
-  }
-  val sendWriteReqStream = fourStreams(sendWriteIdx)
+  val sendWriteReqStream = threeStreams(sendWriteIdx)
   val (forkSendWriteReqStream4DmaWrite, forkSendWriteReqStream4Output) =
     StreamFork2(sendWriteReqStream)
   io.sendWriteDmaReq.req <-/< forkSendWriteReqStream4DmaWrite
@@ -1251,7 +1146,6 @@ class RqDmaReqInitiatorAndNakGen(busWidth: BusWidth) extends Component {
         sqpn = io.qpAttr.sqpn,
         psn = inputPktFrag.bth.psn,
         addr = inputDmaHeader.pa,
-//          (inputValid && io.rx.reqWithRxBufAndDmaInfo.dmaHeaderValid) ? inputDmaHeader.pa | dmaAddrReg,
         workReqId = io.rx.reqWithRxBufAndDmaInfo.rxBuf.id,
         data = inputPktFrag.data,
         mty = inputPktFrag.mty
@@ -1265,20 +1159,24 @@ class RqDmaReqInitiatorAndNakGen(busWidth: BusWidth) extends Component {
     inputPktFrag.bth.psn,
     io.qpAttr.dqpn
   )
-  val (errResp4Tx, errResp4WorkComp) = StreamFork2(fourStreams(errRespIdx))
-  io.txErrResp <-/< errResp4Tx.translateWith(nakResp)
-  io.sendWriteWorkCompAndNak <-/< errResp4WorkComp
-    .throwWhen(io.rxQCtrl.stateErrFlush || nakResp.aeth.isRetryNak())
-    // TODO: verify it only send out one WC when NAK response
-    .takeWhen(errResp4WorkComp.rxBufValid)
+  val isRetryNak = nakResp.aeth.isRetryNak()
+  val (errResp4Tx, errResp4WorkComp) = StreamFork2(threeStreams(errRespIdx))
+  io.txErrResp <-/< errResp4Tx
+    // TODO: better to response at the first fragment when error
+    .takeWhen(errResp4Tx.isLast)
+    .translateWith(nakResp)
+  io.sendWriteWorkCompErrAndNak <-/< errResp4WorkComp
+    .throwWhen(io.rxQCtrl.stateErrFlush || isRetryNak)
+    // TODO: better to response at the first fragment when error
+    .takeWhen(errResp4WorkComp.rxBufValid && errResp4WorkComp.isLast)
     .translateWith {
-      val result = cloneOf(io.sendWriteWorkCompAndNak.payloadType)
+      val result = cloneOf(io.sendWriteWorkCompErrAndNak.payloadType)
       result.workComp.setFromRxWorkReq(
         errResp4WorkComp.rxBuf,
         errResp4WorkComp.pktFrag.bth.opcode,
         io.qpAttr.dqpn,
         nakResp.aeth.toWorkCompStatus(),
-        errResp4WorkComp.reqTotalLenBytes, // reqTotalLenBytes does not matter here
+        errResp4WorkComp.reqTotalLenBytes, // for error WC, reqTotalLenBytes does not matter here
         errResp4WorkComp.pktFrag.data
       )
       result.ackValid := errResp4WorkComp.valid
@@ -1288,7 +1186,7 @@ class RqDmaReqInitiatorAndNakGen(busWidth: BusWidth) extends Component {
 
   io.nakNotifier.setFromAeth(
     aeth = io.rx.reqWithRxBufAndDmaInfo.nakAeth,
-    pulse = fourStreams(errRespIdx).fire,
+    pulse = threeStreams(errRespIdx).isLast,
     preOpCode = io.rx.reqWithRxBufAndDmaInfo.preOpCode,
     psn = inputPktFrag.bth.psn
   )

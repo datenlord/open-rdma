@@ -67,6 +67,35 @@ class PsnSim(val psn: PSN) {
 }
 
 object WorkCompSim {
+  def rqCheckWorkCompOpCode(
+      reqOpCode: OpCode.Value,
+      workCompOpCode: SpinalEnumElement[WorkCompOpCode.type]
+  ): Unit = {
+    val matchOpCode = reqOpCode match {
+      case OpCode.SEND_FIRST | OpCode.SEND_MIDDLE | OpCode.SEND_LAST |
+          OpCode.SEND_LAST_WITH_IMMEDIATE | OpCode.SEND_LAST_WITH_INVALIDATE |
+          OpCode.SEND_ONLY | OpCode.SEND_ONLY_WITH_IMMEDIATE |
+          OpCode.SEND_ONLY_WITH_INVALIDATE =>
+        WorkCompOpCode.RECV
+      case OpCode.RDMA_WRITE_LAST_WITH_IMMEDIATE |
+          OpCode.RDMA_WRITE_ONLY_WITH_IMMEDIATE =>
+        WorkCompOpCode.RECV_RDMA_WITH_IMM
+      case _ => {
+        println(
+          f"${simTime()} time: RQ side WC opcode no match for request opcode=${reqOpCode}"
+        )
+        ??? // Just break on no match
+      }
+    }
+//    println(
+//      f"${simTime()} time: RQ side workCompOpCode=${workCompOpCode} not match expected matchOpCode=${matchOpCode}, workReqOpCode=${workReqOpCode}"
+//    )
+    assert(
+      workCompOpCode == matchOpCode,
+      f"${simTime()} time: workCompOpCode=${workCompOpCode} not match expected matchOpCode=${matchOpCode}, reqOpCode=${reqOpCode}"
+    )
+  }
+
   def sqCheckWorkCompOpCode(
       workReqOpCode: SpinalEnumElement[WorkReqOpCode.type],
       workCompOpCode: SpinalEnumElement[WorkCompOpCode.type]
@@ -85,7 +114,7 @@ object WorkCompSim {
       case _ => ??? // Just break on no match
     }
 //    println(
-//      f"${simTime()} time: workCompOpCode=${workCompOpCode} not match expected matchOpCode=${matchOpCode}, workReqOpCode=${workReqOpCode}"
+//      f"${simTime()} time: SQ side workCompOpCode=${workCompOpCode} not match expected matchOpCode=${matchOpCode}, workReqOpCode=${workReqOpCode}"
 //    )
     assert(
       workCompOpCode == matchOpCode,
@@ -109,7 +138,7 @@ object WorkCompSim {
       case _ => ??? // Just break on no match
     }
 //    println(
-//      f"${simTime()} time: workCompFlags=${workCompFlags} not match expected matchFlag=${matchFlag}, workReqOpCode=${workReqOpCode}"
+//      f"${simTime()} time: SQ side workCompFlags=${workCompFlags} not match expected matchFlag=${matchFlag}, workReqOpCode=${workReqOpCode}"
 //    )
     assert(
       workCompFlags == matchFlag,
@@ -641,6 +670,18 @@ object OpCodeSim {
       }
     }
 
+    def isWriteReqPkt(): Boolean = {
+      opcode match {
+
+        case OpCode.RDMA_WRITE_FIRST | OpCode.RDMA_WRITE_ONLY |
+            OpCode.RDMA_WRITE_MIDDLE | OpCode.RDMA_WRITE_LAST |
+            OpCode.RDMA_WRITE_LAST_WITH_IMMEDIATE |
+            OpCode.RDMA_WRITE_ONLY_WITH_IMMEDIATE =>
+          true
+        case _ => false
+      }
+    }
+
     def isWriteWithImmReqPkt(): Boolean = {
       opcode match {
         case OpCode.RDMA_WRITE_LAST_WITH_IMMEDIATE |
@@ -1123,5 +1164,28 @@ object DmaReadRespSim {
     }
     dmaReadResp.mty #= mty
     dmaReadResp.lenBytes #= totalLenBytes
+  }
+}
+
+object RqNakSim {
+  def matchNakType(
+      rqNak: RqNakNotifier,
+      expectNakType: SpinalEnumElement[AckType.type]
+  ): Unit = {
+    val pulse = expectNakType match {
+      case AckType.NAK_RNR     => rqNak.rnr.pulse
+      case AckType.NAK_SEQ     => rqNak.seqErr.pulse
+      case AckType.NAK_INV     => rqNak.invReq
+      case AckType.NAK_RMT_ACC => rqNak.rmtAcc
+      case AckType.NAK_RMT_OP  => rqNak.rmtOp
+      case _ => {
+        println(f"${simTime()} time: rqNak=${rqNak} is not NAK")
+        ???
+      }
+    }
+    assert(
+      pulse.toBoolean == true,
+      f"${simTime()} time: rqNak=${rqNak} not match expected NAK=${expectNakType}"
+    )
   }
 }
