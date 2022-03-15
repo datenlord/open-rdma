@@ -430,6 +430,263 @@ class ReqRnrCheck(busWidth: BusWidth) extends Component {
 // Duplicate request with earlier PSN might interrupt processing of new request or duplicate request with later PSN;
 // RQ does not re-execute the interrupted request, SQ will retry it;
 // Discard duplicate Atomic if not match original PSN (should not happen);
+class DupReqHandlerAndReadAtomicRstCacheQuery(
+    busWidth: BusWidth
+) extends Component {
+  val io = new Bundle {
+    val qpAttr = in(QpAttrData())
+    val rxQCtrl = in(RxQCtrl())
+    val readAtomicRstCache = master(ReadAtomicRstCacheQueryBus())
+    val rx = slave(RqReqWithRxBufAndDmaInfoBus(busWidth))
+    val txDupSendWriteResp = master(Stream(Acknowledge()))
+    val txDupAtomicResp = master(Stream(AtomicResp()))
+    val txDupReadReqAndRstCacheData = master(
+      Stream(RqDupReadReqAndRstCacheData(busWidth))
+    )
+  }
+
+  when(io.rx.reqWithRxBufAndDmaInfo.valid) {
+    val hasNak = io.rx.reqWithRxBufAndDmaInfo.hasNak
+    val nakAeth = io.rx.reqWithRxBufAndDmaInfo.nakAeth
+    assert(
+      assertion = hasNak && nakAeth.isSeqNak(),
+      message =
+        L"duplicate request should have hasNak=${hasNak} is true, and nakAeth with code=${nakAeth.code} and value=${nakAeth.value} is NAK SEQ",
+      severity = FAILURE
+    )
+  }
+
+  val (forkInputForSendWrite, forkInputForReadAtomic) = StreamFork2(
+    io.rx.reqWithRxBufAndDmaInfo.throwWhen(io.rxQCtrl.stateErrFlush)
+  )
+
+  val isSendReq = OpCode.isSendReqPkt(forkInputForSendWrite.pktFrag.bth.opcode)
+  val isWriteReq =
+    OpCode.isWriteReqPkt(forkInputForSendWrite.pktFrag.bth.opcode)
+  io.txDupSendWriteResp <-/< forkInputForSendWrite
+    .takeWhen(isSendReq || isWriteReq)
+    .translateWith(
+      Acknowledge().setAck(
+        AckType.NORMAL,
+        io.qpAttr.epsn, // TODO: verify the ePSN is confirmed, will not retry later
+        io.qpAttr.dqpn
+      )
+    )
+
+  val buildReadAtomicRstCacheQuery =
+    (pktFragStream: Stream[Fragment[RqReqWithRxBufAndDmaInfo]]) =>
+      new Composite(pktFragStream, "buildReadAtomicRstCacheQuery") {
+        val readAtomicRstCacheReq = ReadAtomicRstCacheReq()
+        readAtomicRstCacheReq.psn := pktFragStream.pktFrag.bth.psn
+      }.readAtomicRstCacheReq
+
+  // Only expect ReadAtomicRstCache query response when the input is read/atomic request
+  val expectReadAtomicRstCacheResp =
+    (pktFragStream: Stream[Fragment[RqReqWithRxBufAndDmaInfo]]) =>
+      new Composite(pktFragStream, "expectReadAtomicRstCacheResp") {
+        val isReadReq = OpCode.isReadReqPkt(pktFragStream.pktFrag.bth.opcode)
+        val isAtomicReq =
+          OpCode.isAtomicReqPkt(pktFragStream.pktFrag.bth.opcode)
+        val result = pktFragStream.valid && (isReadReq || isAtomicReq)
+      }.result
+
+  // Only send out ReadAtomicRstCache query when the input data is
+  // the first fragment of read/atomic request
+  val readAtomicRstCacheQueryCond =
+    (pktFragStream: Stream[Fragment[RqReqWithRxBufAndDmaInfo]]) =>
+      new Composite(pktFragStream, "readAtomicRstCacheQueryCond") {
+        val result = !pktFragStream.hasNak && pktFragStream.isFirst
+      }.result
+
+  // Only join ReadAtomicRstCache query response with valid read/atomic request
+  val readAtomicRstCacheQueryRespJoinCond =
+    (pktFragStream: Stream[Fragment[RqReqWithRxBufAndDmaInfo]]) =>
+      new Composite(pktFragStream, "readAtomicRstCacheQueryRespJoinCond") {
+        val result = pktFragStream.valid
+      }.result
+
+  val joinStream = FragmentStreamForkQueryJoinResp(
+    forkInputForReadAtomic,
+    io.readAtomicRstCache.req,
+    io.readAtomicRstCache.resp,
+    waitQueueDepth = READ_ATOMIC_RESULT_CACHE_QUERY_DELAY_CYCLE,
+    buildQuery = buildReadAtomicRstCacheQuery,
+    queryCond = readAtomicRstCacheQueryCond,
+    expectResp = expectReadAtomicRstCacheResp,
+    joinRespCond = readAtomicRstCacheQueryRespJoinCond
+  )
+
+  val readAtomicRstCacheRespValid = joinStream.valid
+  val readAtomicRstCacheRespData = joinStream._2.cachedData
+  val readAtomicRstCacheRespFound = joinStream._2.found
+  val readAtomicResultNotFound =
+    readAtomicRstCacheRespValid && !readAtomicRstCacheRespFound
+  when(readAtomicRstCacheRespValid) {
+    // Duplicate requests of pending requests are already discarded by ReqCommCheck
+    val readAtomicRequestNotDone =
+      readAtomicRstCacheRespValid && readAtomicRstCacheRespValid && !readAtomicRstCacheRespData.done
+
+    assert(
+      assertion = readAtomicRstCacheRespFound,
+      message =
+        L"${REPORT_TIME} time: duplicated atomic request with PSN=${joinStream._2.query.psn} not found, readAtomicRstCacheRespValid=${readAtomicRstCacheRespValid}, but readAtomicRstCacheRespFound=${readAtomicRstCacheRespFound}",
+      severity = FAILURE
+    )
+    assert(
+      assertion = readAtomicRequestNotDone,
+      message =
+        L"${REPORT_TIME} time: duplicated atomic request with PSN=${joinStream._2.query.psn} not done yet, readAtomicRstCacheRespValid=${readAtomicRstCacheRespValid}, readAtomicRstCacheRespFound=${readAtomicRstCacheRespFound}, but readAtomicRstCacheRespData=${readAtomicRstCacheRespData.done}",
+      severity = FAILURE
+    )
+  }
+  val isAtomicReq = OpCode.isAtomicReqPkt(readAtomicRstCacheRespData.opcode)
+  val isReadReq = OpCode.isReadReqPkt(readAtomicRstCacheRespData.opcode)
+
+  val (forkJoinStream4Atomic, forkJoinStream4Read) = StreamFork2(
+    joinStream.throwWhen(readAtomicResultNotFound)
+  )
+  // TODO: check duplicate atomic request is identical to the original one
+  io.txDupAtomicResp <-/< forkJoinStream4Atomic
+    .takeWhen(isAtomicReq)
+    .translateWith {
+      val result = cloneOf(io.txDupAtomicResp.payloadType)
+      result.set(
+        dqpn = io.qpAttr.dqpn,
+        psn = readAtomicRstCacheRespData.psnStart,
+        orig = readAtomicRstCacheRespData.atomicRst
+      )
+      result
+    }
+
+  io.txDupReadReqAndRstCacheData <-/< forkJoinStream4Read
+    .takeWhen(isReadReq)
+    .translateWith {
+      val result = cloneOf(io.txDupReadReqAndRstCacheData.payloadType)
+      result.pktFrag := forkJoinStream4Read._1.pktFrag
+      result.cachedData := forkJoinStream4Read._2.cachedData
+      result
+    }
+}
+
+class DupReadDmaInitiator(busWidth: BusWidth) extends Component {
+  val io = new Bundle {
+    val qpAttr = in(QpAttrData())
+    val rxQCtrl = in(RxQCtrl())
+    val rxDupReadReqAndRstCacheData = slave(
+      Stream(RqDupReadReqAndRstCacheData(busWidth))
+    )
+    val readRstCacheData = master(Stream(ReadAtomicRstCacheData()))
+    val dmaReadReq = master(DmaReadReqBus())
+  }
+
+  val inputValid = io.rxDupReadReqAndRstCacheData.valid
+  val inputPktFrag = io.rxDupReadReqAndRstCacheData.pktFrag
+  val inputRstCacheData = io.rxDupReadReqAndRstCacheData.cachedData
+  /*
+  val retryFromBeginning = PsnUtil
+    .lte(inputPktFrag.bth.psn, inputRstCacheData.psnStart, io.qpAttr.epsn)
+  // For partial read retry, compute the partial read DMA length
+  val psnDiff = PsnUtil.diff(inputPktFrag.bth.psn, inputRstCacheData.psnStart)
+  val retryStartPsn = cloneOf(inputRstCacheData.psnStart)
+  retryStartPsn := inputRstCacheData.psnStart
+  val retryDmaReadStartAddr = cloneOf(inputRstCacheData.pa)
+  retryDmaReadStartAddr := inputRstCacheData.pa
+  val retryWorkReqRemoteStartAddr = cloneOf(inputRstCacheData.va)
+  retryWorkReqRemoteStartAddr := inputRstCacheData.va
+  val retryDmaReadLenBytes = cloneOf(inputRstCacheData.dlen)
+  retryDmaReadLenBytes := inputRstCacheData.dlen
+  when(inputValid && !retryFromBeginning) {
+    assert(
+      assertion = PsnUtil.lt(
+          inputPktFrag.bth.psn,
+          inputRstCacheData.psnStart + inputRstCacheData.pktNum,
+          io.qpAttr.npsn
+        ),
+      message =
+        L"${REPORT_TIME} time: inputPktFrag.bth.psn=${inputPktFrag.bth.psn} should < inputRstCacheData.psnStart=${inputRstCacheData.psnStart} + inputRstCacheData.pktNum=${inputRstCacheData.pktNum} = ${inputRstCacheData.psnStart + inputRstCacheData.pktNum} in PSN order",
+      severity = FAILURE
+    )
+    val retryDmaReadOffset =
+      (psnDiff << io.qpAttr.pmtu.asUInt).resize(RDMA_MAX_LEN_WIDTH)
+
+    // Support partial retry
+    retryStartPsn := inputPktFrag.bth.psn
+    // TODO: handle PA offset with scatter-gather
+    retryDmaReadStartAddr := inputRstCacheData.pa + retryDmaReadOffset
+    retryWorkReqRemoteStartAddr := inputRstCacheData.va + retryDmaReadOffset
+    retryDmaReadLenBytes := inputRstCacheData.dlen - retryDmaReadOffset
+//    val pktNum = computePktNum(retryWorkReq.workReq.lenBytes, io.qpAttr.pmtu)
+    val pktNum = inputRstCacheData.pktNum
+    assert(
+      assertion = psnDiff < pktNum,
+      message =
+        L"${REPORT_TIME} time: psnDiff=${psnDiff} should < pktNum=${pktNum}, inputPktFrag.bth.psn=${inputPktFrag.bth.psn}, inputRstCacheData.psnStart=${inputRstCacheData.psnStart}, io.qpAttr.npsn=${io.qpAttr.npsn}, inputPktFrag.bth.opcode=${inputPktFrag.bth.opcode}",
+      severity = FAILURE
+    )
+  }
+   */
+  val (
+    retryFromBeginning,
+    retryStartPsn,
+    retryDmaReadStartAddr,
+    retryStartLocalAddr,
+    retryDmaReadLenBytes
+  ) = PartialRetry.readReqRetry(
+    io.qpAttr,
+    inputPktFrag,
+    inputRstCacheData,
+    inputValid
+  )
+
+//  val retryFromFirstReadResp =
+//    io.rxDupReadReqAndRstCacheData.pktFrag.bth.psn === io.rxDupReadReqAndRstCacheData.cacheData.psnStart
+//  // For partial read retry, compute the partial read DMA length
+//  val psnDiff = PsnUtil.diff(
+//    io.rxDupReadReqAndRstCacheData.pktFrag.bth.psn,
+//    io.rxDupReadReqAndRstCacheData.cacheData.psnStart
+//  )
+//  // psnDiff << io.qpAttr.pmtu.asUInt === psnDiff * pmtuPktLenBytes(io.qpAttr.pmtu)
+//  val dmaReadLenBytes =
+//    readAtomicRstCacheRespData.dlen - (psnDiff << io.qpAttr.pmtu.asUInt)
+//  when(!retryFromFirstReadResp) {
+//    assert(
+//      assertion =
+//        io.readAtomicRstCacheResp.resp.query.psn > readAtomicRstCacheRespData.psnStart,
+//      message =
+//        L"${REPORT_TIME} time: io.readAtomicRstCacheResp.resp.query.psn=${io.readAtomicRstCacheResp.resp.query.psn} should > readAtomicRstCacheRespData.psnStart=${readAtomicRstCacheRespData.psnStart}",
+//      severity = FAILURE
+//    )
+//
+//    assert(
+//      assertion = psnDiff < computePktNum(
+//        readAtomicRstCacheRespData.dlen,
+//        io.qpAttr.pmtu
+//      ),
+//      message =
+//        L"${REPORT_TIME} time: psnDiff=${psnDiff} should < packet num=${computePktNum(readAtomicRstCacheRespData.dlen, io.qpAttr.pmtu)}",
+//      severity = FAILURE
+//    )
+//  }
+
+  val (dupReadReq4DmaReq, dupReadReq4RstCacheData) = StreamFork2(
+    io.rxDupReadReqAndRstCacheData.throwWhen(io.rxQCtrl.stateErrFlush)
+  )
+  io.dmaReadReq.req <-/< dupReadReq4DmaReq
+    .translateWith {
+      val result = cloneOf(io.dmaReadReq.req.payloadType)
+      result.set(
+        initiator = DmaInitiator.RQ_DUP,
+        sqpn = io.qpAttr.sqpn,
+        psnStart = retryStartPsn,
+        addr = retryDmaReadStartAddr,
+        lenBytes = retryDmaReadLenBytes.resize(RDMA_MAX_LEN_WIDTH)
+      )
+    }
+  io.readRstCacheData <-/< dupReadReq4RstCacheData.translateWith(
+    dupReadReq4RstCacheData.cachedData
+  )
+}
+
 class DupSendWriteReqHandlerAndDupReadAtomicRstCacheQueryBuilder(
     busWidth: BusWidth
 ) extends Component {
@@ -771,14 +1028,15 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
         addrCacheReadReq.dataLenBytes := dataLenBytes
       }.addrCacheReadReq
 
-  // Only send out AddrCache query when the input data is the first fragment of
-  // send/write/read/atomic request
+  // Only expect AddrCache query response when the input has no NAK
   val expectAddrCacheResp =
     (pktFragStream: Stream[Fragment[RqReqWithRxBufAndDmaInfo]]) =>
       new Composite(pktFragStream, "expectAddrCacheResp") {
         val result = pktFragStream.valid && !pktFragStream.hasNak
       }.result
 
+  // Only send out AddrCache query when the input data is the first fragment of
+  // send/write/read/atomic request
   val addrCacheQueryCond =
     (pktFragStream: Stream[Fragment[RqReqWithRxBufAndDmaInfo]]) =>
       new Composite(pktFragStream, "addrCacheQueryCond") {

@@ -218,15 +218,7 @@ class ReqRnrCheckTest extends AnyFunSuite {
         dut.io.rx.checkRst.pktFrag.bth.opcodeFull #= opcode.id
         dut.io.rx.checkRst.pktFrag.bth.psn #= psn
         dut.io.rx.checkRst.last #= fragLast
-//        if (fragIdx == fragNum - 1) {
-//          val finalFragValidBytes = totalLenBytes % mtyWidth
-//          val leftShiftAmt = mtyWidth - finalFragValidBytes
-//          dut.io.rx.checkRst.pktFrag.mty #= setAllBits(finalFragValidBytes) << leftShiftAmt
-//          dut.io.rx.checkRst.pktFrag.bth.padCnt #= (PAD_COUNT_FULL - (totalLenBytes % PAD_COUNT_FULL)) % PAD_COUNT_FULL
-//        } else {
-//          dut.io.rx.checkRst.pktFrag.mty #= setAllBits(mtyWidth)
-//          dut.io.rx.checkRst.pktFrag.bth.padCnt #= 0
-//        }
+
         RdmaDataPktSim.setMtyAndPadCnt(
           dut.io.rx.checkRst.pktFrag,
           fragIdx,
