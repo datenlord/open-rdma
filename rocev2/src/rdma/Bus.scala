@@ -2275,6 +2275,11 @@ case class RqReqWithRxBufAndDmaInfoBus(busWidth: BusWidth)
   override def asMaster(): Unit = master(reqWithRxBufAndDmaInfo)
 }
 
+case class RqDupReadReqAndRstCacheData(busWidth: BusWidth) extends Bundle {
+  val pktFrag = RdmaDataPkt(busWidth)
+  val cachedData = ReadAtomicRstCacheData()
+}
+
 sealed abstract class RdmaBasePacket extends Bundle {
   // this: Bundle => // RdmaDataPkt must be of Bundle class
   val bth = BTH()

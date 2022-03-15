@@ -5,7 +5,7 @@ set -o nounset
 set -o xtrace
 
 CI_ENV="${CI_ENV:-false}"
-MILL_VERSION="0.9.7"
+export MILL_VERSION="0.9.7"
 TEST_ONLY="${1:-false}"
 
 if [ ! -f mill ]; then

@@ -158,7 +158,11 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
     retryReadReqRemoteStartAddr,
     _,
     retryDmaReadLenBytes
-  ) = PartialRetry(io.qpAttr, retryWorkReq, retryWorkReqValid)
+  ) = PartialRetry.workReqRetry(
+    io.qpAttr,
+    retryWorkReq = retryWorkReq,
+    retryWorkReqValid = retryWorkReqValid
+  )
   /*
   val isRetryWholeWorkReq = PsnUtil
     .lte(io.qpAttr.retryStartPsn, retryWorkReq.psnStart, io.qpAttr.npsn)

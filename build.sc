@@ -3,11 +3,11 @@ import com.goyeau.mill.scalafix.ScalafixModule
 import mill._, scalalib._, scalafmt._
 // import mill.scalalib.bsp.ScalaMetalsSupport
 
-val spinalVersion = "1.6.0"
+val spinalVersion = "1.6.2"
 val scalaTestVersion = "3.2.10"
 
 trait CommonSpinalModule extends ScalaModule with ScalafmtModule with ScalafixModule { // with ScalaMetalsSupport {
-  def scalaVersion = "2.13.6"
+  def scalaVersion = "2.13.8"
   // def semanticDbVersion = "4.4.31"
   override def scalacOptions = Seq(
     //"-V", // Print a synopsis of verbose options.

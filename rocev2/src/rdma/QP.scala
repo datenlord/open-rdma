@@ -112,12 +112,12 @@ class QpCtrl extends Component {
   val mainFsm = new StateMachine {
     val RESET = new State with EntryPoint
     val INIT = new State
-    val ERR = new StateFsm(fsm = errFsm)
+    val ERR = new StateFsm(errFsm)
     val RTR = new State
     // TODO: how to stop internal state FSM?
     val RTS = new State // ParallelFsm(sqFsm, rqFsm)
     // SQD needs to handle retry
-    val SQD = new StateFsm(fsm = drainStateFsm())
+    val SQD = new StateFsm(drainStateFsm())
     // val SQE = new State // Not used in RC
 
     // TODO: clear WR queue
@@ -247,7 +247,7 @@ class QpCtrl extends Component {
       }
     }
 
-    val FENCE_RETRY: State = new StateFsm(fsm = fenceRetryFsm) {
+    val FENCE_RETRY: State = new StateFsm(fenceRetryFsm) {
       whenCompleted {
         goto(FENCE)
       }
@@ -395,7 +395,7 @@ class QpCtrl extends Component {
       }
     }
 
-    val RETRY: State = new StateFsm(fsm = sqRetryFsm) {
+    val RETRY: State = new StateFsm(sqRetryFsm) {
       whenIsActive {
         when(!isSqWorking) {
           sqRetryFsm.exitFsm()
@@ -411,7 +411,7 @@ class QpCtrl extends Component {
       }
     }
 
-    val FENCE: State = new StateFsm(fsm = fenceFsm) {
+    val FENCE: State = new StateFsm(fenceFsm) {
       whenIsActive {
         when(!isSqWorking) {
           fenceFsm.exitFsm()
@@ -499,7 +499,7 @@ class QpCtrl extends Component {
       retryWorkReqRemoteStartAddr,
       retryWorkReqLocalStartAddr,
       retryDmaReadLenBytes
-    ) = PartialRetry(
+    ) = PartialRetry.workReqRetry(
       io.qpAttr,
       retryWorkReq = io.workReqCacheScanBus.scanResp.data,
       retryWorkReqValid = io.workReqCacheScanBus.scanResp.valid
