@@ -7,9 +7,13 @@ import spinal.lib._
 import ConstantSettings._
 import RdmaConstants._
 import RdmaTypeReDef._
+import StreamSimUtil._
+
+import scala.collection.mutable
 
 object RdmaTypeReDef {
-  type Addr = BigInt
+  type PhysicalAddr = BigInt
+  type VirtualAddr = BigInt
   type FragIdx = Int
   type FragLast = Boolean
   type FragNum = Int
@@ -23,6 +27,8 @@ object RdmaTypeReDef {
 //  type PktLast = Boolean
   type PSN = Int
   type PsnStart = Int
+  type QueryPsn = Int
+  type QuerySuccess = Boolean
   type QPN = Int
   type PktFragData = BigInt
 //  type BoolField = Boolean
@@ -32,6 +38,8 @@ object RdmaTypeReDef {
   type AckReq = Boolean
   type RxBufValid = Boolean
   type HasNak = Boolean
+  type HasNakSeq = Boolean
+  type DupReq = Boolean
   type KeyValid = Boolean
   type SizeValid = Boolean
   type AccessValid = Boolean
@@ -67,6 +75,29 @@ class PsnSim(val psn: PSN) {
 }
 
 object WorkCompSim {
+  def rqCheckWorkCompStatus(
+      ackType: SpinalEnumElement[AckType.type],
+      workCompStatus: SpinalEnumElement[WorkCompStatus.type]
+  ): Unit = {
+    val matchStatus = ackType match {
+      case AckType.NORMAL      => WorkCompStatus.SUCCESS
+      case AckType.NAK_INV     => WorkCompStatus.REM_INV_REQ_ERR
+      case AckType.NAK_RMT_ACC => WorkCompStatus.REM_ACCESS_ERR
+      case AckType.NAK_RMT_OP  => WorkCompStatus.REM_OP_ERR
+      case _ => {
+        println(
+          f"${simTime()} time: invalid AckType=${ackType} to match WorkCompStatus"
+        )
+        ???
+      }
+    }
+
+    assert(
+      workCompStatus == matchStatus,
+      f"${simTime()} time: workCompStatus=${workCompStatus} not match expected matchStatus=${matchStatus}"
+    )
+  }
+
   def rqCheckWorkCompOpCode(
       reqOpCode: OpCode.Value,
       workCompOpCode: SpinalEnumElement[WorkCompOpCode.type]
@@ -192,7 +223,7 @@ object WorkReqSim {
     val result = opCodes(randIdx)
     require(
       opCodes.contains(result),
-      f"${simTime()} time: ReadAtomicOpCode should contain ${result}"
+      f"${simTime()} time: WR ReadAtomicOpCode should contain ${result}"
     )
     result
   }
@@ -203,7 +234,7 @@ object WorkReqSim {
     val result = opCodes(randIdx)
     require(
       opCodes.contains(result),
-      f"${simTime()} time: SendWriteOpCode should contain ${result}"
+      f"${simTime()} time: WR SendWriteOpCode should contain ${result}"
     )
     result
   }
@@ -214,7 +245,7 @@ object WorkReqSim {
     val result = opCodes(randIdx)
     require(
       opCodes.contains(result),
-      f"${simTime()} time: SendWriteImmOpCode should contain ${result}"
+      f"${simTime()} time: WR SendWriteImmOpCode should contain ${result}"
     )
     result
   }
@@ -225,7 +256,7 @@ object WorkReqSim {
     val result = opCodes(randIdx)
     require(
       opCodes.contains(result),
-      f"${simTime()} time: SendWriteReadOpCode should contain ${result}"
+      f"${simTime()} time: WR SendWriteReadOpCode should contain ${result}"
     )
     result
   }
@@ -238,7 +269,7 @@ object WorkReqSim {
     val result = opCodes(randIdx)
     require(
       opCodes.contains(result),
-      f"${simTime()} time: opCodes should contain ${result}"
+      f"${simTime()} time: WR SendWriteReadAtomicOpCode should contain ${result}"
     )
     result
   }
@@ -391,6 +422,14 @@ object AckTypeSim {
     result
   }
 
+  def isRnrNak(ackType: SpinalEnumElement[AckType.type]): Boolean = {
+    ackType == AckType.NAK_RNR
+  }
+
+  def isNakSeq(ackType: SpinalEnumElement[AckType.type]): Boolean = {
+    ackType == AckType.NAK_SEQ
+  }
+
   def isRetryNak(ackType: SpinalEnumElement[AckType.type]): Boolean = {
     retryNakTypes.contains(ackType)
   }
@@ -525,7 +564,7 @@ object RethSim {
 
   def setAddr(
       inputData: PktFragData,
-      addr: Addr,
+      addr: VirtualAddr,
       busWidth: BusWidth.Value
   ): PktFragData = {
     val addrShiftAmt = busWidth.id - MEM_ADDR_WIDTH
@@ -552,7 +591,7 @@ object RethSim {
   }
 
   def set(
-      addr: Addr,
+      addr: VirtualAddr,
       rkey: LRKey,
       dlen: PktLen,
       busWidth: BusWidth.Value
@@ -571,7 +610,7 @@ object RethSim {
   def extract(
       fragData: BigInt,
       busWidth: BusWidth.Value
-  ): (Addr, LRKey, PktLen) = {
+  ): (PhysicalAddr, LRKey, PktLen) = {
     require(
       busWidth.id >= widthOf(RETH()),
       f"${simTime()} time: input busWidth=${busWidth.id} should >= widthOf(RETH()=${widthOf(RETH())}"
@@ -613,6 +652,17 @@ object BthSim {
 }
 
 object OpCodeSim {
+  def randomAtomicOpCode(): OpCode.Value = {
+    val opCodes = Seq(OpCode.COMPARE_SWAP, OpCode.FETCH_ADD)
+    val randIdx = scala.util.Random.nextInt(opCodes.size)
+    val result = opCodes(randIdx)
+    require(
+      opCodes.contains(result),
+      f"${simTime()} time: AtomicOpCode should contain ${result}"
+    )
+    result
+  }
+
   implicit class OpCodeExt(val opcode: OpCode.Value) {
     def getPktHeaderLenBytes(): Int = {
       val bthWidth = widthOf(BTH())
@@ -755,10 +805,118 @@ object OpCodeSim {
   }
 }
 
-object AddrCacheSim {
-  import StreamSimUtil._
-  import scala.collection.mutable
+object ReadAtomicRstCacheSim {
+  def alwaysStreamFireAndRespSuccess(
+      readAtomicRstCacheQuery: ReadAtomicRstCacheQueryBus,
+      queryOpCode: OpCode.Value,
+      clockDomain: ClockDomain
+  ) = {
+    simHelper(
+      readAtomicRstCacheQuery,
+      queryOpCode,
+      clockDomain,
+      alwaysValid = true,
+      alwaysSuccess = true
+    )
+  }
 
+  def alwaysStreamFireAndRespFailure(
+      readAtomicRstCacheQuery: ReadAtomicRstCacheQueryBus,
+      queryOpCode: OpCode.Value,
+      clockDomain: ClockDomain
+  ) = {
+    simHelper(
+      readAtomicRstCacheQuery,
+      queryOpCode,
+      clockDomain,
+      alwaysValid = true,
+      alwaysSuccess = false
+    )
+  }
+
+  def randomStreamFireAndRespSuccess(
+      readAtomicRstCacheQuery: ReadAtomicRstCacheQueryBus,
+      queryOpCode: OpCode.Value,
+      clockDomain: ClockDomain
+  ) = {
+    simHelper(
+      readAtomicRstCacheQuery,
+      queryOpCode,
+      clockDomain,
+      alwaysValid = false,
+      alwaysSuccess = true
+    )
+  }
+
+  def randomStreamFireAndRespFailure(
+      readAtomicRstCacheQuery: ReadAtomicRstCacheQueryBus,
+      queryOpCode: OpCode.Value,
+      clockDomain: ClockDomain
+  ) = {
+    simHelper(
+      readAtomicRstCacheQuery,
+      queryOpCode,
+      clockDomain,
+      alwaysValid = false,
+      alwaysSuccess = false
+    )
+  }
+
+  def simHelper(
+      readAtomicRstCacheQuery: ReadAtomicRstCacheQueryBus,
+      queryOpCode: OpCode.Value,
+      clockDomain: ClockDomain,
+      alwaysValid: Boolean,
+      alwaysSuccess: Boolean
+  ) = {
+
+    val onReqFire =
+      (reqData: ReadAtomicRstCacheReq, reqQueue: mutable.Queue[PSN]) => {
+        reqQueue.enqueue(reqData.psn.toInt)
+        ()
+      }
+
+    val buildResp =
+      (respData: ReadAtomicRstCacheResp, reqQueue: mutable.Queue[PSN]) => {
+        val queryPsn = reqQueue.dequeue()
+        respData.cachedData.opcode #= queryOpCode.id
+        respData.cachedData.psnStart #= queryPsn // TODO: not support partial retry
+        respData.query.psn #= queryPsn
+        respData.found #= alwaysSuccess
+      }
+
+    val onRespFire = (
+        respData: ReadAtomicRstCacheResp,
+        respQueue: mutable.Queue[
+          (QueryPsn, QuerySuccess, PsnStart, PhysicalAddr, PktNum, PktLen)
+        ]
+    ) => {
+      respQueue.enqueue(
+        (
+          respData.query.psn.toInt,
+          respData.found.toBoolean,
+          respData.cachedData.psnStart.toInt,
+          respData.cachedData.pa.toBigInt,
+          respData.cachedData.pktNum.toInt,
+          respData.cachedData.dlen.toLong
+        )
+      )
+      ()
+    }
+
+    queryCacheHelper(
+      reqStream = readAtomicRstCacheQuery.req,
+      respStream = readAtomicRstCacheQuery.resp,
+      onReqFire = onReqFire,
+      buildResp = buildResp,
+      onRespFire = onRespFire,
+      clockDomain = clockDomain,
+      alwaysValid = alwaysValid
+    )
+  }
+}
+
+object AddrCacheSim {
   def alwaysStreamFireAndRespSuccess(
       addrCacheRead: QpAddrCacheAgentReadBus,
       clockDomain: ClockDomain
@@ -814,9 +972,9 @@ object AddrCacheSim {
       alwaysSuccess: Boolean
   ) = {
 //  addrCacheReadRespQueue: mutable.Queue[(PSN, Addr)],
-    val addrCacheReadReqQueue = mutable.Queue[(PSN, Addr)]()
+    val addrCacheReadReqQueue = mutable.Queue[(PSN, VirtualAddr)]()
     val addrCacheReadRespQueue =
-      mutable.Queue[(PSN, KeyValid, SizeValid, AccessValid, Addr)]()
+      mutable.Queue[(PSN, KeyValid, SizeValid, AccessValid, PhysicalAddr)]()
 
     val onReq = () => {
       addrCacheReadReqQueue.enqueue(

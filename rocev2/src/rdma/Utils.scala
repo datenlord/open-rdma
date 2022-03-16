@@ -328,8 +328,6 @@ class StreamZipByCondition[T1 <: Data, T2 <: Data](
     val zipOutputStream = master(
       Stream(TupleBundle(Bool(), leftPayloadType(), Bool(), rightPayloadType()))
     )
-    //    val leftOutputStream = master(Stream(leftPayloadType()))
-    //    val rightOutputStream = master(Stream(rightPayloadType()))
   }
 
   when(io.leftFireCond || io.rightFireCond || io.bothFireCond) {
@@ -952,6 +950,9 @@ class StreamConditionalFork[T <: Data](payloadType: HardType[T], portCount: Int)
   * condition, and join the response based on join condition.
   * To avoid back-pressure / stall, FragmentStreamForkQueryJoinResp has
   * internal queue to cache the pending inputs waiting for response to join.
+  *
+  * NOTE: if not expect to join with response stream, the input stream just pass through.
+  * It's better to always expect response and join with input stream.
   */
 object FragmentStreamForkQueryJoinResp {
   def apply[Tin <: Data, Tquery <: Data, Tresp <: Data](
@@ -1340,6 +1341,47 @@ object IPv4Addr {
   }
 }
 
+object extractReadAtomicEth {
+  def apply(inputPktFrag: RdmaDataPkt, busWidth: BusWidth) =
+    new Composite(inputPktFrag, "extractReadAtomicEth") {
+      val busWidthBytes = busWidth.id / BYTE_WIDTH
+      val bthLenBytes = widthOf(BTH()) / BYTE_WIDTH
+      val rethLenBytes = widthOf(RETH()) / BYTE_WIDTH
+      val atomicEthLenBytes = widthOf(AtomicEth()) / BYTE_WIDTH
+
+      // Bus width should be larger than BTH + AtomicEth width
+      require(
+        atomicEthLenBytes + bthLenBytes <= busWidthBytes,
+        s"must have AtomicEth width=${atomicEthLenBytes} bytes + BTH width=${bthLenBytes} bytes <= busWidthBytes=${busWidthBytes} bytes"
+      )
+      // For easiness, bus width should be larger than BTH + RETH width
+      require(
+        bthLenBytes + rethLenBytes <= busWidthBytes,
+        s"busWidthBytes=${busWidthBytes} should be larger than BTH width=${bthLenBytes} bytes + RETH width=${rethLenBytes} btyes"
+      )
+
+      // BTH is included in inputPktFrag.data
+      // TODO: verify inputPktFrag.data is big endian
+      val rethBits = inputPktFrag.data(
+        (busWidth.id - widthOf(BTH()) - widthOf(RETH())) until
+          (busWidth.id - widthOf(BTH()))
+      )
+      val reth = RETH()
+      reth.assignFromBits(rethBits)
+
+      // BTH is included in inputPktFrag.data
+      // TODO: verify inputPktFrag.data is big endian
+      val atomicEthBits = inputPktFrag.data(
+        (busWidth.id - widthOf(BTH()) - widthOf(AtomicEth())) until
+          (busWidth.id - widthOf(BTH()))
+      )
+      val atomicEth = AtomicEth()
+      atomicEth.assignFromBits(atomicEthBits)
+
+      val result = (reth, atomicEth)
+    }.result
+}
+
 //// TODO: remove this once Spinal HDL upgraded to 1.6.2
 //object ComponentEnrichment {
 //  implicit class ComponentExt[T <: Component](val that: T) {
@@ -1426,16 +1468,17 @@ object PsnUtil {
     */
   def diff(psnA: UInt, psnB: UInt): UInt =
     new Composite(psnA, "PsnUtil_diff") {
-      val min = UInt(PSN_WIDTH bits)
-      val max = UInt(PSN_WIDTH bits)
-      when(psnA > psnB) {
-        min := psnB
-        max := psnA
-      } otherwise {
-        min := psnA
-        max := psnB
-      }
-      val diff = max - min
+//      val min = UInt(PSN_WIDTH bits)
+//      val max = UInt(PSN_WIDTH bits)
+//      when(psnA > psnB) {
+//        min := psnB
+//        max := psnA
+//      } otherwise {
+//        min := psnA
+//        max := psnB
+//      }
+//      val diff = max - min
+      val diff = ((psnA +^ TOTAL_PSN) - psnB).resize(PSN_WIDTH)
       val result = UInt(PSN_WIDTH bits)
       when(diff > HALF_MAX_PSN) {
         result := (TOTAL_PSN - diff).resize(PSN_WIDTH)
@@ -1641,7 +1684,7 @@ object respPadCountCheck {
 
 object ePsnIncrease {
   def apply(pktFrag: RdmaDataPkt, pmtu: Bits, busWidth: BusWidth): UInt =
-    new Composite(pktFrag) {
+    new Composite(pktFrag, "ePsnIncrease") {
       val result = UInt(PSN_WIDTH bits)
       val isReadReq = OpCode.isReadReqPkt(pktFrag.bth.opcode)
       when(OpCode.isReqPkt(pktFrag.bth.opcode)) {
@@ -1897,8 +1940,9 @@ object PartialRetry {
       retryWorkReqValid: Bool
   ) =
     new Composite(retryWorkReq, "PartialRetry_workReqRetry") {
+      val curPsn = qpAttr.npsn // curPsn in SQ is nPSN
       val isRetryWholeWorkReq = PsnUtil
-        .lte(qpAttr.retryStartPsn, retryWorkReq.psnStart, qpAttr.npsn)
+        .lte(qpAttr.retryStartPsn, retryWorkReq.psnStart, curPsn)
       // TODO: verify RNR will not partial retry
       val retryFromBeginning =
         (qpAttr.retryReason === RetryReason.SEQ_ERR) ? isRetryWholeWorkReq | True
@@ -1919,7 +1963,8 @@ object PartialRetry {
         retryWorkReqLocalStartAddr,
         retryDmaReadLenBytes
       ) = retryHelper(
-        qpAttr,
+        qpAttr.pmtu,
+        curPsn,
         retryWorkReqValid,
         retryFromBeginning,
         origReqPsnStart = retryWorkReq.psnStart,
@@ -1946,10 +1991,11 @@ object PartialRetry {
       retryReadReqRstCacheData: ReadAtomicRstCacheData,
       retryReadReqValid: Bool
   ) = new Composite(retryReadReqPktFrag, "PartialRetry_readReqRetry") {
+    val curPsn = qpAttr.epsn // curPsn in RQ is ePSN
     val retryFromBeginning = PsnUtil.lte(
       retryReadReqPktFrag.bth.psn,
       retryReadReqRstCacheData.psnStart,
-      qpAttr.epsn
+      curPsn
     )
 
     val (
@@ -1959,11 +2005,12 @@ object PartialRetry {
       retryReqLocalStartAddr,
       retryDmaReadLenBytes
     ) = retryHelper(
-      qpAttr,
+      qpAttr.pmtu,
+      curPsn,
       retryReadReqValid,
       retryFromBeginning,
       origReqPsnStart = retryReadReqRstCacheData.psnStart,
-      retryReqPsn = qpAttr.retryStartPsn,
+      retryReqPsn = retryReadReqPktFrag.bth.psn,
       origReqPhysicalAddr = retryReadReqRstCacheData.pa,
       origReqRemoteAddr = retryReadReqRstCacheData.va,
       origReqLocalAddr = retryReadReqRstCacheData.va,
@@ -2038,7 +2085,8 @@ object PartialRetry {
   }.result
    */
   def retryHelper(
-      qpAttr: QpAttrData,
+      qpAttrPmtu: Bits,
+      curPsn: UInt,
       retryReqValid: Bool,
       retryFromBeginning: Bool,
       origReqPsnStart: UInt,
@@ -2063,24 +2111,21 @@ object PartialRetry {
     val retryReqLenBytes = cloneOf(origReqLenBytes)
     retryReqLenBytes := origReqLenBytes
     when(retryReqValid && !retryFromBeginning) {
-      assert(
-        assertion = qpAttr.retryReason === RetryReason.SEQ_ERR,
-        message =
-          L"only NAK SEQ ERR can result in partial retry, but qpAttr.retryReason=${qpAttr.retryReason}",
-        severity = FAILURE
-      )
+//      report(
+//        L"${REPORT_TIME} time: psnDiff=${psnDiff} < origReqPktNum=${origReqPktNum}, retryReqPsn=${retryReqPsn}, retryPhysicalAddr=${retryPhysicalAddr} = origReqPsnStart=${origReqPsnStart} + retryDmaReadOffset=${retryDmaReadOffset}, curPsn=${curPsn}",
+//      )
       assert(
         assertion = PsnUtil.lt(
           retryReqPsn,
           origReqPsnEndExclusive,
-          qpAttr.npsn
+          curPsn
         ),
         message =
-          L"${REPORT_TIME} time: retryReqPsn=${retryReqPsn} should < origReqPsnStart=${origReqPsnStart} + origReqPktNum=${origReqPktNum} = ${origReqPsnEndExclusive} in PSN order",
+          L"${REPORT_TIME} time: retryReqPsn=${retryReqPsn} should < origReqPsnStart=${origReqPsnStart} + origReqPktNum=${origReqPktNum} = ${origReqPsnEndExclusive} in PSN order, curPsn=${curPsn}",
         severity = FAILURE
       )
       val retryDmaReadOffset =
-        (psnDiff << qpAttr.pmtu.asUInt).resize(RDMA_MAX_LEN_WIDTH)
+        (psnDiff << qpAttrPmtu.asUInt).resize(RDMA_MAX_LEN_WIDTH)
 
       // Support partial retry
       retryStartPsn := retryReqPsn
@@ -2093,7 +2138,7 @@ object PartialRetry {
       assert(
         assertion = psnDiff < origReqPktNum,
         message =
-          L"${REPORT_TIME} time: psnDiff=${psnDiff} should < origReqPktNum=${origReqPktNum}, retryReqPsn=${retryReqPsn}, origReqPsnStart=${origReqPsnStart}, qpAttr.npsn=${qpAttr.npsn}",
+          L"${REPORT_TIME} time: psnDiff=${psnDiff} should < origReqPktNum=${origReqPktNum}, retryReqPsn=${retryReqPsn}, origReqPsnStart=${origReqPsnStart}, curPsn=${curPsn}",
         severity = FAILURE
       )
     }

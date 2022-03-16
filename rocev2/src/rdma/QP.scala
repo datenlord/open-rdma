@@ -612,7 +612,7 @@ class QP(busWidth: BusWidth) extends Component {
   io.dma.rd.arbitReq(dmaRdReqVec)
   io.dma.rd.deMuxRespByInitiator(
     rqRead = rq.io.dma.read.resp,
-    rqDup = rq.io.dma.dupRead.resp,
+//    rqDup = rq.io.dma.dupRead.resp,
     rqAtomicRead = rq.io.dma.atomic.rd.resp,
     sqRead = sq.io.dma.reqSender.resp,
     sqDup = sq.io.dma.retry.resp

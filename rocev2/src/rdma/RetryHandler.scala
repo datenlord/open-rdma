@@ -227,7 +227,7 @@ class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
       initiator = DmaInitiator.SQ_DUP,
       sqpn = retryWorkReq.workReq.sqpn,
       psnStart = retryStartPsn,
-      addr = retryDmaReadStartAddr,
+      pa = retryDmaReadStartAddr,
       lenBytes = retryDmaReadLenBytes
     )
   }
