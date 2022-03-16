@@ -371,11 +371,6 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
   val maxFragNum = 137
 
   val simCfg = SimConfig.allOptimisation.withWave
-//    .withConfig(
-//      new SpinalConfig(
-//        defaultClockDomainFrequency = FixedFrequency(FREQUENCY MHz)
-//      )
-//    )
     .compile(new ReadAtomicRespVerifierAndFatalNakNotifier(busWidth))
 
 // TODO: test("ReadAtomicRespVerifierAndFatalNakNotifier error flush test")
@@ -432,11 +427,11 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
       val readRespMetaDataQueue = mutable.Queue[(PsnStart, FragNum)]()
       val rxReadRespQueue = mutable.Queue[(PSN, PktFragData, FragLast)]()
       val txReadRespQueue =
-        mutable.Queue[(PSN, Addr, WorkReqId, PktFragData, FragLast)]()
+        mutable.Queue[(PSN, PhysicalAddr, WorkReqId, PktFragData, FragLast)]()
       val workReqQueryReqQueue = mutable.Queue[PSN]()
-      val workReqQueryRespQueue = mutable.Queue[(PSN, Addr, WorkReqId)]()
-      val addrCacheReadReqQueue = mutable.Queue[(PSN, Addr)]()
-      val addrCacheReadRespQueue = mutable.Queue[(PSN, Addr)]()
+      val workReqQueryRespQueue = mutable.Queue[(PSN, VirtualAddr, WorkReqId)]()
+      val addrCacheReadReqQueue = mutable.Queue[(PSN, VirtualAddr)]()
+      val addrCacheReadRespQueue = mutable.Queue[(PSN, PhysicalAddr)]()
       val matchQueue = mutable.Queue[PSN]()
 
       dut.io.rxAck.valid #= false
@@ -552,7 +547,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
         txReadRespQueue.enqueue(
           (
             dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.pktFrag.bth.psn.toInt,
-            dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.addr.toBigInt,
+            dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.pa.toBigInt,
             dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.workReqId.toBigInt,
             dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.pktFrag.data.toBigInt,
             dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.last.toBoolean
@@ -627,11 +622,6 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
   val maxFragNum = 137
 
   val simCfg = SimConfig.allOptimisation.withWave
-//    .withConfig(
-//      new SpinalConfig(
-//        defaultClockDomainFrequency = FixedFrequency(FREQUENCY MHz)
-//      )
-//    )
     .compile(new ReadAtomicRespDmaReqInitiator(busWidth))
 
   test("ReadAtomicRespDmaReqInitiator normal behavior test") {
@@ -648,9 +638,9 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
         SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
 
       val rxReadRespQueue =
-        mutable.Queue[(PSN, Addr, WorkReqId, PktFragData, FragLast)]()
+        mutable.Queue[(PSN, PhysicalAddr, WorkReqId, PktFragData, FragLast)]()
       val readRespDmaWriteReqQueue =
-        mutable.Queue[(PSN, Addr, WorkReqId, PktFragData, FragLast)]()
+        mutable.Queue[(PSN, PhysicalAddr, WorkReqId, PktFragData, FragLast)]()
 
       pktFragStreamMasterDriver(
         dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo,
@@ -690,7 +680,7 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
         rxReadRespQueue.enqueue(
           (
             dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.pktFrag.bth.psn.toInt,
-            dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.addr.toBigInt,
+            dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.pa.toBigInt,
             dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.workReqId.toBigInt,
             dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.pktFrag.data.toBigInt,
             dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.last.toBoolean
@@ -703,7 +693,7 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
         readRespDmaWriteReqQueue.enqueue(
           (
             dut.io.readRespDmaWriteReq.req.psn.toInt,
-            dut.io.readRespDmaWriteReq.req.addr.toBigInt,
+            dut.io.readRespDmaWriteReq.req.pa.toBigInt,
             dut.io.readRespDmaWriteReq.req.workReqId.toBigInt,
             dut.io.readRespDmaWriteReq.req.data.toBigInt,
             dut.io.readRespDmaWriteReq.req.last.toBoolean

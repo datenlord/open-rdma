@@ -396,7 +396,7 @@ class WorkReqCachePushAndReadAtomicHandler extends Component {
       initiator = DmaInitiator.SQ_RD,
       sqpn = io.qpAttr.sqpn,
       psnStart = cachedWorkReq.psnStart,
-      addr = cachedWorkReq.pa,
+      pa = cachedWorkReq.pa,
       lenBytes = cachedWorkReq.workReq.lenBytes
     )
   }

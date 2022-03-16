@@ -269,7 +269,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
       val result =
         cloneOf(io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.payloadType)
       result.pktFrag := joinStream._1
-      result.addr := joinStream._2.pa
+      result.pa := joinStream._2.pa
       result.workReqId := workReqIdReg
       result.last := joinStream.isLast
       result
@@ -623,7 +623,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
   StreamSink(NoData) << threeStreams(otherRespIdx).translateWith(NoData)
 
   val isLast = io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.isLast
-  val pa = io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.addr
+  val pa = io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.pa
   val workReqId = io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.workReqId
 
   io.readRespDmaWriteReq.req <-/< threeStreams(readRespIdx)
@@ -636,7 +636,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
         initiator = DmaInitiator.SQ_WR,
         sqpn = io.qpAttr.sqpn,
         psn = inputPktFrag.bth.psn,
-        addr = pa,
+        pa = pa,
         workReqId = workReqId,
         data = inputPktFrag.data,
         mty = inputPktFrag.mty
@@ -653,7 +653,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
         initiator = DmaInitiator.SQ_ATOMIC_WR,
         sqpn = io.qpAttr.sqpn,
         psn = inputPktFrag.bth.psn,
-        addr = pa,
+        pa = pa,
         workReqId = workReqId,
         data = inputPktFrag.data,
         mty = inputPktFrag.mty

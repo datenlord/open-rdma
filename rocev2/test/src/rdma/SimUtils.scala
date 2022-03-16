@@ -7,6 +7,7 @@ import spinal.lib._
 import ConstantSettings._
 import RdmaConstants._
 import RdmaTypeReDef._
+//import PsnSim._
 
 import scala.collection.mutable
 import scala.util.Random
@@ -369,6 +370,114 @@ object StreamSimUtil {
     clockDomain.waitSampling()
   }
 
+  def queryCacheHelper[Treq <: Data, Tresp <: Data, ReqData, RespData](
+      reqStream: Stream[Treq],
+      respStream: Stream[Tresp],
+      onReqFire: (Treq, mutable.Queue[ReqData]) => Unit,
+      buildResp: (Tresp, mutable.Queue[ReqData]) => Unit,
+      onRespFire: (Tresp, mutable.Queue[RespData]) => Unit,
+      clockDomain: ClockDomain,
+      alwaysValid: Boolean
+  ): mutable.Queue[RespData] = {
+    val reqQueue = mutable.Queue[ReqData]()
+    val respQueue = mutable.Queue[RespData]()
+
+    if (alwaysValid) {
+      onReceiveStreamReqAndThenResponseAlways(
+        reqStream = reqStream,
+        respStream = respStream,
+        clockDomain
+      ) {
+        onReqFire(reqStream.payload, reqQueue)
+      } {
+        buildResp(respStream.payload, reqQueue)
+      }
+    } else {
+      onReceiveStreamReqAndThenResponseRandom(
+        reqStream = reqStream,
+        respStream = respStream,
+        clockDomain
+      ) {
+        onReqFire(reqStream.payload, reqQueue)
+      } {
+        buildResp(respStream.payload, reqQueue)
+      }
+    }
+
+    onStreamFire(respStream, clockDomain) {
+      onRespFire(respStream.payload, respQueue)
+    }
+
+    respQueue
+    /*
+    val addrCacheReadReqQueue = mutable.Queue[(PSN, VirtualAddr)]()
+    val addrCacheReadRespQueue =
+      mutable.Queue[(PSN, KeyValid, SizeValid, AccessValid, PhysicalAddr)]()
+
+    val onReq = () => {
+      addrCacheReadReqQueue.enqueue(
+        (addrCacheRead.req.psn.toInt, addrCacheRead.req.va.toBigInt)
+      )
+//    println(
+//      f"${simTime()} time: dut.io.addrCacheRead.req received PSN=${dut.io.addrCacheRead.req.psn.toInt}%X"
+//    )
+    }
+
+    val onResp = () => {
+      val (psn, _) = addrCacheReadReqQueue.dequeue()
+      addrCacheRead.resp.psn #= psn
+      if (alwaysSuccess) {
+        addrCacheRead.resp.keyValid #= true
+        addrCacheRead.resp.sizeValid #= true
+        addrCacheRead.resp.accessValid #= true
+      } else {
+        addrCacheRead.resp.keyValid #= false
+        addrCacheRead.resp.sizeValid #= false
+        addrCacheRead.resp.accessValid #= false
+      }
+    }
+
+    if (alwaysValid) {
+      onReceiveStreamReqAndThenResponseAlways(
+        reqStream = addrCacheRead.req,
+        respStream = addrCacheRead.resp,
+        clockDomain
+      ) {
+        onReq()
+      } {
+        onResp()
+      }
+    } else {
+      onReceiveStreamReqAndThenResponseRandom(
+        reqStream = addrCacheRead.req,
+        respStream = addrCacheRead.resp,
+        clockDomain
+      ) {
+        onReq()
+      } {
+        onResp()
+      }
+    }
+
+    onStreamFire(addrCacheRead.resp, clockDomain) {
+      addrCacheReadRespQueue.enqueue(
+        (
+          addrCacheRead.resp.psn.toInt,
+          addrCacheRead.resp.keyValid.toBoolean,
+          addrCacheRead.resp.sizeValid.toBoolean,
+          addrCacheRead.resp.accessValid.toBoolean,
+          addrCacheRead.resp.pa.toBigInt
+        )
+      )
+      //        println(
+      //          f"${simTime()} time: dut.io.addrCacheRead.resp PSN=${dut.io.addrCacheRead.resp.psn.toInt}%X"
+      //        )
+    }
+
+    addrCacheReadRespQueue
+     */
+  }
+
   def pktFragStreamMasterDriverAlwaysValid[T <: Data, InternalData](
       stream: Stream[Fragment[T]],
       clockDomain: ClockDomain
@@ -560,7 +669,7 @@ object MiscUtils {
 
   /** psnA - psnB, always <= HALF_MAX_PSN
     */
-  def psnDiff(psnA: Int, psnB: Int): Int = {
+  def psnDiff(psnA: PSN, psnB: PSN): PSN = {
     require(
       psnA >= 0 && psnB >= 0,
       f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both >= 0"
@@ -569,13 +678,13 @@ object MiscUtils {
       psnA < TOTAL_PSN && psnB < TOTAL_PSN,
       f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both < TOTAL_PSN=${TOTAL_PSN}"
     )
-
-    val (min, max) = if (psnA > psnB) {
-      (psnB, psnA)
-    } else {
-      (psnA, psnB)
-    }
-    val diff = max - min
+    val diff = ((psnA + TOTAL_PSN) - psnB) % TOTAL_PSN
+//    val (min, max) = if (psnA > psnB) {
+//      (psnB, psnA)
+//    } else {
+//      (psnA, psnB)
+//    }
+//    val diff = max - min
     if (diff > HALF_MAX_PSN) {
       TOTAL_PSN - diff
     } else {

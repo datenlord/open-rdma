@@ -14,7 +14,7 @@ import PsnSim._
 class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
 
-  def randomRetryStartPsn(psnStart: Int, pktNum: Int): Int = {
+  def randomRetryStartPsn(psnStart: PsnStart, pktNum: PktNum): PSN = {
     // RDMA max packet length 2GB=2^31
     psnStart +% scala.util.Random.nextInt(pktNum)
   }
@@ -33,16 +33,16 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       val inputQueue = mutable.Queue[
         (
             PsnStart,
-            Addr,
+            PhysicalAddr,
             PsnStart,
             PktLen,
             SpinalEnumElement[WorkReqOpCode.type],
-            Addr,
+            VirtualAddr,
             LRKey
         )
       ]()
-      val outputReadQueue = mutable.Queue[(PSN, PktLen, LRKey, Addr)]()
-      val outputDmaReqQueue = mutable.Queue[(Addr, PsnStart, PktLen)]()
+      val outputReadQueue = mutable.Queue[(PSN, PktLen, LRKey, VirtualAddr)]()
+      val outputDmaReqQueue = mutable.Queue[(PhysicalAddr, PsnStart, PktLen)]()
       val matchQueue = mutable.Queue[PSN]()
 
       var nextPsn = 0
@@ -107,7 +107,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       onStreamFire(dut.io.dmaRead.req, dut.clockDomain) {
         outputDmaReqQueue.enqueue(
           (
-            dut.io.dmaRead.req.addr.toBigInt,
+            dut.io.dmaRead.req.pa.toBigInt,
             dut.io.dmaRead.req.psnStart.toInt,
             dut.io.dmaRead.req.lenBytes.toLong
           )
@@ -185,10 +185,16 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       dut.clockDomain.forkStimulus(10)
 
       val inputQueue = mutable.Queue[
-        (PsnStart, PktLen, SpinalEnumElement[WorkReqOpCode.type], Addr, LRKey)
+        (
+            PsnStart,
+            PktLen,
+            SpinalEnumElement[WorkReqOpCode.type],
+            VirtualAddr,
+            LRKey
+        )
       ]()
-      val outputReadQueue = mutable.Queue[(PSN, PktLen, LRKey, Addr)]()
-      val outputAtomicQueue = mutable.Queue[(PSN, LRKey, Addr)]()
+      val outputReadQueue = mutable.Queue[(PSN, PktLen, LRKey, VirtualAddr)]()
+      val outputAtomicQueue = mutable.Queue[(PSN, LRKey, VirtualAddr)]()
       val matchQueue = mutable.Queue[PSN]()
 
       var nextPsn = 0
@@ -321,8 +327,8 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
-      val inputQueue = mutable.Queue[(Addr, PsnStart, PktLen, QPN)]()
-      val outputQueue = mutable.Queue[(Addr, PsnStart, PktLen, QPN)]()
+      val inputQueue = mutable.Queue[(PhysicalAddr, PsnStart, PktLen, QPN)]()
+      val outputQueue = mutable.Queue[(PhysicalAddr, PsnStart, PktLen, QPN)]()
       val matchQueue = mutable.Queue[PSN]()
 
       var nextPsn = 0
@@ -372,7 +378,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       onStreamFire(dut.io.dmaRead.req, dut.clockDomain) {
         outputQueue.enqueue(
           (
-            dut.io.dmaRead.req.addr.toBigInt,
+            dut.io.dmaRead.req.pa.toBigInt,
             dut.io.dmaRead.req.psnStart.toInt,
             dut.io.dmaRead.req.lenBytes.toLong,
             dut.io.dmaRead.req.sqpn.toInt

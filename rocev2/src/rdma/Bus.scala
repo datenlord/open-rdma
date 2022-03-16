@@ -631,7 +631,7 @@ case class DmaReadReq() extends Bundle {
   val initiator = DmaInitiator()
   val sqpn = UInt(QPN_WIDTH bits)
   val psnStart = UInt(PSN_WIDTH bits)
-  val addr = UInt(MEM_ADDR_WIDTH bits)
+  val pa = UInt(MEM_ADDR_WIDTH bits)
   val lenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
 //  private val hasMultiPkts = Bool()
 //  private val hasImmDt = Bool()
@@ -643,13 +643,13 @@ case class DmaReadReq() extends Bundle {
       initiator: SpinalEnumCraft[DmaInitiator.type],
       sqpn: UInt,
       psnStart: UInt,
-      addr: UInt,
+      pa: UInt,
       lenBytes: UInt
   ): this.type = {
     this.initiator := initiator
     this.psnStart := psnStart
     this.sqpn := sqpn
-    this.addr := addr
+    this.pa := pa
     this.lenBytes := lenBytes
     this
   }
@@ -813,7 +813,7 @@ case class DmaReadReq() extends Bundle {
     initiator := DmaInitiator.RQ_RD
     sqpn := 0
     psnStart := 0
-    addr := 0
+    pa := 0
     lenBytes := 0
 //    hasMultiPkts := False
 //    hasImmDt := False
@@ -894,20 +894,26 @@ case class DmaReadBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
 
   def deMuxRespByInitiator(
       rqRead: Stream[Fragment[DmaReadResp]],
-      rqDup: Stream[Fragment[DmaReadResp]],
+//      rqDup: Stream[Fragment[DmaReadResp]],
       rqAtomicRead: Stream[Fragment[DmaReadResp]],
       sqRead: Stream[Fragment[DmaReadResp]],
       sqDup: Stream[Fragment[DmaReadResp]]
   ) = new Area {
     val txSel = UInt(3 bits)
-    val (rqReadIdx, rqDupIdx, rqAtomicReadIdx, sqReadIdx, sqDupIdx, otherIdx) =
-      (0, 1, 2, 3, 4, 5)
+//    val (rqReadIdx, rqDupIdx, rqAtomicReadIdx, sqReadIdx, sqDupIdx, otherIdx) =
+//      (0, 1, 2, 3, 4, 5)
+    val (rqReadIdx, rqAtomicReadIdx, sqReadIdx, sqDupIdx, otherIdx) =
+      (0, 1, 2, 3, 4)
+
     switch(resp.initiator) {
-      is(DmaInitiator.RQ_RD) {
+//      is(DmaInitiator.RQ_RD) {
+//        txSel := rqReadIdx
+//      }
+//      is(DmaInitiator.RQ_DUP) {
+//        txSel := rqDupIdx
+//      }
+      is(DmaInitiator.RQ_RD, DmaInitiator.RQ_DUP) {
         txSel := rqReadIdx
-      }
-      is(DmaInitiator.RQ_DUP) {
-        txSel := rqDupIdx
       }
       is(DmaInitiator.RQ_ATOMIC_RD) {
         txSel := rqAtomicReadIdx
@@ -929,12 +935,12 @@ case class DmaReadBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
     }
     Vec(
       rqRead,
-      rqDup,
+//      rqDup,
       rqAtomicRead,
       sqRead,
       sqDup,
       StreamSink(rqRead.payloadType)
-    ) <-/< StreamDemux(resp, select = txSel, portCount = 6)
+    ) <-/< StreamDemux(resp, select = txSel, portCount = 5) // portCount = 6
   }
 
   def arbitReqAndDemuxRespByQpn(
@@ -978,7 +984,7 @@ case class DmaWriteReq(busWidth: BusWidth) extends Bundle {
   val psn = UInt(PSN_WIDTH bits)
   val workReqId = Bits(WR_ID_WIDTH bits)
   // val workReqIdValid = Bool()
-  val addr = UInt(MEM_ADDR_WIDTH bits)
+  val pa = UInt(MEM_ADDR_WIDTH bits)
   val data = Bits(busWidth.id bits)
   val mty = Bits((busWidth.id / BYTE_WIDTH) bits)
 
@@ -987,7 +993,7 @@ case class DmaWriteReq(busWidth: BusWidth) extends Bundle {
       sqpn: UInt,
       psn: UInt,
       workReqId: Bits,
-      addr: UInt,
+      pa: UInt,
       data: Bits,
       mty: Bits
   ): this.type = {
@@ -995,7 +1001,7 @@ case class DmaWriteReq(busWidth: BusWidth) extends Bundle {
     this.sqpn := sqpn
     this.psn := psn
     this.workReqId := workReqId
-    this.addr := addr
+    this.pa := pa
     this.data := data
     this.mty := mty
     this
@@ -1008,7 +1014,7 @@ case class DmaWriteReq(busWidth: BusWidth) extends Bundle {
     psn := 0
     workReqId := 0
     // workReqIdValid := False
-    addr := 0
+    pa := 0
     mty := 0
     data := 0
     this
@@ -1198,7 +1204,7 @@ case class SqDmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
 
 case class RqDmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
   val sendWrite = DmaWriteBus(busWidth)
-  val dupRead = DmaReadBus(busWidth)
+//  val dupRead = DmaReadBus(busWidth)
   val read = DmaReadBus(busWidth)
   val atomic = DmaBus(busWidth)
 
@@ -1211,15 +1217,18 @@ case class RqDmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
   }
 
   def dmaRdReqVec: Vec[Stream[DmaReadReq]] = {
-    Vec(read.req, dupRead.req, atomic.rd.req)
+//    Vec(read.req, dupRead.req, atomic.rd.req)
+    Vec(read.req, atomic.rd.req)
   }
 
   def dmaRdRespVec: Vec[Stream[Fragment[DmaReadResp]]] = {
-    Vec(read.resp, dupRead.resp, atomic.rd.resp)
+//    Vec(read.resp, dupRead.resp, atomic.rd.resp)
+    Vec(read.resp, atomic.rd.resp)
   }
 
   override def asMaster(): Unit = {
-    master(sendWrite, read, dupRead, atomic)
+//    master(sendWrite, read, dupRead, atomic)
+    master(sendWrite, read, atomic)
   }
 }
 
@@ -1308,7 +1317,7 @@ case class WorkReq() extends Bundle {
 case class RxWorkReq() extends Bundle {
   val sqpn = UInt(QPN_WIDTH bits)
   val id = Bits(WR_ID_WIDTH bits)
-  val addr = UInt(MEM_ADDR_WIDTH bits)
+  val laddr = UInt(MEM_ADDR_WIDTH bits)
   val lkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
   // TODO: assume single SG
   val lenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
@@ -1317,7 +1326,7 @@ case class RxWorkReq() extends Bundle {
   def setDefaultVal(): this.type = {
     sqpn := 0
     id := 0
-    addr := 0
+    laddr := 0
     lkey := 0
     lenBytes := 0
     this
@@ -1427,7 +1436,7 @@ case class ReadAtomicRstCacheData() extends Bundle {
   val swap = Bits(LONG_WIDTH bits)
   val comp = Bits(LONG_WIDTH bits)
   val atomicRst = Bits(LONG_WIDTH bits)
-  val done = Bool()
+  val duplicate = Bool()
 
   // TODO: remote this
   def setDefaultVal(): this.type = {
@@ -1441,7 +1450,7 @@ case class ReadAtomicRstCacheData() extends Bundle {
     swap := 0
     comp := 0
     atomicRst := 0
-    done := False
+    duplicate := False
     this
   }
 }
@@ -2147,7 +2156,7 @@ case class RdmaDataBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
 
 case class SqReadAtomicRespWithDmaInfo(busWidth: BusWidth) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
-  val addr = UInt(MEM_ADDR_WIDTH bits)
+  val pa = UInt(MEM_ADDR_WIDTH bits)
   val workReqId = Bits(WR_ID_WIDTH bits)
 }
 
@@ -2277,6 +2286,11 @@ case class RqReqWithRxBufAndDmaInfoBus(busWidth: BusWidth)
 
 case class RqDupReadReqAndRstCacheData(busWidth: BusWidth) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
+  val cachedData = ReadAtomicRstCacheData()
+}
+
+case class RqDmaReadReqAndRstCacheData() extends Bundle {
+  val dmaReadReq = DmaReadReq()
   val cachedData = ReadAtomicRstCacheData()
 }
 
