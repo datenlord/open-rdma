@@ -5,9 +5,9 @@ import spinal.core.sim._
 import spinal.lib._
 
 import ConstantSettings._
+import PsnSim._
 import RdmaConstants._
 import RdmaTypeReDef._
-//import PsnSim._
 
 import scala.collection.mutable
 import scala.util.Random
@@ -23,7 +23,7 @@ case class PsnStartItr(psnStartItr: Iterator[Long]) {
   }
 }
 
-case class PktNumItr(pktNumItr: Iterator[Int]) {
+case class PktNumItr(pktNumItr: Iterator[PktNum]) {
   def next(): Int = {
     val pktNum = pktNumItr.next()
     assert(
@@ -88,7 +88,7 @@ object SendWriteReqReadRespInputGen {
     totalLenGen
   }
 
-  private def genPayloadLen(busWidth: BusWidth.Value, maxFragNum: Int) = {
+  private def genPayloadLen(busWidth: BusWidth.Value, maxFragNum: FragNum) = {
     val mtyWidth = busWidthBytes(busWidth)
     require(
       mtyWidth > 0,
@@ -146,10 +146,6 @@ object SendWriteReqReadRespInputGen {
     val psnStartItr = psnStartGen.iterator
     val payloadLenItr = payloadLenGen.iterator
 
-//    for (idx <- 0 until 10) {
-//      println(f"${simTime()} time: idx=$idx, fragNum=${fragNumItr.next()}, pktNum=${pktNumItr
-//        .next()}, psnStart=${psnItr.next()}, totalLenBytes=${totalLenItr.next()}")
-//    }
     (
       payloadFragNumItr,
       PktNumItr(pktNumItr),
@@ -678,7 +674,7 @@ object MiscUtils {
       psnA < TOTAL_PSN && psnB < TOTAL_PSN,
       f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both < TOTAL_PSN=${TOTAL_PSN}"
     )
-    val diff = ((psnA + TOTAL_PSN) - psnB) % TOTAL_PSN
+    val diff = (psnA + TOTAL_PSN) -% psnB
 //    val (min, max) = if (psnA > psnB) {
 //      (psnB, psnA)
 //    } else {

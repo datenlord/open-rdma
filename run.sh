@@ -53,3 +53,5 @@ fi
 ./mill rocev2.test.testOnly rdma.RqReadAtomicDmaReqBuilderTest
 ./mill rocev2.test.testOnly rdma.DupReqHandlerAndReadAtomicRstCacheQueryTest
 ./mill rocev2.test.testOnly rdma.DupReadDmaReqBuilderTest
+./mill rocev2.test.testOnly rdma.RqSendWriteWorkCompGeneratorTest
+./mill rocev2.test.testOnly rdma.SendWriteRespGeneratorTest

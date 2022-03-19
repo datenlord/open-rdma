@@ -195,7 +195,10 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
   // the only or first read responses or atomic responses
   val workReqCacheQueryCond =
     (pktFragStream: Stream[Fragment[RdmaDataPkt]]) =>
-      new Composite(pktFragStream, "workReqCacheQueryCond") {
+      new Composite(
+        pktFragStream,
+        "ReadAtomicRespVerifierAndFatalNakNotifier_workReqCacheQueryCond"
+      ) {
         val isReadFirstOrOnlyRespOrAtomicResp = (opcode: Bits) => {
           OpCode.isFirstOrOnlyReadRespPkt(opcode) ||
             OpCode.isAtomicRespPkt(opcode)
@@ -276,174 +279,6 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
     }
 }
 
-//class RespVerifierAndFatalNakHandler(busWidth: BusWidth) extends Component {
-//  val io = new Bundle {
-//    val qpAttr = in(QpAttrData())
-//    val txQCtrl = in(TxQCtrl())
-//    val rx = slave(RdmaDataBus(busWidth))
-//    val nakNotifier = out(SqErrNotifier())
-//    val workReqQuery = master(WorkReqCacheQueryBus())
-//    val addrCacheRead = master(QpAddrCacheAgentReadBus())
-//    val txRespWithAeth = master(Stream(Acknowledge()))
-//    val readAtomicRespWithDmaInfoBus = master(
-//      SqReadAtomicRespWithDmaInfoBus(busWidth)
-//    )
-//  }
-//
-//  val inputRespValid = io.rx.pktFrag.valid
-//  val inputRespPktFrag = io.rx.pktFrag.payload
-//  when(inputRespValid) {
-//    assert(
-//      assertion = OpCode.isRespPkt(inputRespPktFrag.bth.opcode),
-//      message =
-//        L"${REPORT_TIME} time: RespVerifier received non-response packet with opcode=${inputRespPktFrag.bth.opcode}, PSN=${inputRespPktFrag.bth.psn}",
-//      severity = FAILURE
-//    )
-//  }
-//
-//  val acknowledge = Acknowledge()
-//  acknowledge.bth := inputRespPktFrag.bth
-//  acknowledge.aeth.assignFromBits(
-//    inputRespPktFrag.data(
-//      (busWidth.id - widthOf(BTH()) - widthOf(AETH())) until
-//        (busWidth.id - widthOf(BTH()))
-//    )
-//  )
-//
-//  val hasAeth = OpCode.respPktHasAeth(inputRespPktFrag.bth.opcode)
-//  when(inputRespValid && hasAeth) {
-//    assert(
-//      assertion = !acknowledge.aeth.isReserved(),
-//      message =
-//        L"${REPORT_TIME} time: acknowledge has reserved code or value, PSN=${acknowledge.bth.psn}, aeth.code=${acknowledge.aeth.code}, aeth.value=${acknowledge.aeth.value}",
-//      severity = FAILURE
-//    )
-//  }
-//
-//  // Just discard ACK with reserved code
-//  val hasReservedCode = acknowledge.aeth.isReserved()
-//  //  val isNormalAck = acknowledge.aeth.isNormalAck()
-//  //  val isRetryNak = acknowledge.aeth.isRetryNak()
-//  val isErrAck = acknowledge.aeth.isErrAck()
-//  // SQ into ERR state if fatal error
-//  io.nakNotifier.setNoErr()
-//  when(!io.txQCtrl.wrongStateFlush && inputRespValid && isErrAck) {
-//    io.nakNotifier.setFromAeth(acknowledge.aeth)
-//  }
-//
-//  val isReadResp =
-//    OpCode.isReadRespPkt(io.rx.pktFrag.bth.opcode)
-//  val isAtomicResp =
-//    OpCode.isAtomicRespPkt(io.rx.pktFrag.bth.opcode)
-//
-//  // If error, discard all incoming response
-//  // TODO: incoming response stream needs retry flush or not?
-//  val (resp4ReadAtomic, resp4Ack) = StreamFork2(
-//    io.rx.pktFrag.throwWhen(io.txQCtrl.wrongStateFlush || hasReservedCode)
-//  )
-//
-//  // TODO: does it need to flush whole SQ when retry triggered?
-//  val ackQueue =
-//    StreamFifoLowLatency(Acknowledge(), depth = MAX_COALESCE_ACK_NUM)
-//  ackQueue.io.push << resp4Ack
-//    .takeWhen(hasAeth)
-//    .translateWith(acknowledge)
-//  // TODO: verify that once retry started, discard all responses before send out the retry request
-//  ackQueue.io.flush := io.txQCtrl.retryFlush || io.txQCtrl.wrongStateFlush
-//  io.txRespWithAeth <-/< ackQueue.io.pop
-//    .translateWith(acknowledge)
-//
-//  val readAtomicRespValidateLogic = new Area {
-//    // Only send out WorkReqCache query when the input data is the first fragment of
-//    // the only or first read responses or atomic responses
-//    val workReqCacheQueryCond =
-//      (pktFragStream: Stream[Fragment[RdmaDataPkt]]) =>
-//        new Composite(pktFragStream, "queryCond") {
-//          val isReadFirstOrOnlyRespOrAtomicResp = (opcode: Bits) => {
-//            OpCode.isFirstOrOnlyReadRespPkt(opcode) ||
-//            OpCode.isAtomicRespPkt(opcode)
-//          }
-//          val result = pktFragStream.valid && pktFragStream.isFirst &&
-//            isReadFirstOrOnlyRespOrAtomicResp(pktFragStream.bth.opcode)
-//        }.result
-//    // Only join AddrCache query response when the input data is the last fragment of
-//    // the only or last read responses or atomic responses
-//    val addrCacheQueryRespJoinCond =
-//      (pktFragStream: Stream[Fragment[RdmaDataPkt]]) =>
-//        new Composite(pktFragStream, "queryCond") {
-//          val isReadLastOrOnlyRespOrAtomicResp = (opcode: Bits) => {
-//            OpCode.isLastOrOnlyReadRespPkt(opcode) ||
-//            OpCode.isAtomicRespPkt(opcode)
-//          }
-//          val result = pktFragStream.valid && pktFragStream.isLast &&
-//            isReadLastOrOnlyRespOrAtomicResp(pktFragStream.bth.opcode)
-//        }.result
-//
-//    val (
-//      everyFirstReadAtomicRespPktFragStream,
-//      allReadAtomicRespPktFragStream
-//    ) =
-//      StreamConditionalFork2(
-//        resp4ReadAtomic.takeWhen(isReadResp || isAtomicResp),
-//        forkCond = workReqCacheQueryCond(io.rx.pktFrag)
-//      )
-//    val rxAllReadAtomicRespPkgFragQueue = allReadAtomicRespPktFragStream
-//      .queueLowLatency(
-//        ADDR_CACHE_QUERY_DELAY_CYCLE + WORK_REQ_CACHE_QUERY_DELAY_CYCLE
-//      )
-//
-//    val rxEveryFirstReadAtomicRespPktFragQueue =
-//      everyFirstReadAtomicRespPktFragStream
-//        .queueLowLatency(ADDR_CACHE_QUERY_DELAY_CYCLE)
-//    io.workReqQuery.req << rxEveryFirstReadAtomicRespPktFragQueue
-//      .translateWith {
-//        val result = cloneOf(io.workReqQuery.req.payloadType)
-//        result.psn := rxEveryFirstReadAtomicRespPktFragQueue.bth.psn
-//        result
-//      }
-//
-//    // TODO: verify it's correct
-//    val workReqIdReg = RegNextWhen(
-//      io.workReqQuery.resp.cachedWorkReq.workReq.id,
-//      cond = io.workReqQuery.resp.fire
-//    )
-//    val cachedWorkReq = io.workReqQuery.resp.cachedWorkReq
-//    io.addrCacheRead.req <-/< io.workReqQuery.resp
-//      .throwWhen(io.txQCtrl.wrongStateFlush)
-//      //    .continueWhen(io.rx.pktFrag.fire && (isReadFirstOrOnlyResp || isAtomicResp))
-//      .translateWith {
-//        val addrCacheReadReq = QpAddrCacheAgentReadReq()
-//        addrCacheReadReq.sqpn := io.qpAttr.sqpn
-//        addrCacheReadReq.psn := cachedWorkReq.psnStart
-//        addrCacheReadReq.key := cachedWorkReq.workReq.lkey
-//        addrCacheReadReq.pdId := io.qpAttr.pdId
-//        addrCacheReadReq.setKeyTypeRemoteOrLocal(isRemoteKey = False)
-//        addrCacheReadReq.accessType := AccessType.LOCAL_WRITE
-//        addrCacheReadReq.va := cachedWorkReq.workReq.laddr
-//        addrCacheReadReq.dataLenBytes := cachedWorkReq.workReq.lenBytes
-//        addrCacheReadReq
-//      }
-//
-//    val joinStream =
-//      FragmentStreamConditionalJoinStream(
-//        rxAllReadAtomicRespPkgFragQueue,
-//        io.addrCacheRead.resp,
-//        joinCond = addrCacheQueryRespJoinCond(rxAllReadAtomicRespPkgFragQueue)
-//      )
-//
-//    io.readAtomicRespWithDmaInfoBus.respWithDmaInfo <-/< joinStream
-//      .translateWith {
-//        val result =
-//          cloneOf(io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.payloadType)
-//        result.pktFrag := joinStream._1
-//        result.addr := joinStream._2.pa
-//        result.workReqId := workReqIdReg
-//        result.last := joinStream.isLast
-//        result
-//      }
-//  }
-//}
-
 // Handle coalesce ACK, normal ACK and retry ACK
 class CoalesceAndNormalAndRetryNakHandler extends Component {
   val io = new Bundle {
@@ -454,8 +289,6 @@ class CoalesceAndNormalAndRetryNakHandler extends Component {
     val coalesceAckDone = out(Bool())
     val workCompAndAck = master(Stream(WorkCompAndAck()))
     val retryNotifier = out(SqRetryNotifier())
-//    val nakNotifier = out(SqErrNotifier())
-//    val tx = slave(Stream(Acknowledge()))
   }
 
   val inputAckValid = io.rx.valid
@@ -511,7 +344,7 @@ class CoalesceAndNormalAndRetryNakHandler extends Component {
         fireBothCachedWorkReqAndAck ## fireCachedWorkReqOnly ## fireAckOnly
       ) <= 1,
       message =
-        L"${REPORT_TIME} time: fire CachedWorkReq, fire ACK, and fire both should be mutually exclusive, but fireBothCachedWorkReqAndAck=${fireBothCachedWorkReqAndAck}, fireCachedWorkReqOnly=${fireCachedWorkReqOnly}, fireAckOnly=${fireAckOnly}",
+        L"${REPORT_TIME} time: fire CachedWorkReq only, fire ACK only, and fire both should be mutually exclusive, but fireBothCachedWorkReqAndAck=${fireBothCachedWorkReqAndAck}, fireCachedWorkReqOnly=${fireCachedWorkReqOnly}, fireAckOnly=${fireAckOnly}",
       severity = FAILURE
     )
   }
