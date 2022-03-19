@@ -308,10 +308,6 @@ object StreamZipByCondition {
     streamZipByCondition.io.rightFireCond := rightFireCond
     streamZipByCondition.io.bothFireCond := bothFireCond
     streamZipByCondition.io.zipOutputStream
-//    (
-//      streamZipByCondition.io.leftOutputStream,
-//      streamZipByCondition.io.rightOutputStream
-//    )
   }
 }
 
@@ -802,24 +798,20 @@ class StreamRemoveHeader(busWidth: BusWidth) extends Component {
   io.outputStream << inputStreamTranslate
 }
 
-// TODO: remove this
-object SignalEdgeDrivenStream {
-  def apply(signal: Bool): Stream[NoData] =
-    new Composite(signal) {
-      val result = Stream(NoData)
-      val signalRiseEdge = signal.rise(initAt = False)
-      val validReg = Reg(Bool())
-        .setWhen(signalRiseEdge)
-        .clearWhen(result.fire)
-      when(validReg) {
-        assert(
-          assertion = !signalRiseEdge,
-          message =
-            L"${REPORT_TIME} time: previous signal edge triggered stream data hasn't fired yet, validReg=${validReg}, signalRiseEdge=${signalRiseEdge}",
-          severity = FAILURE
-        )
-      }
-      result.valid := signal.rise(initAt = False) || validReg
+/** Join a stream A with a stream B, and A is always fired,
+  * but B is only fired when condition is satisfied.
+  */
+object StreamConditionalJoin {
+  def apply[T1 <: Data, T2 <: Data](
+      inputA: Stream[T1],
+      inputB: Stream[T2],
+      joinCond: Bool
+  ): Stream[TupleBundle2[T1, T2]] =
+    new Composite(inputA, "StreamConditionalJoin") {
+      val emptyStream =
+        StreamSource().translateWith(inputB.payloadType().assignDontCare())
+      val streamToJoin = StreamMux(joinCond.asUInt, Vec(emptyStream, inputB))
+      val result = StreamJoin(inputA, streamToJoin)
     }.result
 }
 
@@ -1304,7 +1296,7 @@ object setAllBits {
   }
 
   def apply(width: UInt): Bits =
-    new Composite(width) {
+    new Composite(width, "setAllBits") {
       val one = U(1, 1 bit)
       val shift = (one << width) - 1
       val result = shift.asBits
@@ -1516,7 +1508,7 @@ object bufSizeCheck {
       bufPhysicalAddr: UInt,
       bufSize: UInt
   ): Bool =
-    new Composite(dataLenBytes) {
+    new Composite(dataLenBytes, "bufSizeCheck") {
       val bufEndAddr = bufPhysicalAddr + bufSize
       val targetEndAddr = targetPhysicalAddr + dataLenBytes
       val result =
@@ -1528,7 +1520,7 @@ object OpCodeSeq {
   import OpCode._
 
   def checkReqSeq(preOpCode: Bits, curOpCode: Bits): Bool =
-    new Composite(curOpCode) {
+    new Composite(curOpCode, "OpCodeSeq_checkReqSeq") {
       val result = Bool()
 
       switch(preOpCode) {
@@ -1564,7 +1556,7 @@ object OpCodeSeq {
     }.result
 
   def checkReadRespSeq(preOpCode: Bits, curOpCode: Bits): Bool =
-    new Composite(curOpCode) {
+    new Composite(curOpCode, "OpCodeSeq_checkReadRespSeq") {
       val result = Bool()
 
       switch(preOpCode) {
@@ -1583,7 +1575,7 @@ object OpCodeSeq {
 
 object padCount {
   def apply(pktLen: UInt): UInt =
-    new Composite(pktLen) {
+    new Composite(pktLen, "padCount") {
       val padCntWidth = 2 // Pad count is 0 ~ 3
       val padCnt = UInt(padCntWidth bits)
       val pktLenRightMost2Bits = pktLen.resize(padCntWidth)
@@ -1599,7 +1591,7 @@ object reqPadCountCheck {
       isLastFrag: Bool,
       busWidth: BusWidth
   ): Bool =
-    new Composite(padCount) {
+    new Composite(padCount, "reqPadCountCheck") {
       val paddingCheck = True
       val mtyCheck = Bool()
       val pktFragLen = CountOne(pktMty)
@@ -1637,7 +1629,7 @@ object respPadCountCheck {
       isLastFrag: Bool,
       busWidth: BusWidth
   ): Bool =
-    new Composite(padCount) {
+    new Composite(padCount, "respPadCountCheck") {
       val paddingCheck = True
       val mtyCheck = Bool()
       val pktFragLen = CountOne(pktMty)
@@ -1797,7 +1789,7 @@ object computePktNum {
 }
 
 object pmtuPktLenBytes {
-  def apply(pmtu: Bits): UInt = {
+  def apply(pmtu: Bits): UInt = new Composite(pmtu, "pmtuPktLenBytes") {
     val result = UInt(PMTU_FRAG_NUM_WIDTH bits)
     switch(pmtu) {
       // The PMTU enum value itself means right shift amount of bits
@@ -1825,12 +1817,11 @@ object pmtuPktLenBytes {
         )
       }
     }
-    result
-  }
+  }.result
 }
 
 object pmtuLenMask {
-  def apply(pmtu: Bits): Bits = {
+  def apply(pmtu: Bits): Bits = new Composite(pmtu, "pmtuLenMask") {
     val result = Bits(PMTU_FRAG_NUM_WIDTH bits)
     switch(pmtu) {
       // The value means right shift amount of bits
@@ -1858,26 +1849,28 @@ object pmtuLenMask {
         )
       }
     }
-    result
-  }
+  }.result
 }
 
 /** Divide the dividend by a divisor, and take the celling
   * NOTE: divisor must be power of 2
   */
 object divideByPmtuUp {
-  def apply(dividend: UInt, pmtu: Bits): UInt = {
-    val shiftAmt = pmtuPktLenBytes(pmtu)
-    val remainder = moduloByPmtu(dividend, pmtu)
-    dividend >> shiftAmt + remainder.orR.asUInt.resize(widthOf(dividend))
-  }
+  def apply(dividend: UInt, pmtu: Bits): UInt =
+    new Composite(dividend, "divideByPmtuUp") {
+      val shiftAmt = pmtuPktLenBytes(pmtu)
+      val remainder = moduloByPmtu(dividend, pmtu)
+      val result =
+        dividend >> shiftAmt + remainder.orR.asUInt.resize(widthOf(dividend))
+    }.result
 }
 
 /** Modulo of the dividend by a divisor.
   * NOTE: divisor must be power of 2
   */
 object moduloByPmtu {
-  def apply(dividend: UInt, pmtu: Bits): UInt = {
+  def apply(dividend: UInt, pmtu: Bits): UInt =
+    new Composite(dividend, "moduloByPmtu") {
 //    require(
 //      widthOf(dividend) >= widthOf(divisor),
 //      "width of dividend should >= that of divisor"
@@ -1887,9 +1880,9 @@ object moduloByPmtu {
 //      message = L"${REPORT_TIME} time: divisor=${divisor} should be power of 2",
 //      severity = FAILURE
 //    )
-    val mask = pmtuLenMask(pmtu)
-    dividend & mask.resize(widthOf(dividend)).asUInt
-  }
+      val mask = pmtuLenMask(pmtu)
+      val result = dividend & mask.resize(widthOf(dividend)).asUInt
+    }.result
 }
 
 object checkWorkReqOpCodeMatch {
@@ -1897,7 +1890,7 @@ object checkWorkReqOpCodeMatch {
       workReqOpCode: SpinalEnumCraft[WorkReqOpCode.type],
       reqOpCode: Bits
   ): Bool =
-    new Composite(reqOpCode) {
+    new Composite(reqOpCode, "checkWorkReqOpCodeMatch") {
       val result = (WorkReqOpCode.isSendReq(workReqOpCode) &&
         OpCode.isSendReqPkt(reqOpCode)) ||
         (WorkReqOpCode.isWriteReq(workReqOpCode) &&
@@ -1911,7 +1904,7 @@ object checkWorkReqOpCodeMatch {
 
 object checkRespOpCodeMatch {
   def apply(reqOpCode: Bits, respOpCode: Bits): Bool =
-    new Composite(reqOpCode) {
+    new Composite(reqOpCode, "checkRespOpCodeMatch") {
       val result = Bool()
       when(OpCode.isSendReqPkt(reqOpCode) || OpCode.isWriteReqPkt(reqOpCode)) {
         result := OpCode.isNonReadAtomicRespPkt(respOpCode)

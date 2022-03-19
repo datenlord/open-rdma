@@ -31,7 +31,6 @@ object RdmaTypeReDef {
   type QuerySuccess = Boolean
   type QPN = Int
   type PktFragData = BigInt
-//  type BoolField = Boolean
   type WorkReqId = BigInt
   type WidthBytes = Int
 
@@ -50,10 +49,10 @@ object PsnSim {
 }
 
 class PsnSim(val psn: PSN) {
-  require(
-    psn >= 0 && psn < TOTAL_PSN,
-    f"${simTime()} time: PSN value PSN=${psn}%X must >= 0 and < TOTAL_PSN=${TOTAL_PSN}%X"
-  )
+//  require(
+//    psn >= 0 && psn < TOTAL_PSN,
+//    f"${simTime()} time: PSN value PSN=${psn}%X must >= 0 and < TOTAL_PSN=${TOTAL_PSN}%X"
+//  )
 
   def +%(that: PSN): PSN = {
     require(
@@ -65,10 +64,10 @@ class PsnSim(val psn: PSN) {
   }
 
   def -%(that: PSN): PSN = {
-    require(
-      that >= 0 && that < TOTAL_PSN,
-      f"${simTime()} time: PSN value that=${that}%X must >= 0 and < TOTAL_PSN=${TOTAL_PSN}%X"
-    )
+//    require(
+//      that >= 0 && that < TOTAL_PSN,
+//      f"${simTime()} time: PSN value that=${that}%X must >= 0 and < TOTAL_PSN=${TOTAL_PSN}%X"
+//    )
 
     (TOTAL_PSN + psn - that) % TOTAL_PSN
   }
@@ -964,14 +963,13 @@ object AddrCacheSim {
       alwaysSuccess = false
     )
   }
-
+  /*
   def simHelper(
       addrCacheRead: QpAddrCacheAgentReadBus,
       clockDomain: ClockDomain,
       alwaysValid: Boolean,
       alwaysSuccess: Boolean
   ) = {
-//  addrCacheReadRespQueue: mutable.Queue[(PSN, Addr)],
     val addrCacheReadReqQueue = mutable.Queue[(PSN, VirtualAddr)]()
     val addrCacheReadRespQueue =
       mutable.Queue[(PSN, KeyValid, SizeValid, AccessValid, PhysicalAddr)]()
@@ -1037,6 +1035,68 @@ object AddrCacheSim {
     }
 
     addrCacheReadRespQueue
+  }
+   */
+  def simHelper(
+      addrCacheRead: QpAddrCacheAgentReadBus,
+      clockDomain: ClockDomain,
+      alwaysValid: Boolean,
+      alwaysSuccess: Boolean
+  ) = {
+    val onReqFire =
+      (
+          reqData: QpAddrCacheAgentReadReq,
+          reqQueue: mutable.Queue[(PSN, VirtualAddr)]
+      ) => {
+        reqQueue.enqueue((reqData.psn.toInt, reqData.va.toBigInt))
+        ()
+      }
+
+    val buildResp =
+      (
+          respData: QpAddrCacheAgentReadResp,
+          reqQueue: mutable.Queue[(PSN, VirtualAddr)]
+      ) => {
+        val (psn, _) = reqQueue.dequeue()
+        respData.psn #= psn
+        if (alwaysSuccess) {
+          respData.keyValid #= true
+          respData.sizeValid #= true
+          respData.accessValid #= true
+        } else {
+          respData.keyValid #= false
+          respData.sizeValid #= false
+          respData.accessValid #= false
+        }
+      }
+
+    val onRespFire = (
+        respData: QpAddrCacheAgentReadResp,
+        respQueue: mutable.Queue[
+          (PSN, KeyValid, SizeValid, AccessValid, PhysicalAddr)
+        ]
+    ) => {
+      respQueue.enqueue(
+        (
+          respData.psn.toInt,
+          respData.keyValid.toBoolean,
+          respData.sizeValid.toBoolean,
+          respData.accessValid.toBoolean,
+          respData.pa.toBigInt
+        )
+      )
+      ()
+    }
+
+    queryCacheHelper(
+      reqStream = addrCacheRead.req,
+      respStream = addrCacheRead.resp,
+      onReqFire = onReqFire,
+      buildResp = buildResp,
+      onRespFire = onRespFire,
+      clockDomain = clockDomain,
+      alwaysValid = alwaysValid
+    )
   }
 }
 

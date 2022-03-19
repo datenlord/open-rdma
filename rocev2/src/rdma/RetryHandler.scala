@@ -400,7 +400,7 @@ class SendReqGenerator(busWidth: BusWidth)
       curReqPktCntVal: UInt,
       qpAttr: QpAttrData
   ) =
-    new Composite(this) {
+    new Composite(this, "SendReqGenerator_headerGenFunc") {
       val inputCachedWorkReq = inputReq.workReq
 
       val numReqPkt = inputReq.pktNum
@@ -532,7 +532,7 @@ class WriteReqGenerator(busWidth: BusWidth)
       curReqPktCntVal: UInt,
       qpAttr: QpAttrData
   ): CombineHeaderAndDmaRespInternalRst =
-    new Composite(this) {
+    new Composite(this, "WriteReqGenerator_headerGenFunc") {
       val inputCachedWorkReq = inputReq.workReq
 
       val numReqPkt = inputReq.pktNum

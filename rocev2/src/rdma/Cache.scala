@@ -213,7 +213,7 @@ class CamFifo[Tk <: Data, Tv <: Data](
   }
 
   def search(queryReq: Stream[TupleBundle2[Tk, UInt]]) =
-    new Composite(queryReq) {
+    new Composite(queryReq, "CamFifo_search") {
       val queryKey = queryReq._1
       val queryPortIdx = queryReq._2
       val idxOH = Vec((0 until depth).map(idx => {

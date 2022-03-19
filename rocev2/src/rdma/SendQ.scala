@@ -169,15 +169,17 @@ class WorkReqValidator extends Component {
     val sqOutPsnRangeFifoPush = master(Stream(ReqPsnRange()))
     val workCompErr = master(Stream(WorkComp()))
   }
+
   val addrCacheQueryBuilder = new Area {
     val workReq = io.workReq.payload
 
-    val (workReq4Queue, sqOutPsnRangeFifoPush) = StreamFork2(
-      // TODO: should generate WC for the flushed WR?
-      io.workReq
-        .throwWhen(io.txQCtrl.wrongStateFlush)
-        .haltWhen(io.txQCtrl.fenceOrRetry)
+    val forkStream = StreamFork(
+      // Should generate WC for the flushed WR
+      io.workReq.haltWhen(io.txQCtrl.fenceOrRetry),
+      portCount = 3
     )
+    val (workReq4Queue, workReq4AddrCacheQuery, sqOutPsnRangeFifoPush) =
+      (forkStream(0), forkStream(1), forkStream(2))
     // Update nPSN each time io.workReq fires
     val numReqPkt = divideByPmtuUp(workReq.lenBytes, io.qpAttr.pmtu)
     val psnEnd = io.qpAttr.npsn + numReqPkt - 1
@@ -185,7 +187,6 @@ class WorkReqValidator extends Component {
     io.npsnInc.inc := io.workReq.fire
 
     io.sqOutPsnRangeFifoPush <-/< sqOutPsnRangeFifoPush
-//      .throwWhen(io.txQCtrl.wrongStateFlush)
       .translateWith {
         val result = cloneOf(io.sqOutPsnRangeFifoPush.payloadType)
         result.opcode := workReq.opcode
@@ -209,7 +210,7 @@ class WorkReqValidator extends Component {
       }
       .queueLowLatency(ADDR_CACHE_QUERY_DELAY_CYCLE)
 
-    io.addrCacheRead.req <-/< SignalEdgeDrivenStream(io.workReq.fire)
+    io.addrCacheRead.req <-/< workReq4AddrCacheQuery
       .throwWhen(io.txQCtrl.wrongStateFlush)
       .translateWith {
         val addrCacheReadReq = QpAddrCacheAgentReadReq()
@@ -248,18 +249,25 @@ class WorkReqValidator extends Component {
     val checkPass =
       inputValid && addrCacheRespValid && !keyErr && !bufLenErr && !accessErr
 
-    val joinStream =
-      StreamJoin(addrCacheQueryBuilder.inputWorkReqQueue, io.addrCacheRead.resp)
-    val txSel = UInt(1 bit)
-    val (errIdx, succIdx) = (0, 1)
-    when(checkPass) {
-      txSel := succIdx
-    } elsewhen (io.txQCtrl.wrongStateFlush) {
-      txSel := errIdx
-    } otherwise {
-      txSel := errIdx
-    }
-    val twoStreams = StreamDemux(joinStream, select = txSel, portCount = 2)
+    val joinStream = StreamConditionalJoin(
+      addrCacheQueryBuilder.inputWorkReqQueue,
+      io.addrCacheRead.resp.throwWhen(io.txQCtrl.wrongStateFlush),
+      joinCond = !io.txQCtrl.wrongStateFlush
+    )
+//    val (errIdx, succIdx) = (0, 1)
+//    val txSel = UInt(1 bit)
+//    when(checkPass) {
+//      txSel := succIdx
+//    } elsewhen (io.txQCtrl.wrongStateFlush) {
+//      txSel := errIdx
+//    } otherwise {
+//      txSel := errIdx
+//    }
+//    val twoStreams = StreamDemux(joinStream, select = txSel, portCount = 2)
+    val (errorStream, normalStream) = StreamDeMuxByOneCondition(
+      joinStream,
+      checkPass && !io.txQCtrl.wrongStateFlush
+    )
 
     val workCompErrStatus = WorkCompStatus() // Bits(WC_STATUS_WIDTH bits)
     when(bufLenErr) {
@@ -274,18 +282,18 @@ class WorkReqValidator extends Component {
       workCompErrStatus := WorkCompStatus.SUCCESS
     }
 
-    io.workCompErr <-/< twoStreams(errIdx).translateWith {
+    io.workCompErr <-/< errorStream.translateWith {
       val result = cloneOf(io.workCompErr.payloadType)
       // Set WC error due to invalid local virtual address or DMA length in WR, or being flushed
       result.setFromWorkReq(
-        workReq = twoStreams(errIdx)._1.workReq,
+        workReq = errorStream._1.workReq,
         dqpn = io.qpAttr.dqpn,
         status = workCompErrStatus
       )
       result
     }
     io.errNotifier.setNoErr()
-    when(twoStreams(errIdx).fire) {
+    when(errorStream.fire) {
       io.errNotifier.setLocalErr()
 
       assert(
@@ -296,8 +304,8 @@ class WorkReqValidator extends Component {
       )
     }
 
-    io.workReqToCache <-/< twoStreams(succIdx).translateWith(
-      twoStreams(succIdx)._1
+    io.workReqToCache <-/< normalStream.translateWith(
+      normalStream._1
     )
   }
 }
