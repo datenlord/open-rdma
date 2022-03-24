@@ -5,8 +5,10 @@ import ConstantSettings._
 import StreamSimUtil._
 import RdmaTypeReDef._
 
-import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers._
+import org.scalatest.AppendedClues._
+import scala.collection.mutable
 
 class SqDmaReadRespHandlerTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
@@ -33,26 +35,24 @@ class SqDmaReadRespHandlerTest extends AnyFunSuite {
 
       // Check DUT output
       MiscUtils.checkConditionAlways(dut.clockDomain) {
-        dut.io.dmaReadResp.resp.ready.toBoolean == false
+        !dut.io.dmaReadResp.resp.ready.toBoolean
       }
       streamSlaveRandomizer(dut.io.cachedWorkReqAndDmaReadResp, dut.clockDomain)
       onStreamFire(dut.io.cachedWorkReqAndDmaReadResp, dut.clockDomain) {
 //        println(
 //            f"${simTime()} time: the read request has zero DMA length, but dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes=${dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes.toLong}%X"
 //        )
-        assert(
-          dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes.toLong == 0,
+
+        dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes.toLong shouldBe 0 withClue
           f"${simTime()} time: the read request has zero DMA length, but dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes=${dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes.toLong}%X"
-        )
 
         val inputPsnStart = psnQueue.dequeue()
 //        println(
 //            f"${simTime()} time: output PSN io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart=${dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart.toInt}%X not match input PSN io.cachedWorkReq.psnStart=${inputPsnStart}%X"
 //        )
-        assert(
-          inputPsnStart == dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart.toInt,
+
+        dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart.toInt shouldBe inputPsnStart withClue
           f"${simTime()} time: output PSN io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart=${dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart.toInt}%X not match input PSN io.cachedWorkReq.psnStart=${inputPsnStart}%X"
-        )
 
         matchQueue.enqueue(inputPsnStart)
       }
@@ -173,43 +173,41 @@ class SqDmaReadRespHandlerTest extends AnyFunSuite {
 //            println(
 //              f"${simTime()} time: psnStartInCache=${psnStartInCache} == psnStartOutCache=${psnStartOutCache}, psnStartInDmaResp=${psnStartInDmaResp} == psnStartOutDmaResp=${psnStartOutDmaResp}, psnStartInCache=${psnStartInCache} == psnStartInDmaResp=${psnStartInDmaResp}"
 //            )
-            assert(
-              psnStartInCache == psnStartOutCache &&
-                psnStartInDmaResp == psnStartOutDmaResp &&
-                psnStartInCache == psnStartInDmaResp,
+
+            psnStartOutCache shouldBe psnStartInCache withClue
+              psnStartOutDmaResp shouldBe psnStartInDmaResp withClue
+              psnStartInCache shouldBe psnStartInDmaResp withClue
               f"${simTime()} time: psnStartInCache=${psnStartInCache} == psnStartOutCache=${psnStartOutCache}, psnStartInDmaResp=${psnStartInDmaResp} == psnStartOutDmaResp=${psnStartOutDmaResp}, psnStartInCache=${psnStartInCache} == psnStartInDmaResp=${psnStartInDmaResp}"
-            )
 
 //          println(
 //            f"${simTime()} time: output packet num=${dut.io.cachedWorkReqAndDmaReadResp.resultCacheData.pktNum.toInt} not match input packet num=${pktNumIn}%X"
 //          )
-            assert(
-              pktNumIn == pktNumOut,
+            pktNumOut shouldBe pktNumIn withClue
               f"${simTime()} time: output packet num=${pktNumOut} not match input packet num=${pktNumIn}%X"
-            )
 
 //            println(
 //              f"${simTime()} time: respLenInDmaResp=${respLenInDmaResp} == respLenOutDmaResp=${respLenOutDmaResp}, respLenInCache=${respLenInCache} == respLenOutCache=${respLenOutCache}, respLenInDmaResp=${respLenInDmaResp} == respLenInCache=${respLenInCache}"
 //            )
-            assert(
-              respLenInDmaResp == respLenOutDmaResp &&
-                respLenInCache == respLenOutCache &&
-                respLenInDmaResp == respLenInCache,
-              f"${simTime()} time: respLenInDmaResp=${respLenInDmaResp} == respLenOutDmaResp=${respLenOutDmaResp}, respLenInCache=${respLenInCache} == respLenOutCache=${respLenOutCache}, respLenInDmaResp=${respLenInDmaResp} == respLenInCache=${respLenInCache}"
-            )
+            respLenOutDmaResp shouldBe respLenInDmaResp withClue
+              f"${simTime()} time: respLenInDmaResp=${respLenInDmaResp} should == respLenOutDmaResp=${respLenOutDmaResp}"
+
+            respLenOutCache shouldBe respLenInCache withClue
+              f"${simTime()} time: respLenInCache=${respLenInCache} should == respLenOutCache=${respLenOutCache}"
+
+            respLenInDmaResp shouldBe respLenInCache withClue
+              f"${simTime()} time: respLenInDmaResp=${respLenInDmaResp} should == respLenInCache=${respLenInCache}"
 
 //          println(
 //            f"${simTime()} time: output response data io.cachedWorkReqAndDmaReadResp.dmaReadResp.data=${dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.data.toBigInt}%X not match input response data io.dmaReadResp.resp.data=${dataIn}%X"
 //          )
-            assert(
-              dmaRespDataIn.toString(16) == dmaRespDataOut.toString(16),
-              f"${simTime()} time: output response data io.cachedWorkReqAndDmaReadResp.dmaReadResp.data=${dmaRespDataOut}%X not match input response data io.dmaReadResp.resp.data=${dmaRespDataIn}%X"
-            )
 
-            assert(
-              isLastIn == isLastOut,
+            dmaRespDataIn.toString(16) shouldBe dmaRespDataOut.toString(
+              16
+            ) withClue
+              f"${simTime()} time: output response data io.cachedWorkReqAndDmaReadResp.dmaReadResp.data=${dmaRespDataOut}%X not match input response data io.dmaReadResp.resp.data=${dmaRespDataIn}%X"
+
+            isLastOut shouldBe isLastIn withClue
               f"${simTime()} time: output dut.io.cachedWorkReqAndDmaReadResp.last=${isLastOut} not match input dut.io.dmaReadResp.resp.last=${isLastIn}"
-            )
 
             matchQueue.enqueue(psnStartInDmaResp)
             isFragEnd = isLastOut

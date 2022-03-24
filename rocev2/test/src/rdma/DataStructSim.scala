@@ -9,6 +9,8 @@ import RdmaConstants._
 import RdmaTypeReDef._
 import StreamSimUtil._
 
+import org.scalatest.matchers.should.Matchers._
+import org.scalatest.AppendedClues._
 import scala.collection.mutable
 
 object RdmaTypeReDef {
@@ -27,11 +29,13 @@ object RdmaTypeReDef {
 //  type PktLast = Boolean
   type PSN = Int
   type PsnStart = Int
+  type PsnEnd = Int
   type QueryPsn = Int
   type QuerySuccess = Boolean
   type QPN = Int
   type PktFragData = BigInt
   type WorkReqId = BigInt
+  type WorkReqValid = Boolean
   type WidthBytes = Int
 
   type AckReq = Boolean
@@ -91,10 +95,9 @@ object WorkCompSim {
       }
     }
 
-    assert(
-      workCompStatus == matchStatus,
+    workCompStatus shouldBe matchStatus withClue
       f"${simTime()} time: workCompStatus=${workCompStatus} not match expected matchStatus=${matchStatus}"
-    )
+
   }
 
   def rqCheckWorkCompOpCode(
@@ -120,10 +123,9 @@ object WorkCompSim {
 //    println(
 //      f"${simTime()} time: RQ side workCompOpCode=${workCompOpCode} not match expected matchOpCode=${matchOpCode}, workReqOpCode=${workReqOpCode}"
 //    )
-    assert(
-      workCompOpCode == matchOpCode,
+
+    workCompOpCode shouldBe matchOpCode withClue
       f"${simTime()} time: workCompOpCode=${workCompOpCode} not match expected matchOpCode=${matchOpCode}, reqOpCode=${reqOpCode}"
-    )
   }
 
   def sqCheckWorkCompOpCode(
@@ -146,10 +148,9 @@ object WorkCompSim {
 //    println(
 //      f"${simTime()} time: SQ side workCompOpCode=${workCompOpCode} not match expected matchOpCode=${matchOpCode}, workReqOpCode=${workReqOpCode}"
 //    )
-    assert(
-      workCompOpCode == matchOpCode,
+
+    workCompOpCode shouldBe matchOpCode withClue
       f"${simTime()} time: workCompOpCode=${workCompOpCode} not match expected matchOpCode=${matchOpCode}, workReqOpCode=${workReqOpCode}"
-    )
   }
 
   def sqCheckWorkCompFlag(
@@ -170,10 +171,9 @@ object WorkCompSim {
 //    println(
 //      f"${simTime()} time: SQ side workCompFlags=${workCompFlags} not match expected matchFlag=${matchFlag}, workReqOpCode=${workReqOpCode}"
 //    )
-    assert(
-      workCompFlags == matchFlag,
+
+    workCompFlags shouldBe matchFlag withClue
       f"${simTime()} time: workCompFlags=${workCompFlags} not match expected matchFlag=${matchFlag}, workReqOpCode=${workReqOpCode}"
-    )
   }
 }
 
@@ -1401,9 +1401,8 @@ object RqNakSim {
         ???
       }
     }
-    assert(
-      pulse.toBoolean == true,
+
+    pulse.toBoolean shouldBe true withClue
       f"${simTime()} time: rqNak=${rqNak} not match expected NAK=${expectNakType}"
-    )
   }
 }

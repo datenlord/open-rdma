@@ -98,20 +98,6 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
             pktNum,
             totalLenBytes
         ) =>
-//          val isLastInputFrag = fragIdx == totalFragNum - 1
-//          val mty = if (isLastInputFrag) {
-//            val residue = (totalLenBytes % mtyWidth).toInt
-//            if (residue == 0) {
-//              setAllBits(mtyWidth) // Last fragment has full valid data
-//            } else {
-//              val leftShiftAmt = mtyWidth - residue
-//              setAllBits(
-//                residue
-//              ) << leftShiftAmt // Last fragment has partial valid data
-//            }
-//          } else {
-//            setAllBits(mtyWidth)
-//          }
           DmaReadRespSim.setMtyAndLen(
             dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp,
             fragIdx,

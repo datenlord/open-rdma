@@ -8,7 +8,7 @@ import RdmaTypeReDef._
 import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
 
-class ReadRespGeneratorTest extends AnyFunSuite {
+class ReadRespGeneratorTest2 extends AnyFunSuite {
   val busWidth = BusWidth.W512
   val pmtuLen = PMTU.U1024
 
@@ -100,20 +100,6 @@ class ReadRespGeneratorTest extends AnyFunSuite {
             pktNum,
             totalLenBytes
         ) =>
-//          val isLastInputFrag = fragIdx == totalFragNum - 1
-//          val mty = if (isLastInputFrag) {
-//            val residue = (totalLenBytes % mtyWidth).toInt
-//            if (residue == 0) {
-//              setAllBits(mtyWidth) // Last fragment has full valid data
-//            } else {
-//              val leftShiftAmt = mtyWidth - residue
-//              setAllBits(
-//                residue
-//              ) << leftShiftAmt // Last fragment has partial valid data
-//            }
-//          } else {
-//            setAllBits(mtyWidth)
-//          }
           DmaReadRespSim.setMtyAndLen(
             dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp,
             fragIdx,
@@ -129,8 +115,6 @@ class ReadRespGeneratorTest extends AnyFunSuite {
           dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.psnStart #= psnStart
           dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.dlen #= totalLenBytes
           dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.pktNum #= pktNum
-//          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes #= totalLenBytes
-//          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.mty #= mty
           dut.io.readRstCacheDataAndDmaReadRespSegment.last #= fragLast
       }
       onStreamFire(

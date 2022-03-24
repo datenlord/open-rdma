@@ -378,13 +378,13 @@ object OpCode extends Enumeration {
   val CNP = Value(0x81) // TODO: check where to set CNP opcode
 
   def isValidCode(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isValidCode") {
       val result =
         opcode.asUInt <= SEND_ONLY_WITH_INVALIDATE.id // && opcode <= 0x1F
     }.result
 
   def isFirstReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isFirstReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(SEND_FIRST.id, RDMA_WRITE_FIRST.id) {
@@ -397,7 +397,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isMidReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isMidReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(SEND_MIDDLE.id, RDMA_WRITE_MIDDLE.id) {
@@ -410,7 +410,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isLastReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isLastReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -429,7 +429,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isOnlyReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isOnlyReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -451,27 +451,27 @@ object OpCode extends Enumeration {
     }.result
 
   def isLastOrOnlyReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isLastOrOnlyReqPkt") {
       val result = isLastReqPkt(opcode) || isOnlyReqPkt(opcode)
     }.result
 
   def isFirstOrOnlyReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isFirstOrOnlyReqPkt") {
       val result = isFirstReqPkt(opcode) || isOnlyReqPkt(opcode)
     }.result
 
   def isFirstOrMidReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isFirstOrMidReqPkt") {
       val result = isFirstReqPkt(opcode) || isMidReqPkt(opcode)
     }.result
 
   def isSendFirstReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isSendFirstReqPkt") {
       val result = opcode === SEND_FIRST.id
     }.result
 
   def isSendOnlyReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isSendOnlyReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -488,7 +488,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isSendLastReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isSendLastReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -505,7 +505,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isSendFirstOrOnlyReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isSendFirstOrOnlyReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -523,7 +523,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isSendLastOrOnlyReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isSendLastOrOnlyReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -543,7 +543,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isSendReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isSendReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -565,7 +565,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isSendWriteFirstOrOnlyReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isSendWriteFirstOrOnlyReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -586,7 +586,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isSendWriteLastOrOnlyReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isSendWriteLastOrOnlyReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -610,12 +610,12 @@ object OpCode extends Enumeration {
     }.result
 
   def isFirstReadRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isFirstReadRespPkt") {
       val result = opcode === RDMA_READ_RESPONSE_FIRST.id
     }.result
 
   def isFirstOrOnlyReadRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isFirstOrOnlyReadRespPkt") {
       val result = Bool()
       switch(opcode) {
         is(RDMA_READ_RESPONSE_FIRST.id, RDMA_READ_RESPONSE_ONLY.id) {
@@ -628,7 +628,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isFirstOrMidReadRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isFirstOrMidReadRespPkt") {
       val result = Bool()
       switch(opcode) {
         is(RDMA_READ_RESPONSE_FIRST.id, RDMA_READ_RESPONSE_MIDDLE.id) {
@@ -641,7 +641,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isLastOrOnlyReadRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isLastOrOnlyReadRespPkt") {
       val result = Bool()
       switch(opcode) {
         is(RDMA_READ_RESPONSE_ONLY.id, RDMA_READ_RESPONSE_LAST.id) {
@@ -654,23 +654,23 @@ object OpCode extends Enumeration {
     }.result
 
   def isMidReadRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isMidReadRespPkt") {
       val result = opcode === RDMA_READ_RESPONSE_MIDDLE.id
     }.result
 
   def isLastReadRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isLastReadRespPkt") {
       val result = opcode === RDMA_READ_RESPONSE_LAST.id
     }.result
 
   def isOnlyReadRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isOnlyReadRespPkt") {
       val result = opcode === RDMA_READ_RESPONSE_ONLY.id
     }.result
 
   // CNP not considered
   def isOnlyRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isOnlyRespPkt") {
       val result = Bool()
       switch(opcode) {
         is(ACKNOWLEDGE.id, ATOMIC_ACKNOWLEDGE.id, RDMA_READ_RESPONSE_ONLY.id) {
@@ -683,17 +683,17 @@ object OpCode extends Enumeration {
     }.result
 
   def isLastOrOnlyRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isLastOrOnlyRespPkt") {
       val result = isOnlyRespPkt(opcode) || isLastReadRespPkt(opcode)
     }.result
 
   def isWriteFirstReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isWriteFirstReqPkt") {
       val result = opcode === RDMA_WRITE_FIRST.id
     }.result
 
   def isWriteFirstOrMidReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isWriteFirstOrMidReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(RDMA_WRITE_FIRST.id, RDMA_WRITE_MIDDLE.id) {
@@ -706,7 +706,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isWriteFirstOrOnlyReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isWriteFirstOrOnlyReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -723,7 +723,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isWriteOnlyReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isWriteOnlyReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(RDMA_WRITE_ONLY.id, RDMA_WRITE_ONLY_WITH_IMMEDIATE.id) {
@@ -736,7 +736,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isWriteLastReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isWriteLastReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(RDMA_WRITE_LAST.id, RDMA_WRITE_LAST_WITH_IMMEDIATE.id) {
@@ -749,7 +749,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isWriteLastOrOnlyReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isWriteLastOrOnlyReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -767,7 +767,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isWriteReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isWriteReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -787,7 +787,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isWriteWithImmReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isWriteWithImmReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -803,7 +803,7 @@ object OpCode extends Enumeration {
     }.result
 
   def hasImmDt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_hasImmDt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -821,7 +821,7 @@ object OpCode extends Enumeration {
     }.result
 
   def hasIeth(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_hasIeth") {
       val result = Bool()
       switch(opcode) {
         is(SEND_LAST_WITH_INVALIDATE.id, SEND_ONLY_WITH_INVALIDATE.id) {
@@ -833,8 +833,28 @@ object OpCode extends Enumeration {
       }
     }.result
 
+  def hasRethOrAtomicEth(opcode: Bits): Bool =
+    new Composite(opcode, "OpCode_hasRethOrAtomicEth") {
+      val result = Bool()
+      switch(opcode) {
+        is(
+          RDMA_READ_REQUEST.id,
+          COMPARE_SWAP.id,
+          FETCH_ADD.id,
+          RDMA_WRITE_FIRST.id,
+          RDMA_WRITE_ONLY.id,
+          RDMA_WRITE_ONLY_WITH_IMMEDIATE.id
+        ) {
+          result := True
+        }
+        default {
+          result := False
+        }
+      }
+    }.result
+
   def isAtomicReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isAtomicReqPkt") {
       val result = Bool()
       switch(opcode) {
         is(COMPARE_SWAP.id, FETCH_ADD.id) {
@@ -847,12 +867,12 @@ object OpCode extends Enumeration {
     }.result
 
   def isReadReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isReadReqPkt") {
       val result = (opcode === RDMA_READ_REQUEST.id)
     }.result
 
   def isReadRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isReadRespPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -870,24 +890,24 @@ object OpCode extends Enumeration {
     }.result
 
   def isAtomicRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isAtomicRespPkt") {
       val result = (opcode === ATOMIC_ACKNOWLEDGE.id)
     }.result
 
   def isNonReadAtomicRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isNonReadAtomicRespPkt") {
       val result = (opcode === ACKNOWLEDGE.id)
     }.result
 
   def isReqPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isReqPkt") {
       val result = isSendReqPkt(opcode) || isWriteReqPkt(opcode) ||
         isReadReqPkt(opcode) || isAtomicReqPkt(opcode)
     }.result
 
   // CNP is not considered
   def isRespPkt(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isRespPkt") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -907,7 +927,7 @@ object OpCode extends Enumeration {
     }.result
 
   def respPktHasAeth(opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_respPktHasAeth") {
       val result = Bool()
       switch(opcode) {
         is(
@@ -926,7 +946,7 @@ object OpCode extends Enumeration {
     }.result
 
   def isCnpPkt(transport: Bits, opcode: Bits): Bool =
-    new Composite(opcode) {
+    new Composite(opcode, "OpCode_isCnpPkt") {
       val result = (transport ## opcode) === CNP.id
     }.result
 }

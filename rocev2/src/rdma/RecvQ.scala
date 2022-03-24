@@ -649,10 +649,11 @@ class ReqDmaInfoExtractor(busWidth: BusWidth) extends Component {
   val rxBuf = io.rx.reqWithRxBuf.rxBuf
 
   val isSendOrWriteReq =
-    OpCode.isSendFirstOrOnlyReqPkt(inputPktFrag.pktFrag.bth.opcode) ||
-      OpCode.isWriteWithImmReqPkt(inputPktFrag.pktFrag.bth.opcode)
+    OpCode.isSendReqPkt(inputPktFrag.pktFrag.bth.opcode) ||
+      OpCode.isWriteReqPkt(inputPktFrag.pktFrag.bth.opcode)
   val isReadReq = OpCode.isReadReqPkt(inputPktFrag.pktFrag.bth.opcode)
   val isAtomicReq = OpCode.isAtomicReqPkt(inputPktFrag.pktFrag.bth.opcode)
+
   // TODO: verify inputPktFrag.data is big endian
   val dmaInfo = DmaInfo().init()
   when(OpCode.isSendFirstOrOnlyReqPkt(inputPktFrag.pktFrag.bth.opcode)) {
@@ -669,11 +670,9 @@ class ReqDmaInfoExtractor(busWidth: BusWidth) extends Component {
         severity = FAILURE
       )
     }
-  } elsewhen (
-    OpCode.isWriteFirstOrOnlyReqPkt(inputPktFrag.pktFrag.bth.opcode) ||
-      isReadReq || isAtomicReq
-  ) {
+  } elsewhen (OpCode.hasRethOrAtomicEth(inputPktFrag.pktFrag.bth.opcode)) {
     // Extract DMA info for write/read/atomic requests
+    // AtomicEth has the same va, lrkey and dlen field with RETH
     // TODO: verify inputPktFrag.data is big endian
     val rethBits = inputPktFrag.pktFrag.data(
       (busWidth.id - widthOf(BTH()) - widthOf(RETH())) until
@@ -694,10 +693,15 @@ class ReqDmaInfoExtractor(busWidth: BusWidth) extends Component {
   // So the max number of packet is 2^23 < 2^PSN_WIDTH
   val numRespPkt =
     divideByPmtuUp(dmaInfo.dlen, io.qpAttr.pmtu).resize(PSN_WIDTH)
-
-  val (txNormal, rqOutPsnRangeFifoPush) = StreamFork2(
+  val ackReq =
+    (isSendOrWriteReq && inputPktFrag.pktFrag.bth.ackreq) || isReadReq || isAtomicReq
+  val rqOutPsnRangeFifoPushCond =
+    io.rx.reqWithRxBuf.isFirst && (inputHasNak || ackReq)
+  val (rqOutPsnRangeFifoPush, txNormal) = StreamConditionalFork2(
     // Not flush when RNR
-    io.rx.reqWithRxBuf.throwWhen(io.rxQCtrl.stateErrFlush)
+    io.rx.reqWithRxBuf.throwWhen(io.rxQCtrl.stateErrFlush),
+    // The condition to send out RQ response
+    forkCond = rqOutPsnRangeFifoPushCond
   )
   io.tx.reqWithRxBufAndDmaInfo <-/< txNormal
     .translateWith {
@@ -716,20 +720,16 @@ class ReqDmaInfoExtractor(busWidth: BusWidth) extends Component {
     }
 
   // Update output FIFO to keep output PSN order
-  io.rqOutPsnRangeFifoPush <-/< rqOutPsnRangeFifoPush
-    .takeWhen(
-      inputHasNak || (isSendOrWriteReq && inputPktFrag.pktFrag.bth.ackreq) || isReadReq || isAtomicReq
-    )
-    .translateWith {
-      val result = cloneOf(io.rqOutPsnRangeFifoPush.payloadType)
-      result.opcode := inputPktFrag.pktFrag.bth.opcode
-      result.start := inputPktFrag.pktFrag.bth.psn
-      result.end := inputPktFrag.pktFrag.bth.psn
-      when(isReadReq) {
-        result.end := inputPktFrag.pktFrag.bth.psn + numRespPkt - 1
-      }
-      result
+  io.rqOutPsnRangeFifoPush <-/< rqOutPsnRangeFifoPush.translateWith {
+    val result = cloneOf(io.rqOutPsnRangeFifoPush.payloadType)
+    result.opcode := inputPktFrag.pktFrag.bth.opcode
+    result.start := inputPktFrag.pktFrag.bth.psn
+    result.end := inputPktFrag.pktFrag.bth.psn
+    when(isReadReq) {
+      result.end := inputPktFrag.pktFrag.bth.psn + numRespPkt - 1
     }
+    result
+  }
 }
 
 class ReqAddrValidator(busWidth: BusWidth) extends Component {
@@ -1429,6 +1429,103 @@ class SendWriteRespGenerator(busWidth: BusWidth) extends Component {
     }
 }
 
+class RqSendWriteWorkCompGenerator extends Component {
+  val io = new Bundle {
+    val qpAttr = in(QpAttrData())
+    val rxQCtrl = in(RxQCtrl())
+    val dmaWriteResp = slave(DmaWriteRespBus())
+    val sendWriteWorkCompAndAck = slave(Stream(WorkCompAndAck()))
+    val sendWriteWorkCompOut = master(Stream(WorkComp()))
+  }
+
+  val workCompAndAckQueuePop =
+    io.sendWriteWorkCompAndAck.queueLowLatency(DMA_WRITE_DELAY_CYCLE)
+  val isReqZeroDmaLen = workCompAndAckQueuePop.workComp.lenBytes === 0
+  val inputHasNak = !io.sendWriteWorkCompAndAck.ack.aeth.isNormalAck()
+
+  val workCompQueueValid = workCompAndAckQueuePop.valid
+  val dmaWriteRespValid = io.dmaWriteResp.resp.valid
+  when(workCompQueueValid) {
+    assert(
+      assertion = workCompAndAckQueuePop.ackValid,
+      message =
+        L"invalid WorkCompAndAck in RQ, ackValid=${workCompAndAckQueuePop.ackValid} should be true when workCompQueueValid=${workCompQueueValid}",
+      severity = FAILURE
+    )
+  }
+  when(workCompQueueValid && dmaWriteRespValid) {
+    assert(
+      assertion = PsnUtil.lte(
+        io.dmaWriteResp.resp.psn,
+        workCompAndAckQueuePop.ack.bth.psn,
+        io.qpAttr.epsn
+      ),
+      message =
+        L"invalid DMA write response in RQ, io.dmaWriteResp.resp.psn=${io.dmaWriteResp.resp.psn} should <= workCompAndAckQueuePop.ack.bth.psn=${workCompAndAckQueuePop.ack.bth.psn} in PSN order, curPsn=${io.qpAttr.epsn}",
+      severity = FAILURE
+    )
+  }
+
+  val dmaWriteRespPnsLessThanWorkCompPsn = PsnUtil.lt(
+    io.dmaWriteResp.resp.psn,
+    workCompAndAckQueuePop.ack.bth.psn,
+    io.qpAttr.epsn
+  )
+  val dmaWriteRespPnsEqualWorkCompPsn =
+    io.dmaWriteResp.resp.psn === workCompAndAckQueuePop.ack.bth.psn
+  /*
+  io.dmaWriteResp.resp.ready := !workCompAndAckQueuePop.valid
+  when(workCompAndAckQueuePop.valid) {
+    when(dmaWriteRespPnsLessThanWorkCompPsn) {
+      io.dmaWriteResp.resp.ready := io.dmaWriteResp.resp.valid
+    } elsewhen (dmaWriteRespPnsEqualWorkCompPsn) {
+      io.dmaWriteResp.resp.ready := io.dmaWriteResp.resp.valid && io.sendWriteWorkCompOut.fire
+    }
+  }
+  val continueCond =
+    io.dmaWriteResp.resp.valid && dmaWriteRespPnsEqualWorkCompPsn
+  io.sendWriteWorkCompOut <-/< workCompAndAckQueuePop
+    .continueWhen(continueCond)
+    .translateWith(workCompAndAckQueuePop.workComp)
+
+  // TODO: output io.sendWriteWorkCompErr
+  StreamSink(NoData) << io.sendWriteWorkCompErr.translateWith(NoData)
+   */
+
+  val shouldFireWorkCompQueueOnlyCond =
+    isReqZeroDmaLen || inputHasNak || io.rxQCtrl.stateErrFlush
+  // For the following fire condition, it must make sure inputAckValid or inputCachedWorkReqValid
+  val fireBothWorkCompQueueAndDmaWriteResp =
+    workCompQueueValid && dmaWriteRespValid && dmaWriteRespPnsEqualWorkCompPsn && !shouldFireWorkCompQueueOnlyCond
+  val fireWorkCompQueueOnly =
+    workCompQueueValid && shouldFireWorkCompQueueOnlyCond
+  val fireDmaWriteRespOnly =
+    dmaWriteRespValid && workCompQueueValid && dmaWriteRespPnsLessThanWorkCompPsn && !shouldFireWorkCompQueueOnlyCond
+  val zipWorkCompAndAckAndDmaWriteResp = StreamZipByCondition(
+    leftInputStream = workCompAndAckQueuePop,
+    // Flush io.dmaWriteResp.resp when error
+    rightInputStream = io.dmaWriteResp.resp.throwWhen(io.rxQCtrl.stateErrFlush),
+    // Coalesce ACK pending WR, or errorFlush
+    leftFireCond = fireWorkCompQueueOnly,
+    rightFireCond = fireDmaWriteRespOnly,
+    bothFireCond = fireBothWorkCompQueueAndDmaWriteResp
+  )
+  when(workCompQueueValid || dmaWriteRespValid) {
+    assert(
+      assertion = CountOne(
+        fireBothWorkCompQueueAndDmaWriteResp ## fireWorkCompQueueOnly ## fireDmaWriteRespOnly
+      ) <= 1,
+      message =
+        L"${REPORT_TIME} time: fire WorkCompQueue only, fire DmaWriteResp only, and fire both should be mutually exclusive, but fireBothWorkCompQueueAndDmaWriteResp=${fireBothWorkCompQueueAndDmaWriteResp}, fireWorkCompQueueOnly=${fireWorkCompQueueOnly}, fireDmaWriteRespOnly=${fireDmaWriteRespOnly}",
+      severity = FAILURE
+    )
+  }
+
+  io.sendWriteWorkCompOut <-/< zipWorkCompAndAckAndDmaWriteResp.translateWith(
+    zipWorkCompAndAckAndDmaWriteResp._2.workComp
+  )
+}
+
 /** When received a new DMA response, combine the DMA response and
   * ReadAtomicRstCacheData to downstream, also handle
   * zero DMA length read request.
@@ -1666,103 +1763,6 @@ class AtomicRespGenerator(busWidth: BusWidth) extends Component {
     result
   }
   io.tx << StreamSource().translateWith(atomicResp)
-}
-
-class RqSendWriteWorkCompGenerator extends Component {
-  val io = new Bundle {
-    val qpAttr = in(QpAttrData())
-    val rxQCtrl = in(RxQCtrl())
-    val dmaWriteResp = slave(DmaWriteRespBus())
-    val sendWriteWorkCompAndAck = slave(Stream(WorkCompAndAck()))
-    val sendWriteWorkCompOut = master(Stream(WorkComp()))
-  }
-
-  val workCompAndAckQueuePop =
-    io.sendWriteWorkCompAndAck.queueLowLatency(DMA_WRITE_DELAY_CYCLE)
-  val isReqZeroDmaLen = workCompAndAckQueuePop.workComp.lenBytes === 0
-  val inputHasNak = !io.sendWriteWorkCompAndAck.ack.aeth.isNormalAck()
-
-  val workCompQueueValid = workCompAndAckQueuePop.valid
-  val dmaWriteRespValid = io.dmaWriteResp.resp.valid
-  when(workCompQueueValid) {
-    assert(
-      assertion = workCompAndAckQueuePop.ackValid,
-      message =
-        L"invalid WorkCompAndAck in RQ, ackValid=${workCompAndAckQueuePop.ackValid} should be true when workCompQueueValid=${workCompQueueValid}",
-      severity = FAILURE
-    )
-  }
-  when(workCompQueueValid && dmaWriteRespValid) {
-    assert(
-      assertion = PsnUtil.lte(
-        io.dmaWriteResp.resp.psn,
-        workCompAndAckQueuePop.ack.bth.psn,
-        io.qpAttr.epsn
-      ),
-      message =
-        L"invalid DMA write response in RQ, io.dmaWriteResp.resp.psn=${io.dmaWriteResp.resp.psn} should <= workCompAndAckQueuePop.ack.bth.psn=${workCompAndAckQueuePop.ack.bth.psn} in PSN order, curPsn=${io.qpAttr.epsn}",
-      severity = FAILURE
-    )
-  }
-
-  val dmaWriteRespPnsLessThanWorkCompPsn = PsnUtil.lt(
-    io.dmaWriteResp.resp.psn,
-    workCompAndAckQueuePop.ack.bth.psn,
-    io.qpAttr.epsn
-  )
-  val dmaWriteRespPnsEqualWorkCompPsn =
-    io.dmaWriteResp.resp.psn === workCompAndAckQueuePop.ack.bth.psn
-  /*
-  io.dmaWriteResp.resp.ready := !workCompAndAckQueuePop.valid
-  when(workCompAndAckQueuePop.valid) {
-    when(dmaWriteRespPnsLessThanWorkCompPsn) {
-      io.dmaWriteResp.resp.ready := io.dmaWriteResp.resp.valid
-    } elsewhen (dmaWriteRespPnsEqualWorkCompPsn) {
-      io.dmaWriteResp.resp.ready := io.dmaWriteResp.resp.valid && io.sendWriteWorkCompOut.fire
-    }
-  }
-  val continueCond =
-    io.dmaWriteResp.resp.valid && dmaWriteRespPnsEqualWorkCompPsn
-  io.sendWriteWorkCompOut <-/< workCompAndAckQueuePop
-    .continueWhen(continueCond)
-    .translateWith(workCompAndAckQueuePop.workComp)
-
-  // TODO: output io.sendWriteWorkCompErr
-  StreamSink(NoData) << io.sendWriteWorkCompErr.translateWith(NoData)
-   */
-
-  val shouldFireWorkCompQueueOnlyCond =
-    isReqZeroDmaLen || inputHasNak || io.rxQCtrl.stateErrFlush
-  // For the following fire condition, it must make sure inputAckValid or inputCachedWorkReqValid
-  val fireBothWorkCompQueueAndDmaWriteResp =
-    workCompQueueValid && dmaWriteRespValid && dmaWriteRespPnsEqualWorkCompPsn && !shouldFireWorkCompQueueOnlyCond
-  val fireWorkCompQueueOnly =
-    workCompQueueValid && shouldFireWorkCompQueueOnlyCond
-  val fireDmaWriteRespOnly =
-    dmaWriteRespValid && workCompQueueValid && dmaWriteRespPnsLessThanWorkCompPsn && !shouldFireWorkCompQueueOnlyCond
-  val zipWorkCompAndAckAndDmaWriteResp = StreamZipByCondition(
-    leftInputStream = workCompAndAckQueuePop,
-    // Flush io.dmaWriteResp.resp when error
-    rightInputStream = io.dmaWriteResp.resp.throwWhen(io.rxQCtrl.stateErrFlush),
-    // Coalesce ACK pending WR, or errorFlush
-    leftFireCond = fireWorkCompQueueOnly,
-    rightFireCond = fireDmaWriteRespOnly,
-    bothFireCond = fireBothWorkCompQueueAndDmaWriteResp
-  )
-  when(workCompQueueValid || dmaWriteRespValid) {
-    assert(
-      assertion = CountOne(
-        fireBothWorkCompQueueAndDmaWriteResp ## fireWorkCompQueueOnly ## fireDmaWriteRespOnly
-      ) <= 1,
-      message =
-        L"${REPORT_TIME} time: fire WorkCompQueue only, fire DmaWriteResp only, and fire both should be mutually exclusive, but fireBothWorkCompQueueAndDmaWriteResp=${fireBothWorkCompQueueAndDmaWriteResp}, fireWorkCompQueueOnly=${fireWorkCompQueueOnly}, fireDmaWriteRespOnly=${fireDmaWriteRespOnly}",
-      severity = FAILURE
-    )
-  }
-
-  io.sendWriteWorkCompOut <-/< zipWorkCompAndAckAndDmaWriteResp.translateWith(
-    zipWorkCompAndAckAndDmaWriteResp._2.workComp
-  )
 }
 
 // For duplicated requests, also return ACK in PSN order
