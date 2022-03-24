@@ -2,8 +2,11 @@ package rdma
 
 import spinal.core._
 import spinal.core.sim._
-import scala.collection.mutable
+
 import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers._
+import org.scalatest.AppendedClues._
+import scala.collection.mutable
 
 import ConstantSettings._
 import RdmaConstants._
@@ -89,7 +92,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
 
       // Check DUT output
       MiscUtils.checkConditionAlways(dut.clockDomain) {
-        dut.io.txAtomicReqRetry.valid.toBoolean == false
+        !dut.io.txAtomicReqRetry.valid.toBoolean
       }
       streamSlaveRandomizer(dut.io.outRetryWorkReq, dut.clockDomain)
       streamSlaveRandomizer(dut.io.txReadReqRetry, dut.clockDomain)
@@ -142,33 +145,28 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
 //        println(
 //            f"${simTime()} time: output PSN=${psnOut}%X not match input retryStartPsnIn=${retryStartPsnIn}%X"
 //        )
-          assert(
-            psnOut == retryStartPsnIn,
+
+          psnOut shouldBe retryStartPsnIn withClue
             f"${simTime()} time: output PSN=${psnOut}%X not match input retryStartPsnIn=${retryStartPsnIn}%X"
-          )
 
 //        println(
 //            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
 //        )
-          assert(
-            lenOut == lenIn - dmaReadOffset,
+
+          lenOut shouldBe lenIn - dmaReadOffset withClue
             f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X - dmaReadOffset=${dmaReadOffset}%X"
-          )
 
           if (WorkReqSim.isReadReq(opCodeIn)) {
-            assert(
-              rKeyOut == rKeyIn,
+
+            rKeyOut shouldBe rKeyIn withClue
               f"${simTime()} time: output rkey=${rKeyOut}%X not match input rkey=${rKeyIn}%X"
-            )
-            assert(
-              vaOut == vaIn + dmaReadOffset,
+
+            vaOut shouldBe vaIn + dmaReadOffset withClue
               f"${simTime()} time: output remote VA=${vaOut}%X not match input remote VA=${vaIn}%X + dmaReadOffset=${dmaReadOffset}%X"
-            )
           } else {
-            assert(
-              paOut == paIn + dmaReadOffset,
+
+            paOut shouldBe paIn + dmaReadOffset withClue
               f"${simTime()} time: output local PA=${paOut}%X not match input local PA=${paIn}%X + dmaReadOffset=${dmaReadOffset}%X"
-            )
           }
           matchQueue.enqueue(psnOut)
         }
@@ -244,7 +242,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
 
       // Check DUT output
       MiscUtils.checkConditionAlways(dut.clockDomain) {
-        dut.io.dmaRead.req.valid.toBoolean == false
+        !dut.io.dmaRead.req.valid.toBoolean
       }
       streamSlaveRandomizer(dut.io.outRetryWorkReq, dut.clockDomain)
       streamSlaveRandomizer(dut.io.txReadReqRetry, dut.clockDomain)
@@ -291,27 +289,22 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
 //        println(
 //            f"${simTime()} time: output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
 //        )
-          assert(
-            psnOut == psnIn,
+
+          psnOut shouldBe psnIn withClue
             f"${simTime()} time: output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
-          )
 
 //        println(
 //            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
 //        )
-          assert(
-            lenOut == lenIn,
-            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
-          )
 
-          assert(
-            rKeyOut == rKeyIn,
+          lenOut shouldBe lenIn withClue
+            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
+
+          rKeyOut shouldBe rKeyIn withClue
             f"${simTime()} time: output rkey=${rKeyOut}%X not match input rkey=${rKeyIn}%X"
-          )
-          assert(
-            vaOut == vaIn,
+
+          vaOut shouldBe vaIn withClue
             f"${simTime()} time: output remote VA=${vaOut}%X not match input remote VA=${vaIn}%X"
-          )
 
           matchQueue.enqueue(psnOut)
         }
@@ -371,7 +364,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
 
       // Check DUT output
       MiscUtils.checkConditionAlways(dut.clockDomain) {
-        dut.io.txAtomicReqRetry.valid.toBoolean == false && dut.io.txReadReqRetry.valid.toBoolean == false
+        !dut.io.txAtomicReqRetry.valid.toBoolean && !dut.io.txReadReqRetry.valid.toBoolean
       }
       streamSlaveRandomizer(dut.io.outRetryWorkReq, dut.clockDomain)
       streamSlaveRandomizer(dut.io.dmaRead.req, dut.clockDomain)
@@ -394,27 +387,22 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
 //        println(
 //            f"${simTime()} time: output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
 //        )
-          assert(
-            psnOut == psnIn,
+
+          psnOut shouldBe psnIn withClue
             f"${simTime()} time: output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
-          )
 
 //        println(
 //            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
 //        )
-          assert(
-            lenOut == lenIn,
-            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
-          )
 
-          assert(
-            sqpnOut == sqpnIn,
+          lenOut shouldBe lenIn withClue
+            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
+
+          sqpnOut shouldBe sqpnIn withClue
             f"${simTime()} time: output sqpnOut=${sqpnOut}%X not match input sqpnIn=${sqpnIn}%X"
-          )
-          assert(
-            paOut == paIn,
+
+          paOut shouldBe paIn withClue
             f"${simTime()} time: output local PA=${paOut}%X not match input local PA=${paIn}%X"
-          )
 
           matchQueue.enqueue(psnOut)
         }
@@ -469,17 +457,17 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
             dut.io.errNotifier.pulse.toBoolean,
             f"${simTime()} time: dut.io.errNotifier.pulse=${dut.io.errNotifier.pulse.toBoolean} should be true when RNR retry limit exceeds"
           )
-          assert(
-            dut.io.errNotifier.errType.toEnum == SqErrType.RNR_EXC,
+
+          dut.io.errNotifier.errType.toEnum shouldBe SqErrType.RNR_EXC withClue
             f"${simTime()} time: dut.io.errNotifier.errType=${dut.io.errNotifier.errType.toEnum} should be RNR_EXC"
-          )
+
           matchQueue.enqueue(dut.io.retryWorkReq.psnStart.toInt)
         }
       }
 
       // Check DUT output
       MiscUtils.checkConditionAlways(dut.clockDomain) {
-        dut.io.dmaRead.req.valid.toBoolean == false
+        !dut.io.dmaRead.req.valid.toBoolean
       }
       streamSlaveRandomizer(dut.io.outRetryWorkReq, dut.clockDomain)
       streamSlaveRandomizer(dut.io.txReadReqRetry, dut.clockDomain)

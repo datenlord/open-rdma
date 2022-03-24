@@ -12,46 +12,59 @@ if [ ! -f mill ]; then
   curl -L https://github.com/com-lihaoyi/mill/releases/download/$MILL_VERSION/$MILL_VERSION > mill && chmod +x mill
 fi
 
-./mill version
+MILL="./mill --no-server"
+$MILL version
 
 # The output directory for RTL code
 mkdir -p ./rtl
 
 # Generate IDEA config
-# ./mill mill.scalalib.GenIdea/idea
+# $MILL mill.scalalib.GenIdea/idea
 
 if [ "$TEST_ONLY" = "false" ]; then
   # Run build and simulation
-  ./mill rocev2.runMain rdma.RoCEv2
+  $MILL rocev2.runMain rdma.RoCEv2
 
   # Check format and lint
   if [ "$CI_ENV" = "true" ]; then
-    ./mill rocev2.checkFormat
-    ./mill rocev2.fix --check
+    $MILL rocev2.checkFormat
+    $MILL rocev2.fix --check
   else
-    ./mill mill.scalalib.scalafmt.ScalafmtModule/reformatAll __.sources
-    ./mill rocev2.fix
+    $MILL mill.scalalib.scalafmt.ScalafmtModule/reformatAll __.sources
+    $MILL rocev2.fix
   fi
 fi
 
+#$MILL rocev2.test.testOnly rdma.SetSuite
 # mill test is not compatible with SpinalHDL, use testOnly instead
-./mill rocev2.test.testOnly rdma.CoalesceAndNormalAndRetryNakHandlerTest
-./mill rocev2.test.testOnly rdma.PktLenCheckTest
-./mill rocev2.test.testOnly rdma.ReadAtomicRespVerifierAndFatalNakNotifierTest
-./mill rocev2.test.testOnly rdma.ReadAtomicRespDmaReqInitiatorTest
-./mill rocev2.test.testOnly rdma.RetryHandlerAndDmaReadInitTest
-./mill rocev2.test.testOnly rdma.ReadRespGeneratorTest
-./mill rocev2.test.testOnly rdma.ReqAddrValidatorTest
-./mill rocev2.test.testOnly rdma.ReqCommCheckTest
-./mill rocev2.test.testOnly rdma.RqSendWriteDmaReqInitiatorTest
-./mill rocev2.test.testOnly rdma.RqReadDmaRespHandlerTest
-./mill rocev2.test.testOnly rdma.SendReqGeneratorTest
-./mill rocev2.test.testOnly rdma.WriteReqGeneratorTest
-#./mill rocev2.test.testOnly rdma.SetSuite
-./mill rocev2.test.testOnly rdma.ReqSplitterAndNakGenTest
-./mill rocev2.test.testOnly rdma.ReadDmaReqInitiatorTest
-./mill rocev2.test.testOnly rdma.RqReadAtomicDmaReqBuilderTest
-./mill rocev2.test.testOnly rdma.DupReqHandlerAndReadAtomicRstCacheQueryTest
-./mill rocev2.test.testOnly rdma.DupReadDmaReqBuilderTest
-./mill rocev2.test.testOnly rdma.RqSendWriteWorkCompGeneratorTest
-./mill rocev2.test.testOnly rdma.SendWriteRespGeneratorTest
+
+# SQ Test
+$MILL rocev2.test.testOnly rdma.SendReqGeneratorTest
+$MILL rocev2.test.testOnly rdma.WriteReqGeneratorTest
+
+# Retry Handler Test
+$MILL rocev2.test.testOnly rdma.RetryHandlerAndDmaReadInitTest
+
+# Response Handler Test
+$MILL rocev2.test.testOnly rdma.CoalesceAndNormalAndRetryNakHandlerTest
+$MILL rocev2.test.testOnly rdma.ReadAtomicRespVerifierAndFatalNakNotifierTest
+$MILL rocev2.test.testOnly rdma.ReadAtomicRespDmaReqInitiatorTest
+
+# RQ Test
+$MILL rocev2.test.testOnly rdma.ReqCommCheckTest
+$MILL rocev2.test.testOnly rdma.ReqRnrCheckTest
+$MILL rocev2.test.testOnly rdma.DupReqHandlerAndReadAtomicRstCacheQueryTest
+$MILL rocev2.test.testOnly rdma.DupReadDmaReqBuilderTest
+$MILL rocev2.test.testOnly rdma.ReqDmaInfoExtractorTest
+$MILL rocev2.test.testOnly rdma.ReqAddrValidatorTest
+$MILL rocev2.test.testOnly rdma.PktLenCheckTest
+$MILL rocev2.test.testOnly rdma.ReqSplitterAndNakGenTest
+$MILL rocev2.test.testOnly rdma.RqSendWriteDmaReqInitiatorTest
+$MILL rocev2.test.testOnly rdma.RqReadAtomicDmaReqBuilderTest
+$MILL rocev2.test.testOnly rdma.ReadDmaReqInitiatorTest
+# Slow test
+$MILL rocev2.test.testOnly rdma.SendWriteRespGeneratorTest
+$MILL rocev2.test.testOnly rdma.RqSendWriteWorkCompGeneratorTest
+
+$MILL rocev2.test.testOnly rdma.RqReadDmaRespHandlerTest
+$MILL rocev2.test.testOnly rdma.ReadRespGeneratorTest

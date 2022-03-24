@@ -4,10 +4,11 @@ import spinal.core.sim._
 import ConstantSettings._
 import StreamSimUtil._
 import RdmaTypeReDef._
-import scala.collection.mutable
-import org.scalatest.funsuite.AnyFunSuite
 
-class RqReadDmaRespHandlerTest extends AnyFunSuite {
+import org.scalatest.funsuite.AnyFunSuite
+import scala.collection.mutable
+
+class RqReadDmaRespHandlerTest2 extends AnyFunSuite {
   val busWidth = BusWidth.W512
 
   val simCfg = SimConfig.allOptimisation.withWave
@@ -32,7 +33,7 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
 
       // Check DUT output
       MiscUtils.checkConditionAlways(dut.clockDomain) {
-        dut.io.dmaReadResp.resp.ready.toBoolean == false
+        !dut.io.dmaReadResp.resp.ready.toBoolean
       }
       streamSlaveRandomizer(
         dut.io.readRstCacheDataAndDmaReadResp,
@@ -52,7 +53,7 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
 //          f"${simTime()} time: output PSN io.readRstCacheDataAndDmaReadResp.resultCacheData.psnStart=${dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt}%X not match input PSN io.readRstCacheData.psnStart=${inputPsnStart}%X"
 //        )
         assert(
-          inputPsnStart == dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt,
+          dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt == inputPsnStart,
           f"${simTime()} time: output PSN io.readRstCacheDataAndDmaReadResp.resultCacheData.psnStart=${dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt}%X not match input PSN io.readRstCacheData.psnStart=${inputPsnStart}%X"
         )
 
@@ -204,8 +205,8 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
 //              f"${simTime()} time: respLenInDmaResp=${respLenInDmaResp}%X == respLenOutDmaResp=${respLenOutDmaResp}%X, respLenInCache=${respLenInCache}%X == respLenOutCache=${respLenOutCache}%X, respLenInDmaResp=${respLenInDmaResp}%X == respLenInCache=${respLenInCache}%X"
 //            )
             assert(
-              respLenInDmaResp == respLenOutDmaResp &&
-                respLenInCache == respLenOutCache &&
+              respLenOutDmaResp == respLenInDmaResp &&
+                respLenOutCache == respLenInCache &&
                 respLenInDmaResp == respLenInCache,
               f"${simTime()} time: respLenInDmaResp=${respLenInDmaResp}%X == respLenOutDmaResp=${respLenOutDmaResp}%X, respLenInCache=${respLenInCache}%X == respLenOutCache=${respLenOutCache}%X, respLenInDmaResp=${respLenInDmaResp}%X == respLenInCache=${respLenInCache}%X"
             )
@@ -214,12 +215,12 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
 //              f"${simTime()} time: output response data io.readRstCacheDataAndDmaReadResp.dmaReadResp.data=${dmaRespDataOut}%X not match input response data io.dmaReadResp.resp.data=${dmaRespDataIn}%X"
 //            )
             assert(
-              dmaRespDataIn.toString(16) == dmaRespDataOut.toString(16),
+              dmaRespDataOut.toString(16) == dmaRespDataIn.toString(16),
               f"${simTime()} time: output response data io.readRstCacheDataAndDmaReadResp.dmaReadResp.data=${dmaRespDataOut}%X not match input response data io.dmaReadResp.resp.data=${dmaRespDataIn}%X"
             )
 
             assert(
-              isLastIn == isLastOut,
+              isLastOut == isLastIn,
               f"${simTime()} time: output dut.io.readRstCacheDataAndDmaReadResp.last=${isLastOut} not match input dut.io.dmaReadResp.resp.last=${isLastIn}"
             )
 

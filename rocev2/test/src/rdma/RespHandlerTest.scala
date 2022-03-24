@@ -10,8 +10,10 @@ import BthSim._
 import PsnSim._
 import RdmaTypeReDef._
 
-import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers._
+import org.scalatest.AppendedClues._
+import scala.collection.mutable
 
 class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
@@ -265,10 +267,10 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
             MiscUtils.safeDeQueue(inputAckQueue, dut.clockDomain)
           val (ackPsnIn, ackTypeIn) =
             MiscUtils.safeDeQueue(inputAckQueue, dut.clockDomain)
-          assert(
-            retryNakPsnIn == ackPsnIn,
+
+          retryNakPsnIn shouldBe ackPsnIn withClue
             f"${simTime()} time: retryNakPsnIn=${retryNakPsnIn} == ackPsnIn=${ackPsnIn}"
-          )
+
           assert(
             AckTypeSim.isRetryNak(retryNakTypeIn),
             f"${simTime()} time: retryNakTypeIn=${retryNakTypeIn} should be retry NAK"
@@ -321,36 +323,26 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
               )
             }
 
-            assert(
-              ackPsnIn == ackPsnOut,
+            ackPsnOut shouldBe ackPsnIn withClue
               f"${simTime()} time: ackPsnIn=${ackPsnIn}%X should == ackPsnOut=${ackPsnOut}%X"
-            )
 
-            assert(
-              workCompIdOut == workReqIdIn,
+            workCompIdOut shouldBe workReqIdIn withClue
               f"${simTime()} time: workCompIdOut=${workCompIdOut}%X should == workReqIdIn=${workReqIdIn}%X"
-            )
-            assert(
-              lenBytesOut == lenBytesIn,
+
+            lenBytesOut shouldBe lenBytesIn withClue
               f"${simTime()} time: lenBytesOut=${lenBytesOut}%X should == lenBytesIn=${lenBytesIn}%X"
-            )
 
             if (workReqEndPsn != ackPsnIn) { // Coalesce ACK case
-              assert(
-                workCompStatusOut == WorkCompStatus.SUCCESS,
+
+              workCompStatusOut shouldBe WorkCompStatus.SUCCESS withClue
                 f"${simTime()} time: ackTypeIn=${ackTypeIn} workCompStatusOut=${workCompStatusOut} should be WorkCompStatus.SUCCESS, ackPsnIn=${ackPsnIn}%X"
-              )
             } else { // Explicit ACK case
               if (AckTypeSim.isFatalNak(ackTypeIn)) {
-                assert(
-                  workCompStatusOut != WorkCompStatus.SUCCESS,
+                workCompStatusOut shouldNot be(WorkCompStatus.SUCCESS) withClue
                   f"${simTime()} time: ackTypeIn=${ackTypeIn} workCompStatusOut=${workCompStatusOut} should not be WorkCompStatus.SUCCESS, ackPsnIn=${ackPsnIn}%X"
-                )
               } else {
-                assert(
-                  workCompStatusOut == WorkCompStatus.SUCCESS,
+                workCompStatusOut shouldBe WorkCompStatus.SUCCESS withClue
                   f"${simTime()} time: ackTypeIn=${ackTypeIn} workCompStatusOut=${workCompStatusOut} should be WorkCompStatus.SUCCESS, ackPsnIn=${ackPsnIn}%X"
-                )
               }
             }
 
@@ -399,10 +391,12 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
             dut.io.errNotifier.pulse.toBoolean,
             f"${simTime()} time: dut.io.errNotifier.pulse=${dut.io.errNotifier.pulse.toBoolean} should be true when ackType=${ackType}"
           )
-          assert(
-            dut.io.errNotifier.errType.toEnum != SqErrType.NO_ERR,
+
+          dut.io.errNotifier.errType.toEnum shouldNot be(
+            SqErrType.NO_ERR
+          ) withClue
             f"${simTime()} time: dut.io.errNotifier.errType=${dut.io.errNotifier.errType.toEnum} should not be ${SqErrType.NO_ERR} when ackType=${ackType}"
-          )
+
           matchQueue.enqueue(dut.io.rxAck.bth.psn.toInt)
         }
       }
@@ -569,10 +563,12 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
 //          println(
 //            f"${simTime()} time: Read response psnStartInReadRespMeta=${psnStartInReadRespMeta}=${psnStartInReadRespMeta}%X"
 //          )
-          assert(
-            psnStartInReadRespMeta == psnStartInWorkReqQueryResp && psnStartInWorkReqQueryResp == psnStartInAddrCacheResp,
-            f"${simTime()} time: psnStartInReadRespMeta=${psnStartInReadRespMeta}%X should == psnStartInWorkReqQueryResp=${psnStartInWorkReqQueryResp}%X and psnStartInWorkReqQueryResp=${psnStartInWorkReqQueryResp}%X should == psnStartInAddrCacheResp=${psnStartInAddrCacheResp}%X"
-          )
+
+          psnStartInReadRespMeta shouldBe psnStartInWorkReqQueryResp withClue
+            f"${simTime()} time: psnStartInReadRespMeta=${psnStartInReadRespMeta}%X should == psnStartInWorkReqQueryResp=${psnStartInWorkReqQueryResp}%X"
+
+          psnStartInWorkReqQueryResp shouldBe psnStartInAddrCacheResp withClue
+            f"${simTime()} time: psnStartInWorkReqQueryResp=${psnStartInWorkReqQueryResp}%X should == psnStartInAddrCacheResp=${psnStartInAddrCacheResp}%X"
 
           for (fragIdx <- 0 until totalFragNum) {
             val psnIn = psnStartInReadRespMeta + (fragIdx / maxFragNumPerPkt)
@@ -586,26 +582,23 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
               isLastOutDmaWriteReq
             ) = MiscUtils.safeDeQueue(txReadRespQueue, dut.clockDomain)
 
-            assert(
-              psnIn == psnInReadResp && psnInReadResp == psnInDmaWriteReq,
-              f"${simTime()} time: psnIn=${psnIn}%X should == psnInReadResp=${psnInReadResp}%X and psnInReadResp=${psnInReadResp}%X should == psnInDmaWriteReq=${psnInDmaWriteReq}%X"
-            )
-            assert(
-              phyAddrInAddrCacheResp == phyAddrOutDmaWriteReq,
+            psnIn shouldBe psnInReadResp withClue
+              f"${simTime()} time: psnIn=${psnIn}%X should == psnInReadResp=${psnInReadResp}%X"
+
+            psnInReadResp shouldBe psnInDmaWriteReq withClue
+              f"${simTime()} time: psnInReadResp=${psnInReadResp}%X should == psnInDmaWriteReq=${psnInDmaWriteReq}%X"
+
+            phyAddrOutDmaWriteReq shouldBe phyAddrInAddrCacheResp withClue
               f"${simTime()} time: phyAddrInAddrCacheResp=${phyAddrInAddrCacheResp}%X == phyAddrOutDmaWriteReq=${phyAddrOutDmaWriteReq}%X"
-            )
-            assert(
-              workReqIdInWorkReqQueryResp == workReqIdOutDmaWriteReq,
+
+            workReqIdOutDmaWriteReq shouldBe workReqIdInWorkReqQueryResp withClue
               f"${simTime()} time: workReqIdInWorkReqQueryResp=${workReqIdInWorkReqQueryResp}%X == workReqIdOutDmaWriteReq=${workReqIdOutDmaWriteReq}%X"
-            )
-            assert(
-              dataInReadResp == dataOutDmaWriteReq,
+
+            dataOutDmaWriteReq shouldBe dataInReadResp withClue
               f"${simTime()} time: dataInReadResp=${dataInReadResp}%X should == dataOutDmaWriteReq=${dataOutDmaWriteReq}%X"
-            )
-            assert(
-              isLastInReadResp == isLastOutDmaWriteReq,
+
+            isLastOutDmaWriteReq shouldBe isLastInReadResp withClue
               f"${simTime()} time: isLastInReadResp=${isLastInReadResp} should == isLastOutDmaWriteReq=${isLastOutDmaWriteReq}"
-            )
           }
           matchQueue.enqueue(psnStartInReadRespMeta)
 //          println(f"${simTime()} time: ${matchQueue.size} matches")

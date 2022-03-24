@@ -1,6 +1,6 @@
 package rdma
 
-import spinal.core._
+import spinal.core.{assert => _, _}
 import spinal.core.sim._
 import spinal.lib._
 
@@ -9,16 +9,20 @@ import PsnSim._
 import RdmaConstants._
 import RdmaTypeReDef._
 
+import org.scalatest.matchers.should.Matchers._
+//import org.scalatest.AppendedClues._
 import scala.collection.mutable
 import scala.util.Random
 
 case class PsnStartItr(psnStartItr: Iterator[Long]) {
   def next(): Int = {
     val nextPsnStart = psnStartItr.next() % TOTAL_PSN
+
     assert(
       nextPsnStart >= 0,
       f"${simTime()} time: nextPsnStart=${nextPsnStart} overflowed, it should be positive"
     )
+
     nextPsnStart.toInt
   }
 }
@@ -26,21 +30,26 @@ case class PsnStartItr(psnStartItr: Iterator[Long]) {
 case class PktNumItr(pktNumItr: Iterator[PktNum]) {
   def next(): Int = {
     val pktNum = pktNumItr.next()
-    assert(
-      pktNum < HALF_MAX_PSN,
+
+    withClue(
       f"${simTime()} time: pktNum=${pktNum} should < HALF_MAX_PSN=${HALF_MAX_PSN}"
-    )
+    )(pktNum should be < HALF_MAX_PSN)
+
     pktNum
   }
 }
 
 case class PayloadLenItr(totalLenItr: Iterator[Int]) {
+  val maxReqRespLen = 1L << (RDMA_MAX_LEN_WIDTH - 1) // 2GB
+
   def next(): Int = {
     val totalLen = totalLenItr.next()
+
     assert(
-      totalLen < (1L << (RDMA_MAX_LEN_WIDTH - 1)), // 2GB
+      totalLen < maxReqRespLen,
       f"${simTime()} time: totalLen=${totalLen} should < 2G"
     )
+
     totalLen
   }
 }
@@ -291,7 +300,6 @@ object StreamSimUtil {
         reqFireBody
         clockDomain.waitSampling()
         reqStream.ready #= false
-        //        clockDomain.waitSampling()
 
         respStream.valid #= true
         respBody
@@ -348,14 +356,11 @@ object StreamSimUtil {
     respStream.valid #= false
     clockDomain.waitSampling()
 
-//    while (!reqStream.valid.toBoolean) {
     clockDomain.waitSamplingWhere(reqStream.valid.toBoolean)
-//    }
     reqStream.ready #= true
     reqFireBody
     clockDomain.waitSampling()
     reqStream.ready #= false
-    //    clockDomain.waitSampling()
 
     respStream.valid #= true
     respBody
@@ -405,73 +410,6 @@ object StreamSimUtil {
     }
 
     respQueue
-    /*
-    val addrCacheReadReqQueue = mutable.Queue[(PSN, VirtualAddr)]()
-    val addrCacheReadRespQueue =
-      mutable.Queue[(PSN, KeyValid, SizeValid, AccessValid, PhysicalAddr)]()
-
-    val onReq = () => {
-      addrCacheReadReqQueue.enqueue(
-        (addrCacheRead.req.psn.toInt, addrCacheRead.req.va.toBigInt)
-      )
-//    println(
-//      f"${simTime()} time: dut.io.addrCacheRead.req received PSN=${dut.io.addrCacheRead.req.psn.toInt}%X"
-//    )
-    }
-
-    val onResp = () => {
-      val (psn, _) = addrCacheReadReqQueue.dequeue()
-      addrCacheRead.resp.psn #= psn
-      if (alwaysSuccess) {
-        addrCacheRead.resp.keyValid #= true
-        addrCacheRead.resp.sizeValid #= true
-        addrCacheRead.resp.accessValid #= true
-      } else {
-        addrCacheRead.resp.keyValid #= false
-        addrCacheRead.resp.sizeValid #= false
-        addrCacheRead.resp.accessValid #= false
-      }
-    }
-
-    if (alwaysValid) {
-      onReceiveStreamReqAndThenResponseAlways(
-        reqStream = addrCacheRead.req,
-        respStream = addrCacheRead.resp,
-        clockDomain
-      ) {
-        onReq()
-      } {
-        onResp()
-      }
-    } else {
-      onReceiveStreamReqAndThenResponseRandom(
-        reqStream = addrCacheRead.req,
-        respStream = addrCacheRead.resp,
-        clockDomain
-      ) {
-        onReq()
-      } {
-        onResp()
-      }
-    }
-
-    onStreamFire(addrCacheRead.resp, clockDomain) {
-      addrCacheReadRespQueue.enqueue(
-        (
-          addrCacheRead.resp.psn.toInt,
-          addrCacheRead.resp.keyValid.toBoolean,
-          addrCacheRead.resp.sizeValid.toBoolean,
-          addrCacheRead.resp.accessValid.toBoolean,
-          addrCacheRead.resp.pa.toBigInt
-        )
-      )
-      //        println(
-      //          f"${simTime()} time: dut.io.addrCacheRead.resp PSN=${dut.io.addrCacheRead.resp.psn.toInt}%X"
-      //        )
-    }
-
-    addrCacheReadRespQueue
-     */
   }
 
   def pktFragStreamMasterDriverAlwaysValid[T <: Data, InternalData](
@@ -533,10 +471,9 @@ object StreamSimUtil {
             internalData
           )
           if (fragIdx == totalFragNum - 1) {
-            assert(
-              pktIdx == pktNum - 1,
+            withClue(
               f"${simTime()} time: this fragment with fragIdx=${fragIdx}%X is the last one, pktIdx=${pktIdx}%X should == pktNum=${pktNum}%X-1"
-            )
+            )(pktIdx shouldBe (pktNum - 1))
           }
           clockDomain.waitSamplingWhere(
             stream.valid.toBoolean && stream.ready.toBoolean
@@ -606,10 +543,9 @@ object StreamSimUtil {
                 internalData
               )
               if (fragIdx == totalFragNum - 1) {
-                assert(
-                  pktIdx == pktNum - 1,
+                withClue(
                   f"${simTime()} time: this fragment with fragIdx=${fragIdx}%X is the last one, pktIdx=${pktIdx}%X should == pktNum=${pktNum}%X-1"
-                )
+                )(pktIdx shouldBe (pktNum - 1))
               }
               clockDomain.waitSamplingWhere(
                 stream.valid.toBoolean && stream.ready.toBoolean
@@ -631,7 +567,7 @@ object MiscUtils {
     queue.dequeue()
   }
 
-  def psnCmp(psnA: Int, psnB: Int, curPsn: Int): Int = {
+  def psnCmp(psnA: PSN, psnB: PSN, curPsn: PSN): Int = {
     require(
       psnA >= 0 && psnB >= 0 && curPsn >= 0,
       f"${simTime()} time: psnA=${psnA}, psnB=${psnB}, curPsn=${curPsn} should all >= 0"
@@ -663,7 +599,7 @@ object MiscUtils {
     }
   }
 
-  /** psnA - psnB, always <= HALF_MAX_PSN
+  /** psnA - psnB, PSN diff is always <= HALF_MAX_PSN
     */
   def psnDiff(psnA: PSN, psnB: PSN): PSN = {
     require(
@@ -753,10 +689,11 @@ object MiscUtils {
 
           val inputData = inputQueue.dequeue()
           val outputData = outputQueue.dequeue()
-          assert(
-            inputData == outputData,
+
+          withClue(
             f"${simTime()} time: inputData=${inputData} not match outputData=${outputData} @ outputIdx=${outputIdx}"
-          )
+          )(inputData shouldBe outputData)
+
           matchQueue.enqueue(inputData)
 //          println(f"matchQueue.size=${matchQueue.size}")
         }
@@ -800,7 +737,9 @@ object MiscUtils {
       if (!cond) {
         println(f"${simTime()} time: always condition=${cond} not satisfied")
       }
-      assert(cond, f"${simTime()} time: always condition=${cond} not satisfied")
+      withClue(f"${simTime()} time: always condition=${cond} not satisfied")(
+        cond shouldBe true
+      )
     }
   }
 
@@ -811,10 +750,10 @@ object MiscUtils {
 
     for (cycleIdx <- 0 until cycles) {
       clockDomain.waitSampling()
-      assert(
-        cond,
+
+      withClue(
         f"${simTime()} time: condition=${cond} not satisfied @ cycleIdx=${cycleIdx}"
-      )
+      )(cond shouldBe true)
     }
   }
 
@@ -876,20 +815,17 @@ object MiscUtils {
 //          println(
 //            f"${simTime()} time: last fragment data=${lastFragDataOutValidBits}%X not match last fragment input data=${lastFragDataInValidBits}%X with minimum last fragment MTY=(${lastFragMtyMinimumByteNum}*BYTE_WIDTH)"
 //          )
-        assert(
-          (lastFragDataOutValidBits & lastFragMtyMinimumBits)
-            .toString(16) == (lastFragDataInValidBits & lastFragMtyMinimumBits)
-            .toString(16),
+        withClue(
           f"${simTime()} time: last fragment data=${lastFragDataOutValidBits}%X not match last fragment input data=${lastFragDataInValidBits}%X with minimum last fragment out MTY=(${lastFragMtyMinimumByteNum}*BYTE_WIDTH)"
+        )(
+          (lastFragDataOutValidBits & lastFragMtyMinimumBits) shouldBe (lastFragDataInValidBits & lastFragMtyMinimumBits)
         )
-
 //          println(
 //            f"${simTime()} time: expected output PSN=${nextPsn} not match output PSN=${psnOut}"
 //          )
-        assert(
-          psnOut == nextPsn,
+        withClue(
           f"${simTime()} time: expected output PSN=${nextPsn} not match output PSN=${psnOut}"
-        )
+        )(psnOut shouldBe nextPsn)
         nextPsn += 1
       }
     }
