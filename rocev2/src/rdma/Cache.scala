@@ -324,7 +324,7 @@ class ReadAtomicRstCache(depth: Int) extends Component {
       .resp
       .translateWith {
         val result = cloneOf(queryPort.resp.payloadType)
-        result.cachedData := cache.io.queryBusVec(portIdx).resp.respValue
+        result.rstCacheData := cache.io.queryBusVec(portIdx).resp.respValue
         result.query := cache.io.queryBusVec(portIdx).resp.queryKey
         result.found := cache.io.queryBusVec(portIdx).resp.found
         result

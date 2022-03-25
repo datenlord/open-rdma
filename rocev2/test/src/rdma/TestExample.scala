@@ -149,7 +149,63 @@ class SetSuite extends AnyFunSuite {
     val finalMachine = sequence(states)
     println(finalMachine.run(Machine(locked = true, candies = 3, coins = 0)))
   }
+  /*
+  test("Monoid") {
+    import scala.collection.immutable.Map
+    trait Monoid[A] {
+      def op(a1: A, a2: A): A
+      val zero: A
+    }
 
+    def foldMap[A, B](l: List[A])(md: Monoid[B])(f: A => B): B = l match {
+      case Nil    => md.zero
+      case h :: t => md.op(f(h), foldMap(t)(md)(f))
+    }
+
+    def endoComposeMonoid[A] = new Monoid[A => A] {
+      def op(f: A => A, g: A => A) = f compose g
+      val zero = (a: A) => a
+    }
+
+    def endoAndThenMonoid[A] = new Monoid[A => A] {
+      def op(f: A => A, g: A => A) = f andThen g
+      val zero = (a: A) => a
+    }
+
+    def dual[A](m: Monoid[A]) = new Monoid[A] {
+      def op(x: A, y: A) = m.op(y, x)
+      val zero = m.zero
+    }
+
+    def mapMergeMonoid[K, V](mv: Monoid[V]): Monoid[Map[K, V]] =
+      new Monoid[Map[K, V]] {
+        val zero = Map()
+        def op(ma: Map[K, V], mb: Map[K, V]) = {
+          ma ++ mb
+        }
+      }
+
+    val intAdditionMonoid = new Monoid[Int] {
+      val zero = 0
+      def op(a: Int, b: Int) = a + b
+    }
+
+    val nestedMapMonoid = mapMergeMonoid[String, Map[String, Int]](
+      mapMergeMonoid[String, Int](intAdditionMonoid)
+    )
+    val m1 = Map("o1" -> Map("i1" -> 1, "i2" -> 2))
+    val m2 = Map("o1" -> Map("i2" -> 3))
+    val m3 = nestedMapMonoid.op(m1, m2)
+    println(m3)
+
+    def frequencyMap[A](as: IndexedSeq[A]): Map[A, Int] = {
+      val mergeMapMonoid = mapMergeMonoid[A, Int](intAdditionMonoid)
+      as.foldLeft(Map[A, Int]())((m, a) => mergeMapMonoid.op(m, Map(a -> 1)))
+    }
+    val freqMap = frequencyMap(Vector("a rose", "is a", "rose is", "a rose"))
+    println(freqMap)
+  }
+   */
   test("Invoking head on an empty Set should produce NoSuchElementException") {
     assertThrows[NoSuchElementException] {
       Set.empty.head

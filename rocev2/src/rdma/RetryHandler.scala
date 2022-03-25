@@ -435,9 +435,10 @@ class SendReqGenerator(busWidth: BusWidth)
 
       val headerBits = Bits(busWidth.id bits)
       val headerMtyBits = Bits(busWidthBytes bits)
-      // TODO: verify endian
-      headerBits := bth.asBits.resize(busWidth.id)
-      headerMtyBits := bthMty.resize(busWidthBytes)
+//      headerBits := bth.asBits.resize(busWidth.id)
+//      headerMtyBits := bthMty.resize(busWidthBytes)
+      headerBits := mergeRdmaHeader(busWidth, bth)
+      headerMtyBits := mergeRdmaHeaderMty(busWidth, bthMty)
       when(numReqPkt > 1) {
         when(curReqPktCntVal === 0) {
           when(isFromFirstReqPkt) {
@@ -452,15 +453,17 @@ class SendReqGenerator(busWidth: BusWidth)
           when(workReqHasImmDt) {
             opcode := OpCode.SEND_LAST_WITH_IMMEDIATE.id
 
-            // TODO: verify endian
-            headerBits := (bth ## immDt).resize(busWidth.id)
-            headerMtyBits := (bthMty ## sendEthMty).resize(busWidthBytes)
+//            headerBits := (bth ## immDt).resize(busWidth.id)
+//            headerMtyBits := (bthMty ## sendEthMty).resize(busWidthBytes)
+            headerBits := mergeRdmaHeader(busWidth, bth, immDt)
+            headerMtyBits := mergeRdmaHeaderMty(busWidth, bthMty, sendEthMty)
           } elsewhen (workReqHasIeth) {
             opcode := OpCode.SEND_LAST_WITH_INVALIDATE.id
 
-            // TODO: verify endian
-            headerBits := (bth ## ieth).resize(busWidth.id)
-            headerMtyBits := (bthMty ## sendEthMty).resize(busWidthBytes)
+//            headerBits := (bth ## ieth).resize(busWidth.id)
+//            headerMtyBits := (bthMty ## sendEthMty).resize(busWidthBytes)
+            headerBits := mergeRdmaHeader(busWidth, bth, ieth)
+            headerMtyBits := mergeRdmaHeaderMty(busWidth, bthMty, sendEthMty)
           }
 
           padCnt := (PAD_COUNT_FULL -
@@ -483,9 +486,10 @@ class SendReqGenerator(busWidth: BusWidth)
             opcode := OpCode.SEND_LAST_WITH_IMMEDIATE.id
           }
 
-          // TODO: verify endian
-          headerBits := (bth ## immDt).resize(busWidth.id)
-          headerMtyBits := (bthMty ## sendEthMty).resize(busWidthBytes)
+//          headerBits := (bth ## immDt).resize(busWidth.id)
+//          headerMtyBits := (bthMty ## sendEthMty).resize(busWidthBytes)
+          headerBits := mergeRdmaHeader(busWidth, bth, immDt)
+          headerMtyBits := mergeRdmaHeaderMty(busWidth, bthMty, sendEthMty)
         } elsewhen (workReqHasIeth) {
           when(isFromFirstReqPkt) {
             opcode := OpCode.SEND_ONLY_WITH_INVALIDATE.id
@@ -493,9 +497,10 @@ class SendReqGenerator(busWidth: BusWidth)
             opcode := OpCode.SEND_LAST_WITH_INVALIDATE.id
           }
 
-          // TODO: verify endian
-          headerBits := (bth ## ieth).resize(busWidth.id)
-          headerMtyBits := (bthMty ## sendEthMty).resize(busWidthBytes)
+//          headerBits := (bth ## ieth).resize(busWidth.id)
+//          headerMtyBits := (bthMty ## sendEthMty).resize(busWidthBytes)
+          headerBits := mergeRdmaHeader(busWidth, bth, ieth)
+          headerMtyBits := mergeRdmaHeaderMty(busWidth, bthMty, sendEthMty)
         }
 
         padCnt := (PAD_COUNT_FULL -
@@ -567,17 +572,19 @@ class WriteReqGenerator(busWidth: BusWidth)
 
       val headerBits = Bits(busWidth.id bits)
       val headerMtyBits = Bits(busWidthBytes bits)
-      // TODO: verify endian
-      headerBits := bth.asBits.resize(busWidth.id)
-      headerMtyBits := bthMty.resize(busWidthBytes)
+//      headerBits := bth.asBits.resize(busWidth.id)
+//      headerMtyBits := bthMty.resize(busWidthBytes)
+      headerBits := mergeRdmaHeader(busWidth, bth)
+      headerMtyBits := mergeRdmaHeaderMty(busWidth, bthMty)
       when(numReqPkt > 1) {
         when(curReqPktCntVal === 0) {
           when(isFromFirstReqPkt) {
             opcode := OpCode.RDMA_WRITE_FIRST.id
 
-            // TODO: verify endian
-            headerBits := (bth ## reth).resize(busWidth.id)
-            headerMtyBits := (bthMty ## rethMty).resize(busWidthBytes)
+//            headerBits := (bth ## reth).resize(busWidth.id)
+//            headerMtyBits := (bthMty ## rethMty).resize(busWidthBytes)
+            headerBits := mergeRdmaHeader(busWidth, bth, reth)
+            headerMtyBits := mergeRdmaHeaderMty(busWidth, bthMty, rethMty)
           } otherwise {
             opcode := OpCode.RDMA_WRITE_MIDDLE.id
           }
@@ -587,9 +594,10 @@ class WriteReqGenerator(busWidth: BusWidth)
           when(workReqHasImmDt) {
             opcode := OpCode.RDMA_WRITE_LAST_WITH_IMMEDIATE.id
 
-            // TODO: verify endian
-            headerBits := (bth ## immDt).resize(busWidth.id)
-            headerMtyBits := (bthMty ## immDtMty).resize(busWidthBytes)
+//            headerBits := (bth ## immDt).resize(busWidth.id)
+//            headerMtyBits := (bthMty ## immDtMty).resize(busWidthBytes)
+            headerBits := mergeRdmaHeader(busWidth, bth, immDt)
+            headerMtyBits := mergeRdmaHeaderMty(busWidth, bthMty, immDtMty)
           }
           padCnt := (PAD_COUNT_FULL -
             lastOrOnlyReqPktLenBytes(0, PAD_COUNT_WIDTH bits))
@@ -601,9 +609,10 @@ class WriteReqGenerator(busWidth: BusWidth)
         when(isFromFirstReqPkt) {
           opcode := OpCode.RDMA_WRITE_ONLY.id
 
-          // TODO: verify endian
-          headerBits := (bth ## reth).resize(busWidth.id)
-          headerMtyBits := (bthMty ## rethMty).resize(busWidthBytes)
+//          headerBits := (bth ## reth).resize(busWidth.id)
+//          headerMtyBits := (bthMty ## rethMty).resize(busWidthBytes)
+          headerBits := mergeRdmaHeader(busWidth, bth, reth)
+          headerMtyBits := mergeRdmaHeaderMty(busWidth, bthMty, rethMty)
         } otherwise {
           opcode := OpCode.RDMA_WRITE_LAST.id
         }
@@ -612,16 +621,23 @@ class WriteReqGenerator(busWidth: BusWidth)
           when(isFromFirstReqPkt) {
             opcode := OpCode.RDMA_WRITE_ONLY_WITH_IMMEDIATE.id
 
-            // TODO: verify endian
-            headerBits := (bth ## reth ## immDt).resize(busWidth.id)
-            headerMtyBits := (bthMty ## rethMty ## immDtMty)
-              .resize(busWidthBytes)
+//            headerBits := (bth ## reth ## immDt).resize(busWidth.id)
+//            headerMtyBits := (bthMty ## rethMty ## immDtMty)
+//              .resize(busWidthBytes)
+            headerBits := mergeRdmaHeader(busWidth, bth, reth, immDt)
+            headerMtyBits := mergeRdmaHeaderMty(
+              busWidth,
+              bthMty,
+              rethMty,
+              immDtMty
+            )
           } otherwise {
             opcode := OpCode.RDMA_WRITE_LAST_WITH_IMMEDIATE.id
 
-            // TODO: verify endian
-            headerBits := (bth ## immDt).resize(busWidth.id)
-            headerMtyBits := (bthMty ## immDtMty).resize(busWidthBytes)
+//            headerBits := (bth ## immDt).resize(busWidth.id)
+//            headerMtyBits := (bthMty ## immDtMty).resize(busWidthBytes)
+            headerBits := mergeRdmaHeader(busWidth, bth, immDt)
+            headerMtyBits := mergeRdmaHeaderMty(busWidth, bthMty, immDtMty)
           }
         }
         padCnt := (PAD_COUNT_FULL -

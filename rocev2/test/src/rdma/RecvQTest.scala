@@ -15,7 +15,7 @@ import PsnSim._
 import RdmaConstants._
 import StreamSimUtil._
 import RdmaTypeReDef._
-
+/*
 class ReqCommCheckTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
   val pmtuLen = PMTU.U256
@@ -23,6 +23,72 @@ class ReqCommCheckTest extends AnyFunSuite {
 
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new ReqCommCheck(busWidth))
+
+//  test("ReqCommCheck read atomic request") {
+//    simCfg.doSim { dut =>
+//      dut.clockDomain.forkStimulus(10)
+//
+//      val inputPktNumQueue = mutable.Queue[(OpCode.Value, PktNum)]()
+//      val outputPktNumQueue = mutable.Queue[(OpCode.Value, PktNum)]()
+//
+//      val mtyWidth = busWidth.id / BYTE_WIDTH
+//      val fixedPsn = 1
+//      dut.io.qpAttr.epsn #= fixedPsn
+//      dut.io.qpAttr.pmtu #= pmtuLen.id
+//      dut.io.rxQCtrl.flush #= false
+//      dut.io.readAtomicRstCacheOccupancy #= 0
+//
+//      streamMasterDriver(dut.io.rx.pktFrag, dut.clockDomain) {
+//        val workReqOpCode = WorkReqSim.randomReadAtomicOpCode()
+//        val opcode =
+//          WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx = 0, pktNum = 1)
+//        dut.io.rx.pktFrag.bth.opcodeFull #= opcode.id
+//        dut.io.rx.pktFrag.bth.psn #= fixedPsn
+//        dut.io.rx.pktFrag.last #= true
+//        RdmaDataPktSim.setMtyAndPadCnt(
+//          dut.io.rx.pktFrag,
+//          fragIdx = 0,
+//          fragNum = 1,
+//          totalLenBytes = mtyWidth.toLong, // Does not matter
+//          busWidth
+//        )
+//      }
+//      onStreamFire(dut.io.rx.pktFrag, dut.clockDomain) {
+//        val opcode = OpCode(dut.io.rx.pktFrag.bth.opcodeFull.toInt)
+//        val curPsn = dut.io.rx.pktFrag.bth.psn.toInt
+//        val pktNum = if (opcode.isReadReqPkt()) {
+//          val (_, _, pktLenBytes) =
+//            RethSim.extract(dut.io.rx.pktFrag.data.toBigInt, busWidth)
+//          val pktNum = MiscUtils.computePktNum(pktLenBytes, pmtuLen)
+//          pktNum
+////          inputPktNumQueue.enqueue((opcode, pktNum))
+//        } else {
+//          val singlePktNum = 1
+//          singlePktNum
+////          inputPktNumQueue.enqueue((opcode, curPsn))
+//        }
+//        val ePSN = curPsn +% pktNum
+//        inputPktNumQueue.enqueue((opcode, ePSN))
+//        assert(
+//          dut.io.rx.pktFrag.last.toBoolean,
+//          f"${simTime()} time: read/atomic request should have only one packet, that dut.io.rx.pktFrag.last=${dut.io.rx.pktFrag.last.toBoolean} always be true"
+//        )
+//        assert(
+//          dut.io.epsnInc.inc.toBoolean,
+//          f"${simTime()} time: dut.io.epsnInc.inc=${dut.io.epsnInc.inc.toBoolean} should be true when each read/atomic request fire"
+//        )
+//        outputPktNumQueue.enqueue((opcode, dut.io.epsnInc.psnVal.toInt))
+//      }
+//      streamSlaveRandomizer(dut.io.tx.checkRst, dut.clockDomain)
+//
+//      MiscUtils.checkInputOutputQueues(
+//        dut.clockDomain,
+//        inputPktNumQueue,
+//        outputPktNumQueue,
+//        MATCH_CNT
+//      )
+//    }
+//  }
 
   test("ReqCommCheck read atomic request") {
     simCfg.doSim { dut =>
@@ -41,7 +107,7 @@ class ReqCommCheckTest extends AnyFunSuite {
       streamMasterDriver(dut.io.rx.pktFrag, dut.clockDomain) {
         val workReqOpCode = WorkReqSim.randomReadAtomicOpCode()
         val opcode =
-          WorkReqSim.assignOpCode(workReqOpCode, pktIdx = 0, pktNum = 1)
+          WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx = 0, pktNum = 1)
         dut.io.rx.pktFrag.bth.opcodeFull #= opcode.id
         dut.io.rx.pktFrag.bth.psn #= fixedPsn
         dut.io.rx.pktFrag.last #= true
@@ -59,6 +125,218 @@ class ReqCommCheckTest extends AnyFunSuite {
           val (_, _, pktLenBytes) =
             RethSim.extract(dut.io.rx.pktFrag.data.toBigInt, busWidth)
           val pktNum = MiscUtils.computePktNum(pktLenBytes, pmtuLen)
+          inputPktNumQueue.enqueue((opcode, pktNum))
+        } else {
+          val singlePktNum = 1
+          inputPktNumQueue.enqueue((opcode, singlePktNum))
+        }
+
+        if (dut.io.rx.pktFrag.last.toBoolean) {
+          assert(
+            dut.io.epsnInc.inc.toBoolean,
+            f"${simTime()} time: dut.io.epsnInc.inc=${dut.io.epsnInc.inc.toBoolean} should be true when dut.io.rx last fire"
+          )
+          outputPktNumQueue.enqueue((opcode, dut.io.epsnInc.incVal.toInt))
+        }
+      }
+      streamSlaveRandomizer(dut.io.tx.checkRst, dut.clockDomain)
+
+      MiscUtils.checkInputOutputQueues(
+        dut.clockDomain,
+        inputPktNumQueue,
+        outputPktNumQueue,
+        MATCH_CNT
+      )
+    }
+  }
+
+  def testSendWriteFunc(isNormalCaseOrDupCase: Boolean): Unit =
+    simCfg.doSim { dut =>
+      dut.clockDomain.forkStimulus(10)
+
+      // Input to DUT
+      val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
+        SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
+
+      val inputQueue = mutable.Queue[(PSN, PktFragData, FragLast, HasNakSeq)]()
+      val outputQueue = mutable.Queue[(PSN, PktFragData, FragLast, HasNakSeq)]()
+
+      dut.io.qpAttr.pmtu #= pmtuLen.id
+      dut.io.rxQCtrl.flush #= false
+      dut.io.readAtomicRstCacheOccupancy #= 0
+
+      pktFragStreamMasterDriver(dut.io.rx.pktFrag, dut.clockDomain) {
+        val totalFragNum = totalFragNumItr.next()
+        val pktNum = pktNumItr.next()
+        val psnStart = psnStartItr.next()
+        val totalLenBytes = totalLenItr.next()
+        val workReqOpCode = WorkReqSim.randomSendWriteOpCode()
+//        println(
+//          f"${simTime()} time: pktNum=${pktNum}, totalFragNum=${totalFragNum}, psnStart=${psnStart}, totalLenBytes=${totalLenBytes}"
+//        )
+        (
+          psnStart,
+          totalFragNum,
+          pktNum,
+          pmtuLen,
+          busWidth,
+          (totalLenBytes, workReqOpCode)
+        )
+      } { (psn, _, fragLast, fragIdx, fragNum, pktIdx, pktNum, internalData) =>
+        if (isNormalCaseOrDupCase) { // Normal case
+          // ePSN matches input request packet PSN
+          dut.io.qpAttr.epsn #= psn
+          // oPSN sets to the previous PSN
+          dut.io.qpAttr.rqOutPsn #= psn -% 1
+        } else { // Duplicate request case
+          // ePSN sets to the next PSN
+          dut.io.qpAttr.epsn #= psn +% 1
+          // oPSN sets to the current PSN
+          dut.io.qpAttr.rqOutPsn #= psn
+        }
+
+        val (totalLenBytes, workReqOpCode) = internalData
+        // Only RC is supported
+//        dut.io.rx.pktFrag.bth.transport #= Transports.RC.id
+        val opcode = WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx, pktNum)
+        dut.io.rx.pktFrag.bth.opcodeFull #= opcode.id
+        dut.io.rx.pktFrag.bth.psn #= psn
+        dut.io.rx.pktFrag.last #= fragLast
+        RdmaDataPktSim.setMtyAndPadCnt(
+          dut.io.rx.pktFrag,
+          fragIdx,
+          fragNum,
+          totalLenBytes.toLong,
+          busWidth
+        )
+//        println(
+//          f"${simTime()} time: WR opcode=${workReqOpCode}, PSN=${psn}%X, fragIdx=${fragIdx}%X, fragNum=${fragNum}%X, fragLast=${fragLast}, isLastFragPerPkt=${pktIdx == pktNum - 1}, totalLenBytes=${totalLenBytes}%X, pktIdx=${pktIdx}%X, pktNum=${pktNum}%X"
+//        )
+      }
+      onStreamFire(dut.io.rx.pktFrag, dut.clockDomain) {
+//        println(f"${simTime()} time: dut.io.rx.pktFrag.bth.psn=${dut.io.rx.pktFrag.bth.psn.toInt}")
+        val isNakSeq = !isNormalCaseOrDupCase
+        val isFragLast = dut.io.rx.pktFrag.last.toBoolean
+        val curPsn = dut.io.rx.pktFrag.bth.psn.toInt
+        inputQueue.enqueue(
+          (
+            curPsn,
+            dut.io.rx.pktFrag.data.toBigInt,
+            isFragLast,
+            isNakSeq
+          )
+        )
+        if (isNormalCaseOrDupCase && isFragLast) {
+          assert(
+            dut.io.epsnInc.inc.toBoolean,
+            f"${simTime()} time: dut.io.epsnInc.inc=${dut.io.epsnInc.inc.toBoolean} should be true when dut.io.rx last fire"
+          )
+//          val singlePktNum = 1
+          dut.io.epsnInc.incVal.toInt shouldBe curPsn withClue
+            f"${simTime()} time: dut.io.epsnInc.psnVal=${dut.io.epsnInc.incVal.toInt}%X should == curPsn=${curPsn}%X"
+        }
+      }
+
+      streamSlaveRandomizer(dut.io.tx.checkRst, dut.clockDomain)
+      onStreamFire(dut.io.tx.checkRst, dut.clockDomain) {
+        val ackType = AckTypeSim.decodeFromAeth(dut.io.tx.checkRst.nakAeth)
+        outputQueue.enqueue(
+          (
+            dut.io.tx.checkRst.pktFrag.bth.psn.toInt,
+            dut.io.tx.checkRst.pktFrag.data.toBigInt,
+            dut.io.tx.checkRst.last.toBoolean,
+            AckTypeSim.isNakSeq(ackType)
+          )
+        )
+        if (isNormalCaseOrDupCase) { // Normal request case
+          assert(
+            !dut.io.tx.checkRst.hasNak.toBoolean,
+            f"${simTime()} time: dut.io.tx.checkRst.hasNak=${dut.io.tx.checkRst.hasNak.toBoolean} should be false"
+          )
+//          assert(
+//            dut.io.epsnInc.inc.toBoolean,
+//            f"${simTime()} time: dut.io.epsnInc.inc=${dut.io.epsnInc.inc.toBoolean} should be true, when isNormalCaseOrDupCase=${isNormalCaseOrDupCase}"
+//          )
+        } else { // Duplicate request case
+          assert(
+            AckTypeSim.isNakSeq(
+              AckTypeSim.decodeFromAeth(dut.io.tx.checkRst.nakAeth)
+            ),
+            f"${simTime()} time: NAK type should be NAK SEQ, but NAK code=${dut.io.tx.checkRst.nakAeth.code.toInt} and value=${dut.io.tx.checkRst.nakAeth.value.toInt}, when isNormalCaseOrDupCase=${isNormalCaseOrDupCase}"
+          )
+        }
+      }
+      if (!isNormalCaseOrDupCase) { // Duplicate request case
+        MiscUtils.checkConditionAlways(dut.clockDomain)(
+          !dut.io.epsnInc.inc.toBoolean
+        )
+      }
+      MiscUtils.checkInputOutputQueues(
+        dut.clockDomain,
+        inputQueue,
+        outputQueue,
+        MATCH_CNT
+      )
+    }
+
+  test("ReqCommCheck normal case") {
+    testSendWriteFunc(isNormalCaseOrDupCase = true)
+  }
+
+  test("ReqCommCheck duplicate request case") {
+    testSendWriteFunc(isNormalCaseOrDupCase = false)
+  }
+}
+ */
+class ReqCommCheckTest extends AnyFunSuite {
+  val busWidth = BusWidth.W512
+  val pmtuLen = PMTU.U256
+  val maxFragNum = 137
+
+  val simCfg = SimConfig.allOptimisation.withWave
+    .compile(new ReqCommCheck(busWidth))
+
+  test("ReqCommCheck read atomic request") {
+    simCfg.doSim { dut =>
+      dut.clockDomain.forkStimulus(10)
+
+      val inputPktNumQueue = mutable.Queue[(OpCode.Value, PktNum)]()
+      val outputPktNumQueue = mutable.Queue[(OpCode.Value, PktNum)]()
+
+//      val mtyWidth = busWidth.id / BYTE_WIDTH
+      val fixedPsn = 1
+      dut.io.qpAttr.epsn #= fixedPsn
+      dut.io.qpAttr.pmtu #= pmtuLen.id
+      dut.io.rxQCtrl.flush #= false
+      dut.io.readAtomicRstCacheOccupancy #= 0
+
+      streamMasterDriver(dut.io.rx.pktFrag, dut.clockDomain) {
+        val workReqOpCode = WorkReqSim.randomReadAtomicOpCode()
+        val opcode =
+          WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx = 0, pktNum = 1)
+        dut.io.rx.pktFrag.bth.opcodeFull #= opcode.id
+        dut.io.rx.pktFrag.bth.psn #= fixedPsn
+        dut.io.rx.pktFrag.last #= true
+        val totalLenBytes = if (opcode.isReadReqPkt()) {
+          widthOf(BTH()) + widthOf(RETH())
+        } else {
+          widthOf(BTH()) + widthOf(AtomicEth())
+        }
+        RdmaDataPktSim.setMtyAndPadCnt(
+          dut.io.rx.pktFrag,
+          fragIdx = 0,
+          fragNum = 1,
+          totalLenBytes = totalLenBytes.toLong,
+          busWidth
+        )
+      }
+      onStreamFire(dut.io.rx.pktFrag, dut.clockDomain) {
+        val opcode = OpCode(dut.io.rx.pktFrag.bth.opcodeFull.toInt)
+        if (opcode.isReadReqPkt()) {
+          val (_, _, pktLenBytes) =
+            RethSim.extract(dut.io.rx.pktFrag.data.toBigInt, busWidth)
+          val pktNum = MiscUtils.computePktNum(pktLenBytes, pmtuLen)
+//          println(f"${simTime()} time: pktLenBytes=${pktLenBytes}%X, pktNum=${pktNum}%X")
           inputPktNumQueue.enqueue((opcode, pktNum))
         } else {
           val singlePktNum = 1
@@ -132,7 +410,7 @@ class ReqCommCheckTest extends AnyFunSuite {
         val (totalLenBytes, workReqOpCode) = internalData
         // Only RC is supported
 //        dut.io.rx.pktFrag.bth.transport #= Transports.RC.id
-        val opcode = WorkReqSim.assignOpCode(workReqOpCode, pktIdx, pktNum)
+        val opcode = WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx, pktNum)
         dut.io.rx.pktFrag.bth.opcodeFull #= opcode.id
         dut.io.rx.pktFrag.bth.psn #= psn
         dut.io.rx.pktFrag.last #= fragLast
@@ -230,7 +508,10 @@ class ReqRnrCheckTest extends AnyFunSuite {
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new ReqRnrCheck(busWidth))
 
-  def testFunc(inputNormalOrNot: Boolean, inputHasFatalNakOrSeqNak: Boolean) = {
+  def testFunc(
+      inputNormalOrNot: Boolean,
+      inputHasFatalNakOrSeqNak: Boolean
+  ): Unit =
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
@@ -427,7 +708,6 @@ class ReqRnrCheckTest extends AnyFunSuite {
         )
       }
     }
-  }
 
   test("ReqRnrCheck normal case") {
     testFunc(inputNormalOrNot = true, inputHasFatalNakOrSeqNak = true)
@@ -450,7 +730,7 @@ class ReqDmaInfoExtractorTest extends AnyFunSuite {
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new ReqDmaInfoExtractor(busWidth))
 
-  def testFunc(inputHasNak: Boolean) = {
+  def testFunc(inputHasNak: Boolean): Unit =
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
@@ -639,7 +919,6 @@ class ReqDmaInfoExtractorTest extends AnyFunSuite {
         MATCH_CNT
       )
     }
-  }
 
   test("ReqDmaInfoExtractor normal case") {
     testFunc(inputHasNak = false)
@@ -658,7 +937,7 @@ class ReqAddrValidatorTest extends AnyFunSuite {
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new ReqAddrValidator(busWidth))
 
-  def testFunc(addrCacheQuerySuccess: Boolean, inputHasNak: Boolean) = {
+  def testFunc(addrCacheQuerySuccess: Boolean, inputHasNak: Boolean): Unit =
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
@@ -701,7 +980,7 @@ class ReqAddrValidatorTest extends AnyFunSuite {
         val (totalLenBytes, workReqOpCode) = internalData
         // Only RC is supported
 //        dut.io.rx.checkRst.pktFrag.bth.transport #= Transports.RC.id
-        val opcode = WorkReqSim.assignOpCode(workReqOpCode, pktIdx, pktNum)
+        val opcode = WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx, pktNum)
         dut.io.rx.reqWithRxBufAndDmaInfo.pktFrag.bth.opcodeFull #= opcode.id
         dut.io.rx.reqWithRxBufAndDmaInfo.pktFrag.bth.psn #= psn
         dut.io.rx.reqWithRxBufAndDmaInfo.last #= fragLast
@@ -833,7 +1112,6 @@ class ReqAddrValidatorTest extends AnyFunSuite {
 
       waitUntil(matchQueue.size > MATCH_CNT)
     }
-  }
 
   test("ReqAddrValidator normal case") {
     testFunc(addrCacheQuerySuccess = true, inputHasNak = false)
@@ -852,7 +1130,7 @@ class PktLenCheckTest extends AnyFunSuite {
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new PktLenCheck(busWidth))
 
-  def testFunc(inputHasNak: Boolean, hasLenCheckErr: Boolean) = {
+  def testFunc(inputHasNak: Boolean, hasLenCheckErr: Boolean): Unit =
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
@@ -1006,7 +1284,6 @@ class PktLenCheckTest extends AnyFunSuite {
 
       waitUntil(matchQueue.size > MATCH_CNT)
     }
-  }
 
   test("PktLenCheck normal case") {
     testFunc(inputHasNak = false, hasLenCheckErr = false)
@@ -1289,7 +1566,7 @@ class ReadDmaReqInitiatorTest extends AnyFunSuite {
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new ReadDmaReqInitiator)
 
-  def testFunc(inputDupReq: Boolean) =
+  def testFunc(inputDupReq: Boolean): Unit =
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
@@ -1315,8 +1592,8 @@ class ReadDmaReqInitiatorTest extends AnyFunSuite {
         inputReadReqStream,
         dut.clockDomain
       ) {
-        inputReadReqStream.cachedData.duplicate #= inputDupReq
-        inputReadReqStream.cachedData.opcode #= OpCode.RDMA_READ_REQUEST.id
+        inputReadReqStream.rstCacheData.duplicate #= inputDupReq
+        inputReadReqStream.rstCacheData.opcode #= OpCode.RDMA_READ_REQUEST.id
 //      println(
 //        f"${simTime()} time: opcode=${opcode}, PSN=${psn}, fragIdx=${fragIdx}%X, pktFragNum=${pktFragNum}%X, isLastFragPerPkt=${pktIdx == pktNum - 1}, payloadLenBytes=${payloadLenBytes}%X, pktIdx=${pktIdx}%X, pktNum=${pktNum}%X"
 //      )
@@ -1332,9 +1609,9 @@ class ReadDmaReqInitiatorTest extends AnyFunSuite {
         val isDupReq = inputDupReq
         inputQueue4RstCache.enqueue(
           (
-            inputReadReqStream.cachedData.psnStart.toInt,
-            OpCode(inputReadReqStream.cachedData.opcode.toInt),
-            inputReadReqStream.cachedData.va.toBigInt,
+            inputReadReqStream.rstCacheData.psnStart.toInt,
+            OpCode(inputReadReqStream.rstCacheData.opcode.toInt),
+            inputReadReqStream.rstCacheData.va.toBigInt,
             isDupReq
           )
         )
@@ -1403,7 +1680,7 @@ class RqReadAtomicDmaReqBuilderTest extends AnyFunSuite {
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new RqReadAtomicDmaReqBuilder(busWidth))
 
-  def testFunc(inputReadOrAtomicReq: Boolean) = {
+  def testFunc(inputReadOrAtomicReq: Boolean): Unit =
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
@@ -1499,7 +1776,6 @@ class RqReadAtomicDmaReqBuilderTest extends AnyFunSuite {
         MATCH_CNT
       )
     }
-  }
 
   test("RqReadAtomicDmaReqBuilder read request case") {
     testFunc(inputReadOrAtomicReq = true)
@@ -1518,7 +1794,7 @@ class RqSendWriteDmaReqInitiatorTest extends AnyFunSuite {
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new RqSendWriteDmaReqInitiator(busWidth))
 
-  def testFunc(hasNak: Boolean) = simCfg.doSim { dut =>
+  def testFunc(hasNak: Boolean): Unit = simCfg.doSim { dut =>
     dut.clockDomain.forkStimulus(10)
 
     // Input to DUT
@@ -1721,10 +1997,9 @@ class SendWriteRespGeneratorTest extends AnyFunSuite {
   val maxFragNum = 17
 
   val simCfg = SimConfig.allOptimisation.withWave
-    .withConfig(SpinalConfig(anonymSignalPrefix = "tmp"))
     .compile(new SendWriteRespGenerator(busWidth))
 
-  def testFunc(hasNak: Boolean) = simCfg.doSim { dut =>
+  def testFunc(hasNak: Boolean): Unit = simCfg.doSim { dut =>
     dut.clockDomain.forkStimulus(10)
 
     // Input to DUT
@@ -1893,7 +2168,7 @@ class RqSendWriteWorkCompGeneratorTest extends AnyFunSuite {
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new RqSendWriteWorkCompGenerator)
 
-  def testFunc(hasNak: Boolean) = simCfg.doSim { dut =>
+  def testFunc(hasNak: Boolean): Unit = simCfg.doSim { dut =>
     dut.clockDomain.forkStimulus(10)
 
     dut.io.rxQCtrl.stateErrFlush #= false
@@ -1917,18 +2192,27 @@ class RqSendWriteWorkCompGeneratorTest extends AnyFunSuite {
       }
     }
 
-    // dut.io.sendWriteWorkCompAndAck must be always valid to wait for DMA response
-    streamMasterDriverAlwaysValid(
-      dut.io.sendWriteWorkCompAndAck,
-      dut.clockDomain
-    ) {
-      val psn = psn4WorkCompQueue.dequeue()
-      dut.io.qpAttr.epsn #= psn
-      dut.io.sendWriteWorkCompAndAck.ack.bth.psn #= psn
-      dut.io.sendWriteWorkCompAndAck.ackValid #= true
-      if (hasNak) {
+    if (hasNak) {
+      streamMasterDriver(
+        dut.io.sendWriteWorkCompAndAck,
+        dut.clockDomain
+      ) {
+        val psn = psn4WorkCompQueue.dequeue()
+        dut.io.qpAttr.epsn #= psn
+        dut.io.sendWriteWorkCompAndAck.ack.bth.psn #= psn
+        dut.io.sendWriteWorkCompAndAck.ackValid #= true
         dut.io.sendWriteWorkCompAndAck.ack.aeth.setAsInvReqNak()
-      } else {
+      }
+    } else {
+      // dut.io.sendWriteWorkCompAndAck must be always valid to wait for DMA response
+      streamMasterDriverAlwaysValid(
+        dut.io.sendWriteWorkCompAndAck,
+        dut.clockDomain
+      ) {
+        val psn = psn4WorkCompQueue.dequeue()
+        dut.io.qpAttr.epsn #= psn
+        dut.io.sendWriteWorkCompAndAck.ack.bth.psn #= psn
+        dut.io.sendWriteWorkCompAndAck.ackValid #= true
         dut.io.sendWriteWorkCompAndAck.ack.aeth.setAsNormalAck()
       }
     }
@@ -1941,14 +2225,16 @@ class RqSendWriteWorkCompGeneratorTest extends AnyFunSuite {
       )
     }
 
-    streamMasterDriver(dut.io.dmaWriteResp.resp, dut.clockDomain) {
-      val psn = psn4DmaWriteRespQueue.dequeue()
-      dut.io.dmaWriteResp.resp.psn #= psn
-    }
     if (hasNak) {
+      dut.io.dmaWriteResp.resp.valid #= false
       MiscUtils.checkConditionAlways(dut.clockDomain)(
         !dut.io.dmaWriteResp.resp.ready.toBoolean
       )
+    } else {
+      streamMasterDriver(dut.io.dmaWriteResp.resp, dut.clockDomain) {
+        val psn = psn4DmaWriteRespQueue.dequeue()
+        dut.io.dmaWriteResp.resp.psn #= psn
+      }
     }
 
     streamSlaveRandomizer(dut.io.sendWriteWorkCompOut, dut.clockDomain)
@@ -2056,16 +2342,16 @@ class DupReqHandlerAndReadAtomicRstCacheQueryTest extends AnyFunSuite {
           (
             dut.io.dupReadReqAndRstCacheData.pktFrag.bth.psn.toInt,
             readAtomicRstCacheQuerySuccess,
-            dut.io.dupReadReqAndRstCacheData.cachedData.psnStart.toInt,
-            dut.io.dupReadReqAndRstCacheData.cachedData.pa.toBigInt,
-            dut.io.dupReadReqAndRstCacheData.cachedData.pktNum.toInt,
-            dut.io.dupReadReqAndRstCacheData.cachedData.dlen.toLong
+            dut.io.dupReadReqAndRstCacheData.rstCacheData.psnStart.toInt,
+            dut.io.dupReadReqAndRstCacheData.rstCacheData.pa.toBigInt,
+            dut.io.dupReadReqAndRstCacheData.rstCacheData.pktNum.toInt,
+            dut.io.dupReadReqAndRstCacheData.rstCacheData.dlen.toLong
           )
         )
 
         assert(
-          dut.io.dupReadReqAndRstCacheData.cachedData.duplicate.toBoolean,
-          f"${simTime()} time: dut.io.dupReadReqAndRstCacheData.cachedData.duplicate=${dut.io.dupReadReqAndRstCacheData.cachedData.duplicate.toBoolean} should be true for duplicate read request"
+          dut.io.dupReadReqAndRstCacheData.rstCacheData.duplicate.toBoolean,
+          f"${simTime()} time: dut.io.dupReadReqAndRstCacheData.rstCacheData.duplicate=${dut.io.dupReadReqAndRstCacheData.rstCacheData.duplicate.toBoolean} should be true for duplicate read request"
         )
       }
 
@@ -2245,7 +2531,7 @@ class DupReadDmaReqBuilderTest extends AnyFunSuite {
     psnStart +% scala.util.Random.nextInt(pktNum)
   }
 
-  def testFunc(isPartialRetry: Boolean) =
+  def testFunc(isPartialRetry: Boolean): Unit =
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
@@ -2280,13 +2566,13 @@ class DupReadDmaReqBuilderTest extends AnyFunSuite {
       // Input to DUT
       streamMasterDriver(dut.io.rxDupReadReqAndRstCacheData, dut.clockDomain) {
         val curPsn = nextPsn
-        dut.io.rxDupReadReqAndRstCacheData.cachedData.psnStart #= curPsn
-        dut.io.rxDupReadReqAndRstCacheData.cachedData.opcode #= opcode.id
+        dut.io.rxDupReadReqAndRstCacheData.rstCacheData.psnStart #= curPsn
+        dut.io.rxDupReadReqAndRstCacheData.rstCacheData.opcode #= opcode.id
         val pktLen = WorkReqSim.randomDmaLength()
-        dut.io.rxDupReadReqAndRstCacheData.cachedData.dlen #= pktLen
+        dut.io.rxDupReadReqAndRstCacheData.rstCacheData.dlen #= pktLen
         val pktNum = MiscUtils.computePktNum(pktLen, pmtuLen)
-        dut.io.rxDupReadReqAndRstCacheData.cachedData.pktNum #= pktNum
-        dut.io.rxDupReadReqAndRstCacheData.cachedData.duplicate #= true
+        dut.io.rxDupReadReqAndRstCacheData.rstCacheData.pktNum #= pktNum
+        dut.io.rxDupReadReqAndRstCacheData.rstCacheData.duplicate #= true
 
         val retryStartPsn = if (isPartialRetry) {
           randomRetryStartPsn(curPsn, pktNum)
@@ -2305,12 +2591,12 @@ class DupReadDmaReqBuilderTest extends AnyFunSuite {
         val retryStartPsn =
           dut.io.rxDupReadReqAndRstCacheData.pktFrag.bth.psn.toInt
         val origReqPsnStart =
-          dut.io.rxDupReadReqAndRstCacheData.cachedData.psnStart.toInt
+          dut.io.rxDupReadReqAndRstCacheData.rstCacheData.psnStart.toInt
         val origReqLenBytes =
-          dut.io.rxDupReadReqAndRstCacheData.cachedData.dlen.toLong
+          dut.io.rxDupReadReqAndRstCacheData.rstCacheData.dlen.toLong
         val origPhysicalAddr =
-          dut.io.rxDupReadReqAndRstCacheData.cachedData.pa.toBigInt
-        val psnDiff = MiscUtils.psnDiff(retryStartPsn, origReqPsnStart)
+          dut.io.rxDupReadReqAndRstCacheData.rstCacheData.pa.toBigInt
+        val psnDiff = PsnSim.psnDiff(retryStartPsn, origReqPsnStart)
         val dmaReadOffset = psnDiff << pmtuLen.id
         val dmaLenBytes = if (isPartialRetry) {
           origReqLenBytes - dmaReadOffset
@@ -2324,7 +2610,7 @@ class DupReadDmaReqBuilderTest extends AnyFunSuite {
         }
 
 //        println(
-//          L"${simTime()} time: psnDiff=${psnDiff}%X < origReqPktNum=${dut.io.rxDupReadReqAndRstCacheData.cachedData.pktNum.toInt}%X, retryReqPsn=${retryStartPsn}, retryPhysicalAddr=${retryPhysicalAddr} = origReqPsnStart=${origReqPsnStart} + retryDmaReadOffset=${dmaReadOffset}",
+//          L"${simTime()} time: psnDiff=${psnDiff}%X < origReqPktNum=${dut.io.rxDupReadReqAndRstCacheData.rstCacheData.pktNum.toInt}%X, retryReqPsn=${retryStartPsn}, retryPhysicalAddr=${retryPhysicalAddr} = origReqPsnStart=${origReqPsnStart} + retryDmaReadOffset=${dmaReadOffset}",
 //        )
         inputQueue.enqueue(
           (
@@ -2332,9 +2618,11 @@ class DupReadDmaReqBuilderTest extends AnyFunSuite {
             retryPhysicalAddr,
             dmaLenBytes,
             origReqPsnStart,
-            OpCode(dut.io.rxDupReadReqAndRstCacheData.cachedData.opcode.toInt),
-            dut.io.rxDupReadReqAndRstCacheData.cachedData.va.toBigInt,
-            dut.io.rxDupReadReqAndRstCacheData.cachedData.rkey.toLong
+            OpCode(
+              dut.io.rxDupReadReqAndRstCacheData.rstCacheData.opcode.toInt
+            ),
+            dut.io.rxDupReadReqAndRstCacheData.rstCacheData.va.toBigInt,
+            dut.io.rxDupReadReqAndRstCacheData.rstCacheData.rkey.toLong
           )
         )
       }
@@ -2350,10 +2638,12 @@ class DupReadDmaReqBuilderTest extends AnyFunSuite {
             dut.io.dupReadDmaReqAndRstCacheData.dmaReadReq.psnStart.toInt,
             dut.io.dupReadDmaReqAndRstCacheData.dmaReadReq.pa.toBigInt,
             dut.io.dupReadDmaReqAndRstCacheData.dmaReadReq.lenBytes.toLong,
-            dut.io.dupReadDmaReqAndRstCacheData.cachedData.psnStart.toInt,
-            OpCode(dut.io.dupReadDmaReqAndRstCacheData.cachedData.opcode.toInt),
-            dut.io.dupReadDmaReqAndRstCacheData.cachedData.va.toBigInt,
-            dut.io.dupReadDmaReqAndRstCacheData.cachedData.rkey.toLong
+            dut.io.dupReadDmaReqAndRstCacheData.rstCacheData.psnStart.toInt,
+            OpCode(
+              dut.io.dupReadDmaReqAndRstCacheData.rstCacheData.opcode.toInt
+            ),
+            dut.io.dupReadDmaReqAndRstCacheData.rstCacheData.va.toBigInt,
+            dut.io.dupReadDmaReqAndRstCacheData.rstCacheData.rkey.toLong
           )
         )
       }
@@ -2382,123 +2672,173 @@ class ReadRespGeneratorTest extends AnyFunSuite {
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new ReadRespGenerator(busWidth))
 
-  test("zero DMA length read response test") {
-    simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+  test("input zero DMA length normal read req") {
+    zeroDmaLenTestFunc(inputDupReq = false)
+  }
 
-      val inputPsnQueue = mutable.Queue[PSN]()
-      val outputPsnQueue = mutable.Queue[PSN]()
-      val naturalNumItr = NaturalNumber.from(1).iterator
+  test("input zero DMA length duplicate read req") {
+    zeroDmaLenTestFunc(inputDupReq = true)
+  }
 
-      dut.io.qpAttr.pmtu #= pmtuLen.id
-      dut.io.rxQCtrl.stateErrFlush #= false
+  def zeroDmaLenTestFunc(inputDupReq: Boolean) = simCfg.doSim { dut =>
+    dut.clockDomain.forkStimulus(10)
 
-      // Input to DUT
-      streamMasterDriver(
-        dut.io.readRstCacheDataAndDmaReadRespSegment,
-        dut.clockDomain
-      ) {
-        val psn = naturalNumItr.next()
-        dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.psnStart #= psn
-        dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.psnStart #= psn
-        dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.pktNum #= 0
-        dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.dlen #= 0
-        dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes #= 0
-        dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.mty #= 0
-        dut.io.readRstCacheDataAndDmaReadRespSegment.last #= true
+    val inputPsnQueue = mutable.Queue[PSN]()
+    val outputPsnQueue = mutable.Queue[PSN]()
+    val naturalNumItr = NaturalNumber.from(1).iterator
+
+    dut.io.qpAttr.pmtu #= pmtuLen.id
+    dut.io.rxQCtrl.stateErrFlush #= false
+
+    // Input to DUT
+    streamMasterDriver(
+      dut.io.readRstCacheDataAndDmaReadRespSegment,
+      dut.clockDomain
+    ) {
+      val psn = naturalNumItr.next()
+      dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.psnStart #= psn
+      dut.io.readRstCacheDataAndDmaReadRespSegment.rstCacheData.psnStart #= psn
+      dut.io.readRstCacheDataAndDmaReadRespSegment.rstCacheData.pktNum #= 0
+      dut.io.readRstCacheDataAndDmaReadRespSegment.rstCacheData.dlen #= 0
+      dut.io.readRstCacheDataAndDmaReadRespSegment.rstCacheData.duplicate #= inputDupReq
+      dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes #= 0
+      dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.mty #= 0
+      dut.io.readRstCacheDataAndDmaReadRespSegment.last #= true
+    }
+    onStreamFire(
+      dut.io.readRstCacheDataAndDmaReadRespSegment,
+      dut.clockDomain
+    ) {
+      inputPsnQueue.enqueue(
+        dut.io.readRstCacheDataAndDmaReadRespSegment.rstCacheData.psnStart.toInt
+      )
+    }
+
+    // Check DUT output
+    if (inputDupReq) {
+      MiscUtils.checkConditionAlways(dut.clockDomain)(
+        !dut.io.txReadResp.pktFrag.valid.toBoolean
+      )
+
+      streamSlaveRandomizer(dut.io.txDupReadResp.pktFrag, dut.clockDomain)
+      onStreamFire(dut.io.txDupReadResp.pktFrag, dut.clockDomain) {
+        outputPsnQueue.enqueue(dut.io.txDupReadResp.pktFrag.bth.psn.toInt)
       }
-      onStreamFire(
-        dut.io.readRstCacheDataAndDmaReadRespSegment,
-        dut.clockDomain
-      ) {
-        inputPsnQueue.enqueue(
-          dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.psnStart.toInt
-        )
-      }
+    } else {
+      MiscUtils.checkConditionAlways(dut.clockDomain)(
+        !dut.io.txDupReadResp.pktFrag.valid.toBoolean
+      )
 
-      // Check DUT output
       streamSlaveRandomizer(dut.io.txReadResp.pktFrag, dut.clockDomain)
       onStreamFire(dut.io.txReadResp.pktFrag, dut.clockDomain) {
         outputPsnQueue.enqueue(dut.io.txReadResp.pktFrag.bth.psn.toInt)
       }
-
-      MiscUtils.checkInputOutputQueues(
-        dut.clockDomain,
-        inputPsnQueue,
-        outputPsnQueue,
-        MATCH_CNT
-      )
     }
+    MiscUtils.checkInputOutputQueues(
+      dut.clockDomain,
+      inputPsnQueue,
+      outputPsnQueue,
+      MATCH_CNT
+    )
   }
 
-  test("non-zero DMA length read response test") {
-    simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+  test("input non-zero DMA length normal read req") {
+    testFunc(inputDupReq = false)
+  }
 
-      val inputDataQueue =
-        mutable.Queue[(PktFragData, MTY, PktNum, PsnStart, PktLen, FragLast)]()
-      val outputDataQueue = mutable.Queue[(PktFragData, MTY, PSN, FragLast)]()
+  test("input non-zero DMA length duplicate read req") {
+    testFunc(inputDupReq = true)
+  }
 
-      dut.io.qpAttr.pmtu #= pmtuLen.id
-      dut.io.rxQCtrl.stateErrFlush #= false
-      dut.io.readRstCacheDataAndDmaReadRespSegment.valid #= false
+  def testFunc(inputDupReq: Boolean) = simCfg.doSim { dut =>
+    dut.clockDomain.forkStimulus(10)
 
-      // Input to DUT
-      val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
-        SendWriteReqReadRespInputGen.getItr(pmtuLen, busWidth)
-      pktFragStreamMasterDriver(
-        dut.io.readRstCacheDataAndDmaReadRespSegment,
-        dut.clockDomain
-      ) {
-        val totalFragNum = totalFragNumItr.next()
-        val pktNum = pktNumItr.next()
-        val psnStart = psnStartItr.next()
-        val totalLenBytes = totalLenItr.next()
+    val inputDataQueue =
+      mutable.Queue[(PktFragData, MTY, PktNum, PsnStart, PktLen, FragLast)]()
+    val outputDataQueue = mutable.Queue[(PktFragData, MTY, PSN, FragLast)]()
 
-        (psnStart, totalFragNum, pktNum, pmtuLen, busWidth, totalLenBytes)
-      } {
-        (
-            _,
-            psnStart,
-            fragLast,
-            fragIdx,
-            totalFragNum,
-            _,
-            pktNum,
-            totalLenBytes
-        ) =>
-          DmaReadRespSim.setMtyAndLen(
-            dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp,
-            fragIdx,
-            totalFragNum,
-            totalLenBytes.toLong,
-            busWidth
-          )
+    dut.io.qpAttr.pmtu #= pmtuLen.id
+    dut.io.rxQCtrl.stateErrFlush #= false
+    dut.io.readRstCacheDataAndDmaReadRespSegment.valid #= false
+
+    // Input to DUT
+    val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
+      SendWriteReqReadRespInputGen.getItr(pmtuLen, busWidth)
+    pktFragStreamMasterDriver(
+      dut.io.readRstCacheDataAndDmaReadRespSegment,
+      dut.clockDomain
+    ) {
+      val totalFragNum = totalFragNumItr.next()
+      val pktNum = pktNumItr.next()
+      val psnStart = psnStartItr.next()
+      val totalLenBytes = totalLenItr.next()
+
+      (psnStart, totalFragNum, pktNum, pmtuLen, busWidth, totalLenBytes)
+    } {
+      (
+          _,
+          psnStart,
+          fragLast,
+          fragIdx,
+          totalFragNum,
+          _,
+          pktNum,
+          totalLenBytes
+      ) =>
+        DmaReadRespSim.setMtyAndLen(
+          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp,
+          fragIdx,
+          totalFragNum,
+          totalLenBytes.toLong,
+          busWidth
+        )
 //        println(
 //          f"${simTime()} time: fragIdx=${fragIdx}, fragNum=${fragNum}, isLastInputFrag=${isLastInputFrag}, isLastFragPerPkt=${isLastFragPerPkt}, fragLast=${fragLast}, totalLenBytes=${totalLenBytes}, pktNum=${pktNum}, mtyWidth=${mtyWidth}, residue=${totalLenBytes % mtyWidth}, mty=${mty}%X"
 //        )
 
-          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.psnStart #= psnStart
-          dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.psnStart #= psnStart
-          dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.dlen #= totalLenBytes
-          dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.pktNum #= pktNum
-          dut.io.readRstCacheDataAndDmaReadRespSegment.last #= fragLast
-      }
-      onStreamFire(
-        dut.io.readRstCacheDataAndDmaReadRespSegment,
-        dut.clockDomain
-      ) {
-        inputDataQueue.enqueue(
+        dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.psnStart #= psnStart
+        dut.io.readRstCacheDataAndDmaReadRespSegment.rstCacheData.psnStart #= psnStart
+        dut.io.readRstCacheDataAndDmaReadRespSegment.rstCacheData.dlen #= totalLenBytes
+        dut.io.readRstCacheDataAndDmaReadRespSegment.rstCacheData.pktNum #= pktNum
+        dut.io.readRstCacheDataAndDmaReadRespSegment.rstCacheData.duplicate #= inputDupReq
+        dut.io.readRstCacheDataAndDmaReadRespSegment.last #= fragLast
+    }
+    onStreamFire(
+      dut.io.readRstCacheDataAndDmaReadRespSegment,
+      dut.clockDomain
+    ) {
+      inputDataQueue.enqueue(
+        (
+          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.data.toBigInt,
+          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.mty.toBigInt,
+          dut.io.readRstCacheDataAndDmaReadRespSegment.rstCacheData.pktNum.toInt,
+          dut.io.readRstCacheDataAndDmaReadRespSegment.rstCacheData.psnStart.toInt,
+          dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes.toLong,
+          dut.io.readRstCacheDataAndDmaReadRespSegment.last.toBoolean
+        )
+      )
+    }
+
+    if (inputDupReq) {
+      MiscUtils.checkConditionAlways(dut.clockDomain)(
+        !dut.io.txReadResp.pktFrag.valid.toBoolean
+      )
+
+      streamSlaveRandomizer(dut.io.txDupReadResp.pktFrag, dut.clockDomain)
+      onStreamFire(dut.io.txDupReadResp.pktFrag, dut.clockDomain) {
+        outputDataQueue.enqueue(
           (
-            dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.data.toBigInt,
-            dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.mty.toBigInt,
-            dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.pktNum.toInt,
-            dut.io.readRstCacheDataAndDmaReadRespSegment.resultCacheData.psnStart.toInt,
-            dut.io.readRstCacheDataAndDmaReadRespSegment.dmaReadResp.lenBytes.toLong,
-            dut.io.readRstCacheDataAndDmaReadRespSegment.last.toBoolean
+            dut.io.txDupReadResp.pktFrag.data.toBigInt,
+            dut.io.txDupReadResp.pktFrag.mty.toBigInt,
+            dut.io.txDupReadResp.pktFrag.bth.psn.toInt,
+            dut.io.txDupReadResp.pktFrag.last.toBoolean
           )
         )
       }
+    } else {
+      MiscUtils.checkConditionAlways(dut.clockDomain)(
+        !dut.io.txDupReadResp.pktFrag.valid.toBoolean
+      )
 
       streamSlaveRandomizer(dut.io.txReadResp.pktFrag, dut.clockDomain)
       onStreamFire(dut.io.txReadResp.pktFrag, dut.clockDomain) {
@@ -2511,14 +2851,13 @@ class ReadRespGeneratorTest extends AnyFunSuite {
           )
         )
       }
-
-      MiscUtils.checkSendWriteReqReadResp(
-        dut.clockDomain,
-        inputDataQueue,
-        outputDataQueue,
-        busWidth
-      )
     }
+    MiscUtils.checkSendWriteReqReadResp(
+      dut.clockDomain,
+      inputDataQueue,
+      outputDataQueue,
+      busWidth
+    )
   }
 }
 
@@ -2541,6 +2880,7 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
       // Input to DUT
       streamMasterDriver(dut.io.readRstCacheData, dut.clockDomain) {
         dut.io.readRstCacheData.dlen #= 0
+//        dut.io.readRstCacheData.duplicate #= false
       }
       onStreamFire(dut.io.readRstCacheData, dut.clockDomain) {
         psnQueue.enqueue(dut.io.readRstCacheData.psnStart.toInt)
@@ -2556,20 +2896,20 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
       )
       onStreamFire(dut.io.readRstCacheDataAndDmaReadResp, dut.clockDomain) {
 //        println(
-//          f"${simTime()} time: the read request has zero DMA length, but dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.dlen=${dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.dlen.toLong}%X"
+//          f"${simTime()} time: the read request has zero DMA length, but dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.dlen=${dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.dlen.toLong}%X"
 //        )
         assert(
-          dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.dlen.toLong == 0,
-          f"${simTime()} time: the read request has zero DMA length, but dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.dlen=${dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.dlen.toLong}%X"
+          dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.dlen.toLong == 0,
+          f"${simTime()} time: the read request has zero DMA length, but dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.dlen=${dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.dlen.toLong}%X"
         )
 
         val inputPsnStart = psnQueue.dequeue()
 //        println(
-//          f"${simTime()} time: output PSN io.readRstCacheDataAndDmaReadResp.resultCacheData.psnStart=${dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt}%X not match input PSN io.readRstCacheData.psnStart=${inputPsnStart}%X"
+//          f"${simTime()} time: output PSN io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart=${dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart.toInt}%X not match input PSN io.readRstCacheData.psnStart=${inputPsnStart}%X"
 //        )
         assert(
-          dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt == inputPsnStart,
-          f"${simTime()} time: output PSN io.readRstCacheDataAndDmaReadResp.resultCacheData.psnStart=${dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt}%X not match input PSN io.readRstCacheData.psnStart=${inputPsnStart}%X"
+          dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart.toInt == inputPsnStart,
+          f"${simTime()} time: output PSN io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart=${dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart.toInt}%X not match input PSN io.readRstCacheData.psnStart=${inputPsnStart}%X"
         )
 
         matchQueue.enqueue(inputPsnStart)
@@ -2611,6 +2951,7 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
         dut.io.readRstCacheData.dlen #= totalLenBytes
         dut.io.readRstCacheData.psnStart #= psnStart
         dut.io.readRstCacheData.pktNum #= pktNum
+//        dut.io.readRstCacheData.duplicate #= false
       }
       onStreamFire(dut.io.readRstCacheData, dut.clockDomain) {
 //        println(
@@ -2667,11 +3008,11 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
         outputQueue.enqueue(
           (
             dut.io.readRstCacheDataAndDmaReadResp.dmaReadResp.data.toBigInt,
-            dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.psnStart.toInt,
+            dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart.toInt,
             dut.io.readRstCacheDataAndDmaReadResp.dmaReadResp.psnStart.toInt,
-            dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.dlen.toLong,
+            dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.dlen.toLong,
             dut.io.readRstCacheDataAndDmaReadResp.dmaReadResp.lenBytes.toLong,
-            dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.pktNum.toInt,
+            dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.pktNum.toInt,
             dut.io.readRstCacheDataAndDmaReadResp.last.toBoolean
           )
         )
@@ -2708,7 +3049,7 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
             )
 
 //          println(
-//            f"${simTime()} time: output packet num=${dut.io.readRstCacheDataAndDmaReadResp.resultCacheData.pktNum.toInt} not match input packet num=${pktNumIn}%X"
+//            f"${simTime()} time: output packet num=${dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.pktNum.toInt} not match input packet num=${pktNumIn}%X"
 //          )
             assert(
               pktNumIn == pktNumOut,
@@ -2746,5 +3087,393 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
 
       waitUntil(matchQueue.size > MATCH_CNT)
     }
+  }
+}
+
+class RqOutTest extends AnyFunSuite {
+  val busWidth = BusWidth.W512
+  val pmtuLen = PMTU.U512
+  val maxFragNum = 137
+
+  val simCfg = SimConfig.allOptimisation.withWave
+    .withConfig(SpinalConfig(anonymSignalPrefix = "tmp"))
+    .compile(new RqOut(busWidth))
+
+  def insertToOutPsnRangeQueue(
+      payloadFragNumItr: PayloadFragNumItr,
+      pktNumItr: PktNumItr,
+      psnStartItr: PsnStartItr,
+      payloadLenItr: PayloadLenItr,
+      inputSendWriteRespMetaDataQueue: mutable.Queue[(PSN, OpCode.Value)],
+      inputReadRespMetaDataQueue: mutable.Queue[(PSN, OpCode.Value, FragLast)],
+      inputAtomicRespMetaDataQueue: mutable.Queue[(PSN, OpCode.Value)],
+      readAtomicRstCachePopQueue: mutable.Queue[
+        (OpCode.Value, PsnStart, PktNum)
+      ],
+      outPsnRangeQueue: mutable.Queue[(OpCode.Value, PsnStart, PsnEnd)]
+  ) =
+    for (_ <- 0 until PENDING_REQ_NUM) {
+      val _ = payloadFragNumItr.next()
+      val pktNum = pktNumItr.next()
+      val psnStart = psnStartItr.next()
+      val payloadLenBytes = payloadLenItr.next()
+      val workReqOpCode = WorkReqSim.randomSendWriteReadAtomicOpCode()
+      val psnEnd = psnStart +% (pktNum - 1)
+
+      val isReadReq = WorkReqSim.isReadReq(workReqOpCode)
+      val isAtomicReq = WorkReqSim.isAtomicReq(workReqOpCode)
+      val isSendReq = WorkReqSim.isSendReq(workReqOpCode)
+      val isWriteReq = WorkReqSim.isWriteReq(workReqOpCode)
+//      println(
+//        f"${simTime()} time: psnStart=${psnStart}%X, psnEnd=${psnEnd}%X, workReqOpCode: isSendReq=${isSendReq}, isWriteReq=${isWriteReq} isReadReq=${isReadReq}, isAtomicReq=${isAtomicReq}"
+//      )
+
+      if (isReadReq) {
+        outPsnRangeQueue.enqueue(
+          (OpCode.RDMA_READ_REQUEST, psnStart, psnEnd)
+        )
+        readAtomicRstCachePopQueue.enqueue(
+          (OpCode.RDMA_READ_REQUEST, psnStart, pktNum)
+        )
+        for (pktIdx <- 0 until pktNum) {
+          val psn = psnStart +% pktIdx
+          val readRespOpCode =
+            WorkReqSim.assignReadRespOpCode(pktIdx, pktNum)
+          val pktFragNum = RdmaDataPktSim.computePktFragNum(
+            pmtuLen,
+            busWidth,
+            readRespOpCode,
+            payloadLenBytes.toLong,
+            pktIdx,
+            pktNum
+          )
+          for (fragIdx <- 0 until pktFragNum) {
+            val isLastFrag = fragIdx == pktFragNum - 1
+            inputReadRespMetaDataQueue.enqueue(
+              (
+                psn,
+                readRespOpCode,
+                isLastFrag
+              )
+            )
+          }
+        }
+      } else if (isAtomicReq) {
+        val singlePktNum = 1
+        outPsnRangeQueue.enqueue((OpCode.COMPARE_SWAP, psnEnd, psnEnd))
+        readAtomicRstCachePopQueue.enqueue(
+          (OpCode.COMPARE_SWAP, psnStart, singlePktNum)
+        )
+        inputAtomicRespMetaDataQueue.enqueue(
+          (
+            psnEnd,
+            OpCode.ATOMIC_ACKNOWLEDGE
+          )
+        )
+      } else {
+        if (isWriteReq) {
+          outPsnRangeQueue.enqueue((OpCode.RDMA_WRITE_LAST, psnEnd, psnEnd))
+        } else if (isSendReq) {
+          outPsnRangeQueue.enqueue((OpCode.SEND_LAST, psnEnd, psnEnd))
+        } else {
+          assert(
+            isSendReq || isWriteReq || isReadReq || isAtomicReq,
+            f"${simTime()} time: invalid WR opcode=${workReqOpCode}, must be send/write/read/atomic"
+          )
+        }
+
+        inputSendWriteRespMetaDataQueue.enqueue(
+          (
+            psnEnd,
+            OpCode.ACKNOWLEDGE
+          )
+        )
+      }
+    }
+
+  def testFunc(normalOrDupResp: Boolean, hasErrResp: Boolean): Unit =
+    simCfg.doSim(295294623) { dut =>
+      dut.clockDomain.forkStimulus(10)
+
+      // Input to DUT
+      val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
+        SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
+
+      val inputSendWriteRespMetaDataQueue = mutable.Queue[(PSN, OpCode.Value)]()
+      val inputReadRespMetaDataQueue =
+        mutable.Queue[(PSN, OpCode.Value, FragLast)]()
+      val inputAtomicRespMetaDataQueue = mutable.Queue[(PSN, OpCode.Value)]()
+      val outPsnRangeQueue = mutable.Queue[(OpCode.Value, PsnStart, PsnEnd)]()
+      val readAtomicRstCachePopQueue =
+        mutable.Queue[(OpCode.Value, PsnStart, PktNum)]()
+
+      val inputSendWriteRespOrErrRespQueue = mutable
+        .Queue[(PSN, OpCode.Value, AethRsvd, AethCode, AethValue, AethMsn)]()
+      val inputReadRespQueue =
+        mutable.Queue[(PSN, OpCode.Value, PktFragData, FragLast)]()
+      val inputAtomicRespQueue = mutable.Queue[
+        (
+            PSN,
+            OpCode.Value,
+            AethRsvd,
+            AethCode,
+            AethValue,
+            AethMsn,
+            AtomicAckEthOrig
+        )
+      ]()
+
+      val outputSendWriteRespQueue = mutable
+        .Queue[(PSN, OpCode.Value, AethRsvd, AethCode, AethValue, AethMsn)]()
+      val outputReadRespQueue =
+        mutable.Queue[(PSN, OpCode.Value, PktFragData, FragLast)]()
+      val outputAtomicRespQueue = mutable.Queue[
+        (
+            PSN,
+            OpCode.Value,
+            AethRsvd,
+            AethCode,
+            AethValue,
+            AethMsn,
+            AtomicAckEthOrig
+        )
+      ]()
+
+      dut.io.qpAttr.pmtu #= pmtuLen.id
+      dut.io.rxQCtrl.stateErrFlush #= false
+
+      // Disable normal/error response or duplicate response
+      if (normalOrDupResp) { // Normal response
+        dut.io.rxDupSendWriteResp.valid #= false
+        dut.io.rxDupReadResp.pktFrag.valid #= false
+        dut.io.rxDupAtomicResp.valid #= false
+      } else { // Duplicate response
+        dut.io.readAtomicRstCachePop.valid #= false
+        dut.io.outPsnRangeFifoPush.valid #= false
+
+        dut.io.rxSendWriteResp.valid #= false
+        dut.io.rxReadResp.pktFrag.valid #= false
+        dut.io.rxAtomicResp.valid #= false
+        dut.io.rxErrResp.valid #= false
+      }
+//    dut.io.tx.pktFrag.ready #= false
+
+      insertToOutPsnRangeQueue(
+        payloadFragNumItr,
+        pktNumItr,
+        psnStartItr,
+        payloadLenItr,
+        inputSendWriteRespMetaDataQueue,
+        inputReadRespMetaDataQueue,
+        inputAtomicRespMetaDataQueue,
+        readAtomicRstCachePopQueue,
+        outPsnRangeQueue
+      )
+      if (normalOrDupResp) {
+        streamMasterDriverAlwaysValid(
+          dut.io.outPsnRangeFifoPush,
+          dut.clockDomain
+        ) {
+          val (opcode, psnStart, psnEnd) = outPsnRangeQueue.dequeue()
+          dut.io.outPsnRangeFifoPush.opcode #= opcode.id
+          dut.io.outPsnRangeFifoPush.start #= psnStart
+          dut.io.outPsnRangeFifoPush.end #= psnEnd
+          dut.io.qpAttr.epsn #= psnEnd
+        }
+
+        streamMasterDriverAlwaysValid(
+          dut.io.readAtomicRstCachePop,
+          dut.clockDomain
+        ) {
+          val (opcode, psnStart, pktNum) = readAtomicRstCachePopQueue.dequeue()
+          dut.io.readAtomicRstCachePop.psnStart #= psnStart
+          dut.io.readAtomicRstCachePop.opcode #= opcode.id
+          dut.io.readAtomicRstCachePop.pktNum #= pktNum
+        }
+      }
+      fork {
+        while (true) {
+          waitUntil(
+            inputSendWriteRespMetaDataQueue.isEmpty || inputReadRespMetaDataQueue.isEmpty || inputAtomicRespMetaDataQueue.isEmpty || outPsnRangeQueue.isEmpty
+          )
+
+          insertToOutPsnRangeQueue(
+            payloadFragNumItr,
+            pktNumItr,
+            psnStartItr,
+            payloadLenItr,
+            inputSendWriteRespMetaDataQueue,
+            inputReadRespMetaDataQueue,
+            inputAtomicRespMetaDataQueue,
+            readAtomicRstCachePopQueue,
+            outPsnRangeQueue
+          )
+        }
+      }
+      // Insert to dut.io.outPsnRangeFifoPush first
+//    waitUntil(dut.io.outPsnRangeFifoPush.valid.toBoolean && dut.io.outPsnRangeFifoPush.ready.toBoolean)
+//    waitUntil(outPsnRangeQueue.isEmpty)
+
+      // Either send/write response or error response
+      val sendWriteRespOrErrRespIn = if (normalOrDupResp) {
+        if (hasErrResp) {
+          dut.io.rxErrResp
+        } else {
+          dut.io.rxSendWriteResp
+        }
+      } else {
+        dut.io.rxDupSendWriteResp
+      }
+
+      streamMasterDriverAlwaysValid(
+        sendWriteRespOrErrRespIn,
+        dut.clockDomain
+      ) {
+        val (psnEnd, opcode) = inputSendWriteRespMetaDataQueue.dequeue()
+        sendWriteRespOrErrRespIn.bth.psn #= psnEnd
+        sendWriteRespOrErrRespIn.bth.opcodeFull #= opcode.id
+      }
+      onStreamFire(sendWriteRespOrErrRespIn, dut.clockDomain) {
+        val psn = sendWriteRespOrErrRespIn.bth.psn.toInt
+        val opcode = OpCode(sendWriteRespOrErrRespIn.bth.opcodeFull.toInt)
+        inputSendWriteRespOrErrRespQueue.enqueue(
+          (
+            psn,
+            opcode,
+            sendWriteRespOrErrRespIn.aeth.rsvd.toInt,
+            sendWriteRespOrErrRespIn.aeth.code.toInt,
+            sendWriteRespOrErrRespIn.aeth.value.toInt,
+            sendWriteRespOrErrRespIn.aeth.msn.toInt
+          )
+        )
+//      println(
+//        f"${simTime()} time: sendWriteRespOrErrRespIn has opcode=${opcode}, PSN=${psn}, when normalOrDupResp=${normalOrDupResp} and hasErrResp=${hasErrResp}"
+//      )
+      }
+
+      val readRespIn = if (normalOrDupResp) {
+        dut.io.rxReadResp.pktFrag
+      } else {
+        dut.io.rxDupReadResp.pktFrag
+      }
+      streamMasterDriverAlwaysValid(readRespIn, dut.clockDomain) {
+        val (psnEnd, opcode, isLastFrag) = inputReadRespMetaDataQueue.dequeue()
+        readRespIn.bth.psn #= psnEnd
+        readRespIn.bth.opcodeFull #= opcode.id
+        readRespIn.last #= isLastFrag
+      }
+      onStreamFire(readRespIn, dut.clockDomain) {
+        val psn = readRespIn.bth.psn.toInt
+        val opcode = OpCode(readRespIn.bth.opcodeFull.toInt)
+        inputReadRespQueue.enqueue(
+          (
+            psn,
+            opcode,
+            readRespIn.data.toBigInt,
+            readRespIn.last.toBoolean
+          )
+        )
+//      println(
+//        f"${simTime()} time: readRespIn has opcode=${opcode}, PSN=${psn}, when normalOrDupResp=${normalOrDupResp}"
+//      )
+      }
+
+      val atomicRespIn = if (normalOrDupResp) {
+        dut.io.rxAtomicResp
+      } else {
+        dut.io.rxDupAtomicResp
+      }
+      streamMasterDriverAlwaysValid(atomicRespIn, dut.clockDomain) {
+        val (psnEnd, opcode) = inputAtomicRespMetaDataQueue.dequeue()
+        atomicRespIn.bth.psn #= psnEnd
+        atomicRespIn.bth.opcodeFull #= opcode.id
+      }
+      onStreamFire(atomicRespIn, dut.clockDomain) {
+        val psn = atomicRespIn.bth.psn.toInt
+        val opcode = OpCode(atomicRespIn.bth.opcodeFull.toInt)
+        inputAtomicRespQueue.enqueue(
+          (
+            psn,
+            opcode,
+            atomicRespIn.aeth.rsvd.toInt,
+            atomicRespIn.aeth.code.toInt,
+            atomicRespIn.aeth.value.toInt,
+            atomicRespIn.aeth.msn.toInt,
+            atomicRespIn.atomicAckEth.orig.toBigInt
+          )
+        )
+//      println(
+//        f"${simTime()} time: atomicRespIn has opcode=${opcode}, PSN=${psn}, rsvd=${atomicRespIn.aeth.rsvd.toInt}%X, code=${atomicRespIn.aeth.code.toInt}%X, value=${atomicRespIn.aeth.value.toInt}%X, msn=${atomicRespIn.aeth.msn.toInt}%X, orig=${atomicRespIn.atomicAckEth.orig.toBigInt}%X, when normalOrDupResp=${normalOrDupResp}"
+//      )
+      }
+
+      var prePsn = -1
+      streamSlaveAlwaysReady(dut.io.tx.pktFrag, dut.clockDomain)
+      onStreamFire(dut.io.tx.pktFrag, dut.clockDomain) {
+        val psn = dut.io.tx.pktFrag.bth.psn.toInt
+        val opcode = OpCode(dut.io.tx.pktFrag.bth.opcodeFull.toInt)
+        val pktFragData = dut.io.tx.pktFrag.data.toBigInt
+        val isLastFrag = dut.io.tx.pktFrag.last.toBoolean
+
+        if (normalOrDupResp && prePsn >= 0) { // Duplicate response might not in PSN order
+          val curPsn = dut.io.qpAttr.epsn.toInt
+          assert(
+            PsnSim.psnCmp(prePsn, psn, curPsn) <= 0,
+            f"${simTime()} time: prePsn=${prePsn} should < PSN=${psn} in PSN order, curPsn=dut.io.qpAttr.epsn=${curPsn}"
+          )
+        }
+        prePsn = psn
+
+        val (rsvd, code, value, msn) = AethSim.extract(pktFragData, busWidth)
+        if (opcode.isReadRespPkt()) {
+          outputReadRespQueue.enqueue((psn, opcode, pktFragData, isLastFrag))
+        } else if (opcode.isAtomicRespPkt()) {
+          val orig = AtomicAckEthSim.extract(pktFragData, busWidth)
+          outputAtomicRespQueue.enqueue(
+            (psn, opcode, rsvd, code, value, msn, orig)
+          )
+        } else {
+          opcode shouldBe OpCode.ACKNOWLEDGE withClue {
+            f"${simTime()} time: opcode=${opcode} should be ACKNOWLEDGE"
+          }
+          outputSendWriteRespQueue.enqueue(
+            (psn, opcode, rsvd, code, value, msn)
+          )
+        }
+//      println(
+//        f"${simTime()} time: dut.io.tx has opcode=${opcode}, PSN=${psn}, rsvd=${rsvd}%X, code=${code}%X, value=${value}%X, msn=${msn}%X, pktFragData=${pktFragData}%X"
+//      )
+      }
+
+      MiscUtils.checkInputOutputQueues(
+        dut.clockDomain,
+        inputSendWriteRespOrErrRespQueue,
+        outputSendWriteRespQueue,
+        MATCH_CNT
+      )
+      MiscUtils.checkInputOutputQueues(
+        dut.clockDomain,
+        inputAtomicRespQueue,
+        outputAtomicRespQueue,
+        MATCH_CNT
+      )
+      MiscUtils.checkInputOutputQueues(
+        dut.clockDomain,
+        inputReadRespQueue,
+        outputReadRespQueue,
+        MATCH_CNT
+      )
+    }
+
+  test("RqOut normal response only case") {
+    testFunc(normalOrDupResp = true, hasErrResp = false)
+  }
+
+  test("RqOut normal and error response case") {
+    testFunc(normalOrDupResp = true, hasErrResp = true)
+  }
+
+  test("RqOut duplicate response case") {
+    testFunc(normalOrDupResp = false, hasErrResp = false)
   }
 }

@@ -5,7 +5,7 @@ import spinal.core.sim._
 import spinal.lib._
 
 import ConstantSettings._
-import PsnSim._
+//import PsnSim._
 import RdmaConstants._
 import RdmaTypeReDef._
 
@@ -13,6 +13,12 @@ import org.scalatest.matchers.should.Matchers._
 //import org.scalatest.AppendedClues._
 import scala.collection.mutable
 import scala.util.Random
+
+case class PayloadFragNumItr(payloadFragNumItr: Iterator[FragNum]) {
+  def next(): FragNum = {
+    payloadFragNumItr.next()
+  }
+}
 
 case class PsnStartItr(psnStartItr: Iterator[Long]) {
   def next(): Int = {
@@ -156,7 +162,7 @@ object SendWriteReqReadRespInputGen {
     val payloadLenItr = payloadLenGen.iterator
 
     (
-      payloadFragNumItr,
+      PayloadFragNumItr(payloadFragNumItr),
       PktNumItr(pktNumItr),
       PsnStartItr(psnStartItr),
       PayloadLenItr(payloadLenItr)
@@ -565,77 +571,6 @@ object MiscUtils {
       clockDomain.waitFallingEdge()
     }
     queue.dequeue()
-  }
-
-  def psnCmp(psnA: PSN, psnB: PSN, curPsn: PSN): Int = {
-    require(
-      psnA >= 0 && psnB >= 0 && curPsn >= 0,
-      f"${simTime()} time: psnA=${psnA}, psnB=${psnB}, curPsn=${curPsn} should all >= 0"
-    )
-    require(
-      psnA < TOTAL_PSN && psnB < TOTAL_PSN && curPsn < TOTAL_PSN,
-      f"${simTime()} time: psnA=${psnA}, psnB=${psnB}, curPsn=${curPsn} should all < TOTAL_PSN=${TOTAL_PSN}"
-    )
-    val oldestPSN = (curPsn - HALF_MAX_PSN) & PSN_MASK
-
-    if (psnA == psnB) {
-      0
-    } else if (psnA < psnB) {
-      if (oldestPSN <= psnA) {
-        -1 // LESSER
-      } else if (psnB <= oldestPSN) {
-        -1 // LESSER
-      } else {
-        1 // GREATER
-      }
-    } else { // psnA > psnB
-      if (psnA <= oldestPSN) {
-        1 // GREATER
-      } else if (oldestPSN <= psnB) {
-        1 // GREATER
-      } else {
-        -1 // LESSER
-      }
-    }
-  }
-
-  /** psnA - psnB, PSN diff is always <= HALF_MAX_PSN
-    */
-  def psnDiff(psnA: PSN, psnB: PSN): PSN = {
-    require(
-      psnA >= 0 && psnB >= 0,
-      f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both >= 0"
-    )
-    require(
-      psnA < TOTAL_PSN && psnB < TOTAL_PSN,
-      f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both < TOTAL_PSN=${TOTAL_PSN}"
-    )
-    val diff = (psnA + TOTAL_PSN) -% psnB
-//    val (min, max) = if (psnA > psnB) {
-//      (psnB, psnA)
-//    } else {
-//      (psnA, psnB)
-//    }
-//    val diff = max - min
-    if (diff > HALF_MAX_PSN) {
-      TOTAL_PSN - diff
-    } else {
-      diff
-    }
-  }
-
-  /** psnA + psnB, modulo by TOTAL_PSN
-    */
-  def psnAdd(psnA: Int, psnB: Int): Int = {
-    require(
-      psnA >= 0 && psnB >= 0,
-      f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both >= 0"
-    )
-    require(
-      psnA < TOTAL_PSN && psnB < TOTAL_PSN,
-      f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both < TOTAL_PSN=${TOTAL_PSN}"
-    )
-    (psnA + psnB) % TOTAL_PSN
   }
 
   def computeFragNum(pktLenBytes: Long, busWidth: BusWidth.Value): Int = {

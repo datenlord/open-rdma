@@ -92,12 +92,7 @@ class RespAckExtractor(busWidth: BusWidth) extends Component {
 
   val acknowledge = Acknowledge()
   acknowledge.bth := inputRespPktFrag.bth
-  acknowledge.aeth.assignFromBits(
-    inputRespPktFrag.data(
-      (busWidth.id - widthOf(BTH()) - widthOf(AETH())) until
-        (busWidth.id - widthOf(BTH()))
-    )
-  )
+  acknowledge.aeth := inputRespPktFrag.extractAeth()
 
   val hasAeth = OpCode.respPktHasAeth(inputRespPktFrag.bth.opcode)
   // Just discard ACK with reserved code

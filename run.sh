@@ -68,3 +68,4 @@ $MILL rocev2.test.testOnly rdma.RqSendWriteWorkCompGeneratorTest
 
 $MILL rocev2.test.testOnly rdma.RqReadDmaRespHandlerTest
 $MILL rocev2.test.testOnly rdma.ReadRespGeneratorTest
+$MILL rocev2.test.testOnly rdma.RqOutTest

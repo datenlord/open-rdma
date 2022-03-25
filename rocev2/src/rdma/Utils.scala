@@ -585,7 +585,7 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
   }
 
   val cachedJoinStream = RegNextWhen(joinStream.payload, cond = joinStream.fire)
-  val cachedData = cachedJoinStream._1.data
+  val rstCacheData = cachedJoinStream._1.data
   val cachedMty = cachedJoinStream._1.mty
   val cachedHeader = cachedJoinStream._2.header
 
@@ -605,7 +605,7 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
   val maxHeaderWidthBytes = (widthOf(BTH()) + widthOf(AtomicEth())) / BYTE_WIDTH
   switch(inputHeaderMtyWidth) {
     // Header length in bytes:
-    // BTH 12, RETH 16, AtomicETH 28, AETH 4, AtomicAckETH 8, ImmDt 4, IETH 4.
+    // BTH 12, RETH 16, AtomicETH 28, AETH 4, AtomicAckEth 8, ImmDt 4, IETH 4.
     //
     // Send request headers: BTH, BTH + ImmDt, BTH + IETH, 12 or 16 bytes
     // Write request headers: BTH + RETH, BTH, BTH + ImmDt, BTH + RETH + ImmDt, 28 or 12 or 16 or 32 bytes
@@ -615,7 +615,7 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
     // Read response header: BTH + AETH, BTH, 16 or 12 bytes
     //
     // Atomic request header: BTH + AtomicETH, 40 bytes
-    // Atomic response header: BTH + AETH + AtomicAckETH, 24 bytes
+    // Atomic response header: BTH + AETH + AtomicAckEth, 24 bytes
     //
     // Headers have length of multiple of 4 bytes
     for (headerMtyWidth <- minHeaderWidthBytes to maxHeaderWidthBytes by 4) {
@@ -630,14 +630,14 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
           outputMty := (inputHeaderMty(0, headerMtyWidth bits) ## inputMty)
             .resizeLeft(inputMtyWidth)
         } otherwise {
-          outputData := (cachedData(0, headerWidth bits) ## inputData)
+          outputData := (rstCacheData(0, headerWidth bits) ## inputData)
             .resizeLeft(inputWidth)
           outputMty := (cachedMty(0, headerMtyWidth bits) ## inputMty)
             .resizeLeft(inputMtyWidth)
         }
 
         // The extra last fragment
-        extraLastFragData := (cachedData(0, headerWidth bits) ##
+        extraLastFragData := (rstCacheData(0, headerWidth bits) ##
           B(0, inputWidth bits)).resizeLeft(inputWidth)
         // When output stream has residue, the last beat is only from cachedDataReg, not from inputData
         extraLastFragMty := (cachedMty(0, headerMtyWidth bits) ##
@@ -740,7 +740,7 @@ class StreamRemoveHeader(busWidth: BusWidth) extends Component {
   )
 
   val delayedInputStream = io.inputStream.stage()
-  val cachedData = delayedInputStream.data
+  val rstCacheData = delayedInputStream.data
   val cachedMty = delayedInputStream.mty
   val cachedIsLast = delayedInputStream.isLast
 
@@ -764,14 +764,14 @@ class StreamRemoveHeader(busWidth: BusWidth) extends Component {
 
   val outputData = Bits(inputWidth bits)
   val outputMty = Bits(inputWidthBytes bits)
-  outputData := ((cachedData ## inputData) >> rightShiftBitAmt)
+  outputData := ((rstCacheData ## inputData) >> rightShiftBitAmt)
     .resize(inputWidth)
   outputMty := ((cachedMty ## inputMty) >> rightShiftByteAmt)
     .resize(inputMtyWidth)
 
   // The extra last fragment
   val extraLastFragData =
-    ((cachedData ## B(0, inputWidth bits)) >> rightShiftBitAmt)
+    ((rstCacheData ## B(0, inputWidth bits)) >> rightShiftBitAmt)
       .resize(inputWidth)
   // When output stream has residue, the last beat is only from cachedDataReg, not from inputData
   val extraLastFragMty =
@@ -1146,6 +1146,7 @@ class StreamOneHotMux[T <: Data](dataType: HardType[T], portCount: Int)
   for (idx <- 0 until portCount) {
     io.inputs(idx).ready := io.select(idx)
     when(io.select(idx)) {
+      io.output.valid := io.select(idx)
       io.output.payload := io.inputs(idx).payload
     }
   }
@@ -1303,6 +1304,59 @@ object setAllBits {
     }.result
 }
 
+object mergeRdmaHeader {
+  def apply(busWidth: BusWidth, baseHeader: RdmaHeader): Bits =
+    new Composite(baseHeader, "mergeRdmaHeader1") {
+      val result = baseHeader.asBigEndianBits().resize(busWidth.id)
+    }.result
+
+  def apply(
+      busWidth: BusWidth,
+      baseHeader: RdmaHeader,
+      extHeader: RdmaHeader
+  ): Bits = new Composite(baseHeader, "mergeRdmaHeader2") {
+    val result = (baseHeader.asBigEndianBits() ## extHeader.asBigEndianBits())
+      .resize(busWidth.id)
+  }.result
+
+  def apply(
+      busWidth: BusWidth,
+      baseHeader: RdmaHeader,
+      extHeader1: RdmaHeader,
+      extHeader2: RdmaHeader
+  ): Bits = new Composite(baseHeader, "mergeRdmaHeader3") {
+    val result = (baseHeader.asBigEndianBits() ## extHeader1
+      .asBigEndianBits() ## extHeader2.asBigEndianBits())
+      .resize(busWidth.id)
+  }.result
+}
+
+object mergeRdmaHeaderMty {
+  def apply(busWidth: BusWidth, baseHeaderMty: Bits): Bits =
+    new Composite(baseHeaderMty, "mergeRdmaHeaderMty1") {
+      val busWidthBytes = busWidth.id / BYTE_WIDTH
+      val result = baseHeaderMty.resize(busWidthBytes)
+    }.result
+
+  def apply(busWidth: BusWidth, baseHeaderMty: Bits, extHeaderMty: Bits): Bits =
+    new Composite(baseHeaderMty, "mergeRdmaHeaderMty2") {
+      val busWidthBytes = busWidth.id / BYTE_WIDTH
+      val result = (baseHeaderMty ## extHeaderMty).resize(busWidthBytes)
+    }.result
+
+  def apply(
+      busWidth: BusWidth,
+      baseHeaderMty: Bits,
+      extHeaderMty1: Bits,
+      extHeaderMty2: Bits
+  ): Bits = new Composite(baseHeaderMty, "mergeRdmaHeaderMty3") {
+    val busWidthBytes = busWidth.id / BYTE_WIDTH
+    val result = (baseHeaderMty ## extHeaderMty1 ## extHeaderMty2).resize(
+      busWidthBytes
+    )
+  }.result
+}
+
 object IPv4Addr {
   def apply(ipv4Str: String): Bits = {
     ipv4Str match {
@@ -1332,7 +1386,7 @@ object IPv4Addr {
     //    ipBits
   }
 }
-
+/*
 object extractReadAtomicEth {
   def apply(inputPktFrag: RdmaDataPkt, busWidth: BusWidth) =
     new Composite(inputPktFrag, "extractReadAtomicEth") {
@@ -1353,27 +1407,13 @@ object extractReadAtomicEth {
       )
 
       // BTH is included in inputPktFrag.data
-      // TODO: verify inputPktFrag.data is big endian
-      val rethBits = inputPktFrag.data(
-        (busWidth.id - widthOf(BTH()) - widthOf(RETH())) until
-          (busWidth.id - widthOf(BTH()))
-      )
-      val reth = RETH()
-      reth.assignFromBits(rethBits)
-
-      // BTH is included in inputPktFrag.data
-      // TODO: verify inputPktFrag.data is big endian
-      val atomicEthBits = inputPktFrag.data(
-        (busWidth.id - widthOf(BTH()) - widthOf(AtomicEth())) until
-          (busWidth.id - widthOf(BTH()))
-      )
-      val atomicEth = AtomicEth()
-      atomicEth.assignFromBits(atomicEthBits)
+      val reth = inputPktFrag.extractReth()
+      val atomicEth = inputPktFrag.extractAtomicEth()
 
       val result = (reth, atomicEth)
     }.result
 }
-
+ */
 //// TODO: remove this once Spinal HDL upgraded to 1.6.2
 //object ComponentEnrichment {
 //  implicit class ComponentExt[T <: Component](val that: T) {
@@ -1648,11 +1688,11 @@ object respPadCountCheck {
         // Last packet fragment should not be empty
         mtyCheck := pktMty.orR
         when(OpCode.isAtomicRespPkt(opcode)) {
-          // Atomic response has BTH and AtomicAckETH, total 48 + 8 = 56 bytes
+          // Atomic response has BTH and AtomicAckEth, total 48 + 8 = 56 bytes
           // BTH is included in packet payload
-          // Assume AtomicAckETH fits in bus width
+          // Assume AtomicAckEth fits in bus width
           mtyCheck := pktFragLen === (widthOf(BTH()) + widthOf(
-            AtomicAckETH()
+            AtomicAckEth()
           ) % busWidth.id)
         } elsewhen (OpCode.isNonReadAtomicRespPkt(opcode)) {
           // Acknowledge has BTH and AETH, total 48 + 4 = 52 bytes
@@ -1675,21 +1715,13 @@ object respPadCountCheck {
 }
 
 object ePsnIncrease {
-  def apply(pktFrag: RdmaDataPkt, pmtu: Bits, busWidth: BusWidth): UInt =
+  def apply(pktFrag: RdmaDataPkt, pmtu: Bits): UInt =
     new Composite(pktFrag, "ePsnIncrease") {
       val result = UInt(PSN_WIDTH bits)
       val isReadReq = OpCode.isReadReqPkt(pktFrag.bth.opcode)
       when(OpCode.isReqPkt(pktFrag.bth.opcode)) {
         when(isReadReq) {
-          // BTH is included in inputPktFrag.data
-          // TODO: verify inputPktFrag.data is big endian
-          val rethBits = pktFrag.data(
-            (busWidth.id - widthOf(BTH()) - widthOf(RETH())) until
-              (busWidth.id - widthOf(BTH()))
-          )
-          val reth = RETH()
-          reth.assignFromBits(rethBits)
-
+          val reth = pktFrag.extractReth()
           result := computePktNum(reth.dlen, pmtu)
         } otherwise {
           result := 1
@@ -1909,11 +1941,11 @@ object checkRespOpCodeMatch {
       when(OpCode.isSendReqPkt(reqOpCode) || OpCode.isWriteReqPkt(reqOpCode)) {
         result := OpCode.isNonReadAtomicRespPkt(respOpCode)
       } elsewhen (OpCode.isReadReqPkt(reqOpCode)) {
-        result := OpCode.isReadRespPkt(respOpCode) || OpCode
-          .isNonReadAtomicRespPkt(respOpCode)
+        result := OpCode.isReadRespPkt(respOpCode) ||
+          OpCode.isNonReadAtomicRespPkt(respOpCode)
       } elsewhen (OpCode.isAtomicReqPkt(reqOpCode)) {
-        result := OpCode.isAtomicRespPkt(respOpCode) || OpCode
-          .isNonReadAtomicRespPkt(respOpCode)
+        result := OpCode.isAtomicRespPkt(respOpCode) ||
+          OpCode.isNonReadAtomicRespPkt(respOpCode)
       } otherwise {
         report(
           message =
