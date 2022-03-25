@@ -437,16 +437,16 @@ class SqOut(busWidth: BusWidth) extends Component {
   psnOutRangeFifo.io.push << io.outPsnRangeFifoPush
 
   val rxReadReq =
-    io.rxReadReq.translateWith(io.rxReadReq.toRdmaDataPktFrag(busWidth))
+    io.rxReadReq.translateWith(io.rxReadReq.asRdmaDataPktFrag(busWidth))
   val rxReadReqRetry =
     io.rxReadReqRetry.translateWith(
-      io.rxReadReqRetry.toRdmaDataPktFrag(busWidth)
+      io.rxReadReqRetry.asRdmaDataPktFrag(busWidth)
     )
   val rxAtomicReq =
-    io.rxAtomicReq.translateWith(io.rxAtomicReq.toRdmaDataPktFrag(busWidth))
+    io.rxAtomicReq.translateWith(io.rxAtomicReq.asRdmaDataPktFrag(busWidth))
   val rxAtomicReqRetry =
     io.rxAtomicReqRetry.translateWith(
-      io.rxAtomicReqRetry.toRdmaDataPktFrag(busWidth)
+      io.rxAtomicReqRetry.asRdmaDataPktFrag(busWidth)
     )
 
   val txVec =

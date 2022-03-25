@@ -1460,7 +1460,7 @@ case class ReadAtomicRstCacheReq() extends Bundle {
 }
 
 case class ReadAtomicRstCacheResp() extends Bundle {
-  val cachedData = ReadAtomicRstCacheData()
+  val rstCacheData = ReadAtomicRstCacheData()
   val query = ReadAtomicRstCacheReq()
   val found = Bool()
 }
@@ -1555,7 +1555,7 @@ case class ReqAndDmaReadResp[T <: Data](
 case class ReadAtomicRstCacheDataAndDmaReadResp(busWidth: BusWidth)
     extends Bundle {
   val dmaReadResp = DmaReadResp(busWidth)
-  val resultCacheData = ReadAtomicRstCacheData()
+  val rstCacheData = ReadAtomicRstCacheData()
 }
 
 /** for SQ */
@@ -2286,15 +2286,16 @@ case class RqReqWithRxBufAndDmaInfoBus(busWidth: BusWidth)
 
 case class RqDupReadReqAndRstCacheData(busWidth: BusWidth) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
-  val cachedData = ReadAtomicRstCacheData()
+  val rstCacheData = ReadAtomicRstCacheData()
 }
 
 case class RqDmaReadReqAndRstCacheData() extends Bundle {
   val dmaReadReq = DmaReadReq()
-  val cachedData = ReadAtomicRstCacheData()
+  val rstCacheData = ReadAtomicRstCacheData()
 }
 
 sealed abstract class RdmaBasePacket extends Bundle {
+  val bthWidth = widthOf(BTH())
   // this: Bundle => // RdmaDataPkt must be of Bundle class
   val bth = BTH()
   // val eth = Bits(ETH_WIDTH bits)
@@ -2347,6 +2348,84 @@ sealed class RdmaDataPkt(busWidth: BusWidth) extends RdmaBasePacket {
     }
     pmtuBytes
   }
+
+  def extractReth(): RETH = new Composite(this, "extractReth") {
+    val rethWidth = widthOf(RETH())
+    require(
+      busWidth.id >= bthWidth + rethWidth,
+      f"${REPORT_TIME} time: busWidth=${busWidth.id} should >= bthWidth=${bthWidth} + rethWidth=${rethWidth}"
+    )
+    val result = RETH()
+    result.va.assignFromBits(
+      data(busWidth.id - bthWidth - MEM_ADDR_WIDTH until busWidth.id - bthWidth)
+    )
+    result.rkey.assignFromBits(
+      data(
+        busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH until busWidth.id - bthWidth - MEM_ADDR_WIDTH
+      )
+    )
+    result.dlen.assignFromBits(
+      data(
+        busWidth.id - bthWidth - rethWidth until busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
+      )
+    )
+  }.result
+
+  def extractAtomicEth(): AtomicEth = new Composite(this, "extractAtomicEth") {
+    val atomicEthWidth = widthOf(AtomicEth())
+    require(
+      busWidth.id >= bthWidth + atomicEthWidth,
+      f"${REPORT_TIME} time: busWidth=${busWidth.id} should >= bthWidth=${bthWidth} + atomicEthWidth=${atomicEthWidth}"
+    )
+    val result = AtomicEth()
+    result.va.assignFromBits(
+      data(busWidth.id - bthWidth - MEM_ADDR_WIDTH until busWidth.id - bthWidth)
+    )
+    result.rkey.assignFromBits(
+      data(
+        busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH until busWidth.id - bthWidth - MEM_ADDR_WIDTH
+      )
+    )
+    result.swap.assignFromBits(
+      data(
+        busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - LONG_WIDTH until busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
+      )
+    )
+    result.comp.assignFromBits(
+      data(
+        busWidth.id - bthWidth - atomicEthWidth until busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - LONG_WIDTH
+      )
+    )
+  }.result
+
+  def extractAeth(): AETH = new Composite(this, "extractAeth") {
+    val aethWidth = widthOf(AETH())
+    require(
+      busWidth.id >= bthWidth + aethWidth,
+      f"${REPORT_TIME} time: busWidth=${busWidth.id} should >= bthWidth=${bthWidth} + aethWidth=${aethWidth}"
+    )
+    val result = AETH()
+    result.rsvd.assignFromBits(
+      data(
+        busWidth.id - bthWidth - AETH_RSVD_WIDTH until busWidth.id - bthWidth
+      )
+    )
+    result.code.assignFromBits(
+      data(
+        busWidth.id - bthWidth - AETH_CODE_WIDTH - AETH_RSVD_WIDTH until busWidth.id - bthWidth - AETH_RSVD_WIDTH
+      )
+    )
+    result.value.assignFromBits(
+      data(
+        busWidth.id - bthWidth - AETH_VALUE_WIDTH - AETH_CODE_WIDTH - AETH_RSVD_WIDTH until busWidth.id - bthWidth - AETH_CODE_WIDTH - AETH_RSVD_WIDTH
+      )
+    )
+    result.msn.assignFromBits(
+      data(
+        busWidth.id - bthWidth - aethWidth until busWidth.id - bthWidth - AETH_VALUE_WIDTH - AETH_CODE_WIDTH - AETH_RSVD_WIDTH
+      )
+    )
+  }.result
 }
 
 trait ImmDtHeader extends RdmaBasePacket {
@@ -2378,7 +2457,7 @@ case class WriteReq(busWidth: BusWidth)
     with ImmDtHeader {}
 
 case class ReadReq() extends RdmaReq {
-  def toRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
+  def asRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
     new Composite(this) {
       val reqWidth = widthOf(bth) + widthOf(reth)
       require(
@@ -2391,19 +2470,19 @@ case class ReadReq() extends RdmaReq {
       val result = Fragment(RdmaDataPkt(busWidth))
       result.last := True
       result.bth := bth
-      result.data := (bth ## reth).resize(busWidth.id)
-      // TODO: verify endian
-      result.mty := (setAllBits(
-        reqWidthBytes
-      ) << (busWidthBytes - reqWidthBytes))
+      result.data := (bth.asBigEndianBits() ## reth.asBigEndianBits()).resize(
+        busWidth.id
+      )
+      result.mty := (setAllBits(reqWidthBytes) <<
+        (busWidthBytes - reqWidthBytes))
     }.result
 
-  def set(thatBth: BTH, rethBits: Bits): this.type = {
-    bth := thatBth
-    // TODO: verify rethBits is big endian
-    reth.assignFromBits(rethBits)
-    this
-  }
+//  def set(thatBth: BTH, rethBits: Bits): this.type = {
+//    bth := thatBth
+//    // TODO: verify rethBits is big endian
+//    reth.assignFromBits(rethBits)
+//    this
+//  }
 
   def set(
       dqpn: UInt,
@@ -2438,7 +2517,7 @@ case class ReadOnlyFirstLastResp(busWidth: BusWidth)
 case class ReadMidResp(busWidth: BusWidth) extends RdmaDataPkt(busWidth) {}
 
 case class Acknowledge() extends Response {
-  def toRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
+  def asRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
     new Composite(this) {
       val ackWidth = widthOf(bth) + widthOf(aeth)
       require(
@@ -2451,8 +2530,9 @@ case class Acknowledge() extends Response {
       val result = Fragment(RdmaDataPkt(busWidth))
       result.last := True
       result.bth := bth
-      result.data := (bth ## aeth).resize(busWidth.id)
-      // TODO: verify endian
+      result.data := (bth.asBigEndianBits() ## aeth.asBigEndianBits())
+        .resizeLeft(busWidth.id)
+
       result.mty := (setAllBits(
         ackWidthBytes
       ) << (busWidthBytes - ackWidthBytes))
@@ -2520,7 +2600,7 @@ case class Acknowledge() extends Response {
 case class AtomicReq() extends RdmaBasePacket {
   val atomicEth = AtomicEth()
 
-  def toRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
+  def asRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
     new Composite(this) {
       val reqWidth = widthOf(bth) + widthOf(atomicEth)
       require(
@@ -2533,11 +2613,11 @@ case class AtomicReq() extends RdmaBasePacket {
       val result = Fragment(RdmaDataPkt(busWidth))
       result.last := True
       result.bth := bth
-      result.data := (bth ## atomicEth).resize(busWidth.id)
-      // TODO: verify endian
-      result.mty := (setAllBits(
-        reqWidthBytes
-      ) << (busWidthBytes - reqWidthBytes))
+      result.data := (bth.asBigEndianBits() ## atomicEth.asBigEndianBits())
+        .resize(busWidth.id)
+
+      result.mty := (setAllBits(reqWidthBytes) <<
+        (busWidthBytes - reqWidthBytes))
     }.result
 
   def set(
@@ -2573,11 +2653,11 @@ case class AtomicReq() extends RdmaBasePacket {
 }
 
 case class AtomicResp() extends Response {
-  val atomicAckETH = AtomicAckETH()
+  val atomicAckEth = AtomicAckEth()
 
-  def toRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
+  def asRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
     new Composite(this) {
-      val ackWidth = widthOf(bth) + widthOf(atomicAckETH)
+      val ackWidth = widthOf(bth) + widthOf(atomicAckEth)
       require(
         busWidth.id >= ackWidth,
         s"busWidth=${busWidth.id} must >= Atomic ACK width=${ackWidth}"
@@ -2588,11 +2668,13 @@ case class AtomicResp() extends Response {
       val result = Fragment(RdmaDataPkt(busWidth))
       result.last := True
       result.bth := bth
-      result.data := (bth ## atomicAckETH).resize(busWidth.id)
-      // TODO: verify endian
-      result.mty := (setAllBits(
-        ackWidthBytes
-      ) << (busWidthBytes - ackWidthBytes))
+      result.data := (bth.asBigEndianBits() ## aeth
+        .asBigEndianBits() ## atomicAckEth.asBigEndianBits())
+        .resizeLeft(busWidth.id)
+      result.mty := (setAllBits(ackWidthBytes) <<
+        (busWidthBytes - ackWidthBytes))
+
+//      report(L"${REPORT_TIME} time: PSN=${bth.psn}, bth=${bth.asBigEndianBits()}, aeth=${aeth.asBigEndianBits()}, atomicAckEth=${atomicAckEth.asBigEndianBits()}, result.data=${result.data}, aeth.rsvd=${aeth.rsvd}, aeth.code=${aeth.code}, aeth.value=${aeth.value}, aeth.msn=${aeth.msn}, atomicAckEth.orig=${atomicAckEth.orig}")
     }.result
 
   def set(dqpn: UInt, psn: UInt, orig: Bits): this.type = {
@@ -2602,14 +2684,14 @@ case class AtomicResp() extends Response {
     bth.set(opcode, dqpn, psn)
     // TODO: verify the AckType when atomic change failed
     aeth.set(AckType.NORMAL)
-    atomicAckETH.orig := orig
+    atomicAckEth.orig := orig
     this
   }
   // TODO: remove this
   def setDefaultVal(): this.type = {
     bth.setDefaultVal()
     aeth.setDefaultVal()
-    atomicAckETH.setDefaultVal()
+    atomicAckEth.setDefaultVal()
     this
   }
 }

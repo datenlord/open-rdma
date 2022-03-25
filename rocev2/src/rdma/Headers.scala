@@ -8,12 +8,8 @@ import spinal.core._
 import RdmaConstants._
 
 //----------RDMA defined headers----------//
-sealed abstract class RdmaHeader() extends Bundle {
-//  // TODO: refactor assign() to apply()
-//  def assign(input: Bits): this.type = {
-//    this.assignFromBits(input)
-//    this
-//  }
+sealed abstract class RdmaHeader extends Bundle {
+  def asBigEndianBits(): Bits
 
   // TODO: to remove
   def setDefaultVal(): this.type
@@ -37,6 +33,10 @@ case class BTH() extends RdmaHeader {
 
   def transport = opcodeFull(OPCODE_WIDTH, TRANSPORT_WIDTH bits)
   def opcode = opcodeFull(0, OPCODE_WIDTH bits)
+
+  override def asBigEndianBits(): Bits = {
+    opcodeFull ## solicited ## migreq ## padCnt ## version ## pkey ## fecn ## becn ## resv6 ## dqpn ## ackreq ## resv7 ## psn
+  }
 
   def set(opcode: Bits, dqpn: UInt, psn: UInt): this.type = {
     val padCnt = U(0, PAD_COUNT_WIDTH bits)
@@ -99,10 +99,14 @@ case class BTH() extends RdmaHeader {
 
 // 4 bytes
 case class AETH() extends RdmaHeader {
-  val rsvd = Bits(1 bit)
-  val code = Bits(2 bits)
+  val rsvd = Bits(AETH_RSVD_WIDTH bit)
+  val code = Bits(AETH_CODE_WIDTH bits)
   val value = Bits(AETH_VALUE_WIDTH bits)
   val msn = UInt(MSN_WIDTH bits)
+
+  override def asBigEndianBits(): Bits = {
+    rsvd ## code ## value ## msn
+  }
 
   def toWorkCompStatus(): SpinalEnumCraft[WorkCompStatus.type] =
     new Composite(this) {
@@ -153,8 +157,6 @@ case class AETH() extends RdmaHeader {
       creditCnt: Int,
       rnrTimeOut: Bits
   ): this.type = {
-//    val ackTypeBits = Bits(ACK_TYPE_WIDTH bits)
-//    ackTypeBits := ackType.id
     val msnBits = UInt(MSN_WIDTH bits)
     msnBits := msn
     val creditCntBits = Bits(AETH_VALUE_WIDTH bits)
@@ -273,6 +275,10 @@ case class RETH() extends RdmaHeader {
   val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
   val dlen = UInt(RDMA_MAX_LEN_WIDTH bits)
 
+  override def asBigEndianBits(): Bits = {
+    va ## rkey ## dlen
+  }
+
   // TODO: remove this
   def setDefaultVal(): this.type = {
     va := 0
@@ -289,6 +295,10 @@ case class AtomicEth() extends RdmaHeader {
   val swap = Bits(LONG_WIDTH bits)
   val comp = Bits(LONG_WIDTH bits)
 
+  override def asBigEndianBits(): Bits = {
+    va ## rkey ## swap ## comp
+  }
+
   // TODO: remove this
   def setDefaultVal(): this.type = {
     va := 0
@@ -300,8 +310,12 @@ case class AtomicEth() extends RdmaHeader {
 }
 
 // 8 bytes
-case class AtomicAckETH() extends RdmaHeader {
+case class AtomicAckEth() extends RdmaHeader {
   val orig = Bits(LONG_WIDTH bits)
+
+  override def asBigEndianBits(): Bits = {
+    orig
+  }
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
@@ -314,6 +328,10 @@ case class AtomicAckETH() extends RdmaHeader {
 case class ImmDt() extends RdmaHeader {
   val data = Bits(LRKEY_IMM_DATA_WIDTH bits)
 
+  override def asBigEndianBits(): Bits = {
+    data
+  }
+
   // TODO: remove this
   def setDefaultVal(): this.type = {
     data := 0
@@ -324,6 +342,10 @@ case class ImmDt() extends RdmaHeader {
 // 4 bytes
 case class IETH() extends RdmaHeader {
   val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
+
+  override def asBigEndianBits(): Bits = {
+    rkey
+  }
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
@@ -336,6 +358,10 @@ case class IETH() extends RdmaHeader {
 case class CNPPadding() extends RdmaHeader {
   val rsvd1 = Bits(LONG_WIDTH bits)
   val rsvd2 = Bits(LONG_WIDTH bits)
+
+  override def asBigEndianBits(): Bits = {
+    rsvd1 ## rsvd2
+  }
 
   // TODO: remove this
   def setDefaultVal(): this.type = {

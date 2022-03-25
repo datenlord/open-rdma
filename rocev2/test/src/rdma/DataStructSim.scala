@@ -46,10 +46,87 @@ object RdmaTypeReDef {
   type KeyValid = Boolean
   type SizeValid = Boolean
   type AccessValid = Boolean
+
+  type AethRsvd = Int
+  type AethCode = Int
+  type AethValue = Int
+  type AethMsn = Int
+  type AtomicAckEthOrig = BigInt
 }
 
 object PsnSim {
   implicit def build(that: PSN) = new PsnSim(that)
+
+  def psnCmp(psnA: PSN, psnB: PSN, curPsn: PSN): Int = {
+    require(
+      psnA >= 0 && psnB >= 0 && curPsn >= 0,
+      f"${simTime()} time: psnA=${psnA}, psnB=${psnB}, curPsn=${curPsn} should all >= 0"
+    )
+    require(
+      psnA < TOTAL_PSN && psnB < TOTAL_PSN && curPsn < TOTAL_PSN,
+      f"${simTime()} time: psnA=${psnA}, psnB=${psnB}, curPsn=${curPsn} should all < TOTAL_PSN=${TOTAL_PSN}"
+    )
+    val oldestPSN = (curPsn - HALF_MAX_PSN) & PSN_MASK
+
+    if (psnA == psnB) {
+      0
+    } else if (psnA < psnB) {
+      if (oldestPSN <= psnA) {
+        -1 // LESSER
+      } else if (psnB <= oldestPSN) {
+        -1 // LESSER
+      } else {
+        1 // GREATER
+      }
+    } else { // psnA > psnB
+      if (psnA <= oldestPSN) {
+        1 // GREATER
+      } else if (oldestPSN <= psnB) {
+        1 // GREATER
+      } else {
+        -1 // LESSER
+      }
+    }
+  }
+
+  /** psnA - psnB, PSN diff is always <= HALF_MAX_PSN
+    */
+  def psnDiff(psnA: PSN, psnB: PSN): PSN = {
+    require(
+      psnA >= 0 && psnB >= 0,
+      f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both >= 0"
+    )
+    require(
+      psnA < TOTAL_PSN && psnB < TOTAL_PSN,
+      f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both < TOTAL_PSN=${TOTAL_PSN}"
+    )
+    val diff = (psnA + TOTAL_PSN) -% psnB
+//    val (min, max) = if (psnA > psnB) {
+//      (psnB, psnA)
+//    } else {
+//      (psnA, psnB)
+//    }
+//    val diff = max - min
+    if (diff > HALF_MAX_PSN) {
+      TOTAL_PSN - diff
+    } else {
+      diff
+    }
+  }
+
+  /** psnA + psnB, modulo by TOTAL_PSN
+    */
+  def psnAdd(psnA: Int, psnB: Int): Int = {
+    require(
+      psnA >= 0 && psnB >= 0,
+      f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both >= 0"
+    )
+    require(
+      psnA < TOTAL_PSN && psnB < TOTAL_PSN,
+      f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both < TOTAL_PSN=${TOTAL_PSN}"
+    )
+    (psnA + psnB) % TOTAL_PSN
+  }
 }
 
 class PsnSim(val psn: PSN) {
@@ -278,7 +355,7 @@ object WorkReqSim {
     scala.util.Random.nextLong(1L << (RDMA_MAX_LEN_WIDTH - 1))
   }
 
-  def assignOpCode(
+  def assignReqOpCode(
       workReqOpCode: SpinalEnumElement[WorkReqOpCode.type],
       pktIdx: Int,
       pktNum: Int
@@ -350,6 +427,23 @@ object WorkReqSim {
     opcode
   }
 
+  def assignReadRespOpCode(
+      pktIdx: Int,
+      pktNum: Int
+  ): OpCode.Value = {
+    val opcode =
+      if (pktNum == 1) {
+        OpCode.RDMA_READ_RESPONSE_ONLY
+      } else if (pktIdx == 0) {
+        OpCode.RDMA_READ_RESPONSE_FIRST
+      } else if (pktIdx == pktNum - 1) {
+        OpCode.RDMA_READ_RESPONSE_LAST
+      } else {
+        OpCode.RDMA_READ_RESPONSE_MIDDLE
+      }
+    opcode
+  }
+
   def getAllHeaderLenBytes(
       workReqOpCode: SpinalEnumElement[WorkReqOpCode.type],
       pktNum: Int
@@ -361,7 +455,7 @@ object WorkReqSim {
     val rethWidth = widthOf(RETH())
     val atomicEthWidth = widthOf(AtomicEth())
 //    val aethWidth = widthOf(AETH())
-//    val atomicAckEthWidth = widthOf(AtomicAckETH())
+//    val atomicAckEthWidth = widthOf(AtomicAckEth())
 
     val allHeaderLen = workReqOpCode match {
       case WorkReqOpCode.SEND          => bthWidth * pktNum
@@ -488,6 +582,39 @@ object AckTypeSim {
 }
 
 object AethSim {
+  def extract(
+      fragData: PktFragData,
+      busWidth: BusWidth.Value
+  ): (AethRsvd, AethCode, AethValue, AethMsn) = {
+    val bthWidth = widthOf(BTH())
+    val aethWidth = widthOf(AETH())
+    require(
+      busWidth.id >= bthWidth + aethWidth,
+      f"${simTime()} time: input busWidth=${busWidth.id} should >= widthOf(BTH())=${bthWidth} + widthOf(AETH())=${aethWidth}"
+    )
+
+    val rsvdShiftAmt = busWidth.id - bthWidth - AETH_RSVD_WIDTH
+    val rsvdBitMask = setAllBits(AETH_RSVD_WIDTH) << rsvdShiftAmt
+
+    val codeShiftAmt =
+      busWidth.id - bthWidth - AETH_RSVD_WIDTH - AETH_CODE_WIDTH
+    val codeBitMask = setAllBits(AETH_CODE_WIDTH) << codeShiftAmt
+
+    val valueShiftAmt =
+      busWidth.id - bthWidth - AETH_RSVD_WIDTH - AETH_CODE_WIDTH - AETH_VALUE_WIDTH
+    val valueBitMask = setAllBits(AETH_VALUE_WIDTH) << valueShiftAmt
+
+    val msnShiftAmt = busWidth.id - bthWidth - aethWidth
+    val msnBitMask = setAllBits(MSN_WIDTH) << msnShiftAmt
+
+    val rsvd = (fragData & rsvdBitMask) >> rsvdShiftAmt
+    val code = (fragData & codeBitMask) >> codeShiftAmt
+    val value = (fragData & valueBitMask) >> valueShiftAmt
+    val msn = (fragData & msnBitMask) >> msnShiftAmt
+
+    (rsvd.toInt, code.toInt, value.toInt, msn.toInt)
+  }
+
   implicit class AethExt(val that: AETH) {
     def setAsNormalAck(): that.type = {
       that.code #= AethCode.ACK.id
@@ -543,8 +670,31 @@ object AethSim {
   }
 }
 
+object AtomicAckEthSim {
+  def extract(
+      fragData: PktFragData,
+      busWidth: BusWidth.Value
+  ): PktFragData = {
+    val bthWidth = widthOf(BTH())
+    val aethWidth = widthOf(AETH())
+    val atomicAckEthWidth = widthOf(AtomicAckEth())
+    require(
+      busWidth.id >= bthWidth + atomicAckEthWidth,
+      f"${simTime()} time: input busWidth=${busWidth.id} should >= widthOf(BTH())=${bthWidth} + width(AETH())=${aethWidth} + widthOf(AtomicAckEth())=${atomicAckEthWidth}"
+    )
+
+    val origShiftAmt = busWidth.id - bthWidth - aethWidth - LONG_WIDTH
+    val origBitMask = setAllBits(LONG_WIDTH) << origShiftAmt
+
+    val orig = (fragData & origBitMask) >> origShiftAmt
+    orig
+  }
+}
+
 // TODO: refactor to set simulation value directly
 object RethSim {
+  val bthWidth = widthOf(BTH())
+  val rethWidth = widthOf(RETH())
   val addrBitMask = setAllBits(MEM_ADDR_WIDTH)
   val rkeyBitMask = setAllBits(LRKEY_IMM_DATA_WIDTH)
   val dlenBitMask = setAllBits(RDMA_MAX_LEN_WIDTH)
@@ -566,7 +716,7 @@ object RethSim {
       addr: VirtualAddr,
       busWidth: BusWidth.Value
   ): PktFragData = {
-    val addrShiftAmt = busWidth.id - MEM_ADDR_WIDTH
+    val addrShiftAmt = busWidth.id - bthWidth - MEM_ADDR_WIDTH
     setHelper(inputData, addr, addrShiftAmt, addrBitMask)
   }
 
@@ -575,7 +725,8 @@ object RethSim {
       rkey: LRKey,
       busWidth: BusWidth.Value
   ): PktFragData = {
-    val rkeyShiftAmt = busWidth.id - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
+    val rkeyShiftAmt =
+      busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
     setHelper(inputData, rkey, rkeyShiftAmt, rkeyBitMask)
   }
 
@@ -585,7 +736,7 @@ object RethSim {
       busWidth: BusWidth.Value
   ): PktFragData = {
     val dlenShiftAmt =
-      busWidth.id - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - RDMA_MAX_LEN_WIDTH
+      busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - RDMA_MAX_LEN_WIDTH
     setHelper(inputData, dlen, dlenShiftAmt, dlenBitMask)
   }
 
@@ -595,10 +746,11 @@ object RethSim {
       dlen: PktLen,
       busWidth: BusWidth.Value
   ): PktFragData = {
-    val addrShiftAmt = busWidth.id - MEM_ADDR_WIDTH
-    val rkeyShiftAmt = busWidth.id - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
+    val addrShiftAmt = busWidth.id - bthWidth - MEM_ADDR_WIDTH
+    val rkeyShiftAmt =
+      busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
     val dlenShiftAmt =
-      busWidth.id - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - RDMA_MAX_LEN_WIDTH
+      busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - RDMA_MAX_LEN_WIDTH
 
     val result: BigInt = ((addr & addrBitMask) << addrShiftAmt) |
       ((rkey & rkeyBitMask) << rkeyShiftAmt) |
@@ -607,23 +759,23 @@ object RethSim {
   }
 
   def extract(
-      fragData: BigInt,
+      fragData: PktFragData,
       busWidth: BusWidth.Value
   ): (PhysicalAddr, LRKey, PktLen) = {
     require(
-      busWidth.id >= widthOf(RETH()),
-      f"${simTime()} time: input busWidth=${busWidth.id} should >= widthOf(RETH()=${widthOf(RETH())}"
+      busWidth.id >= bthWidth + rethWidth,
+      f"${simTime()} time: input busWidth=${busWidth.id} should >= widthOf(BTH())=${bthWidth} + widthOf(RETH())=${rethWidth}"
     )
-//    val busBitMask = setAllBits(busWidth.id)
 
-    val addrShiftAmt = busWidth.id - MEM_ADDR_WIDTH
+    val addrShiftAmt = busWidth.id - bthWidth - MEM_ADDR_WIDTH
     val addrBitMask = setAllBits(MEM_ADDR_WIDTH) << addrShiftAmt
 
-    val rkeyShiftAmt = busWidth.id - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
+    val rkeyShiftAmt =
+      busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
     val rkeyBitMask = setAllBits(LRKEY_IMM_DATA_WIDTH) << rkeyShiftAmt
 
     val dlenShiftAmt =
-      busWidth.id - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - RDMA_MAX_LEN_WIDTH
+      busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - RDMA_MAX_LEN_WIDTH
     val dlenBitMask = setAllBits(RDMA_MAX_LEN_WIDTH) << dlenShiftAmt
 
     val addr = (fragData & addrBitMask) >> addrShiftAmt
@@ -670,7 +822,7 @@ object OpCodeSim {
       val rethWidth = widthOf(RETH())
       val atomicEthWidth = widthOf(AtomicEth())
       val aethWidth = widthOf(AETH())
-      val atomicAckEthWidth = widthOf(AtomicAckETH())
+      val atomicAckEthWidth = widthOf(AtomicAckEth())
 
       val headerLen = opcode match {
         case OpCode.SEND_FIRST | OpCode.SEND_MIDDLE | OpCode.SEND_LAST |
@@ -781,6 +933,24 @@ object OpCodeSim {
       }
     }
 
+    def isAckRespPkt(): Boolean = {
+      opcode == OpCode.ACKNOWLEDGE
+    }
+
+    def isReadRespPkt(): Boolean = {
+      opcode match {
+        case OpCode.RDMA_READ_RESPONSE_FIRST |
+            OpCode.RDMA_READ_RESPONSE_MIDDLE | OpCode.RDMA_READ_RESPONSE_LAST |
+            OpCode.RDMA_READ_RESPONSE_ONLY =>
+          true
+        case _ => false
+      }
+    }
+
+    def isAtomicRespPkt(): Boolean = {
+      opcode == OpCode.ATOMIC_ACKNOWLEDGE
+    }
+
     def isFirstOrOnlyReqPkt(): Boolean = {
       isFirstReqPkt() || isOnlyReqPkt()
     }
@@ -878,8 +1048,8 @@ object ReadAtomicRstCacheSim {
     val buildResp =
       (respData: ReadAtomicRstCacheResp, reqQueue: mutable.Queue[PSN]) => {
         val queryPsn = reqQueue.dequeue()
-        respData.cachedData.opcode #= queryOpCode.id
-        respData.cachedData.psnStart #= queryPsn // TODO: not support partial retry
+        respData.rstCacheData.opcode #= queryOpCode.id
+        respData.rstCacheData.psnStart #= queryPsn // TODO: not support partial retry
         respData.query.psn #= queryPsn
         respData.found #= alwaysSuccess
       }
@@ -894,10 +1064,10 @@ object ReadAtomicRstCacheSim {
         (
           respData.query.psn.toInt,
           respData.found.toBoolean,
-          respData.cachedData.psnStart.toInt,
-          respData.cachedData.pa.toBigInt,
-          respData.cachedData.pktNum.toInt,
-          respData.cachedData.dlen.toLong
+          respData.rstCacheData.psnStart.toInt,
+          respData.rstCacheData.pa.toBigInt,
+          respData.rstCacheData.pktNum.toInt,
+          respData.rstCacheData.dlen.toLong
         )
       )
       ()
@@ -1127,7 +1297,7 @@ object RdmaDataPktSim {
           PktIdx,
           PktNum,
           PktLen,
-          HeaderLen,
+          HeaderLen, // TODO: remove this field
           OpCode.Value
       ) => Unit
   ): Unit =
@@ -1147,52 +1317,63 @@ object RdmaDataPktSim {
           workReqOpCode
         ) =
           outerLoopBody
-        val maxPayloadFragNumPerPkt =
-          SendWriteReqReadRespInputGen.maxFragNumPerPkt(pmtuLen, busWidth)
-        val mtyWidth = SendWriteReqReadRespInputGen.busWidthBytes(busWidth)
-        val pmtuLenBytes = SendWriteReqReadRespInputGen.pmtuLenBytes(pmtuLen)
-        val lastPktPadCnt =
-          (PAD_COUNT_FULL - (payloadLenBytes.toInt % PAD_COUNT_FULL)) % PAD_COUNT_FULL
+//        val maxPayloadFragNumPerPkt =
+//          SendWriteReqReadRespInputGen.maxFragNumPerPkt(pmtuLen, busWidth)
+//        val mtyWidth = SendWriteReqReadRespInputGen.busWidthBytes(busWidth)
+//        val pmtuLenBytes = SendWriteReqReadRespInputGen.pmtuLenBytes(pmtuLen)
+//        val lastPktPadCnt =
+//          (PAD_COUNT_FULL - (payloadLenBytes.toInt % PAD_COUNT_FULL)) % PAD_COUNT_FULL
 
         // Inner loop
         for (pktIdx <- 0 until pktNum) {
-          val opcode = WorkReqSim.assignOpCode(workReqOpCode, pktIdx, pktNum)
+          val opcode = WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx, pktNum)
           val headerLenBytes = opcode.getPktHeaderLenBytes()
-          val padCnt = if (pktIdx == pktNum - 1) lastPktPadCnt else 0
+//          val padCnt = if (pktIdx == pktNum - 1) lastPktPadCnt else 0
           val psn = psnStart + pktIdx
-          val lastOrOnlyPktTotalLenBytes = {
-            val lastOrOnlyPktPayloadLenBytes =
-              payloadLenBytes.toInt % pmtuLenBytes
-            if (lastOrOnlyPktPayloadLenBytes == 0) {
-              // In case last or only packet payload length is exactly pmtuLenBytes
-              pmtuLenBytes + headerLenBytes + lastPktPadCnt
-            } else {
-              lastOrOnlyPktPayloadLenBytes + headerLenBytes + lastPktPadCnt
-            }
-          }
-          val pktFragNum = if (pktIdx == pktNum - 1) { // Last or only packet
-            val lastOrOnlyPktFragNum = lastOrOnlyPktTotalLenBytes / mtyWidth
-            if (lastOrOnlyPktTotalLenBytes % mtyWidth == 0) {
-              // In case last or only packet with header and padCnt length is exactly mtyWidth
-              lastOrOnlyPktFragNum
-            } else {
-              lastOrOnlyPktFragNum + 1
-            }
-          } else {
-            maxPayloadFragNumPerPkt + 1 // First or middle packet has one extra fragment for header
-          }
+//          val lastOrOnlyPktTotalLenBytes = {
+//            val lastOrOnlyPktPayloadLenBytes =
+//              payloadLenBytes.toInt % pmtuLenBytes
+//            if (lastOrOnlyPktPayloadLenBytes == 0) {
+//              // In case last or only packet payload length is exactly pmtuLenBytes
+//              pmtuLenBytes + headerLenBytes + lastPktPadCnt
+//            } else {
+//              lastOrOnlyPktPayloadLenBytes + headerLenBytes + lastPktPadCnt
+//            }
+//          }
+//          val pktFragNum = if (pktIdx == pktNum - 1) { // Last or only packet
+//            val lastOrOnlyPktFragNum = lastOrOnlyPktTotalLenBytes / mtyWidth
+//            if (lastOrOnlyPktTotalLenBytes % mtyWidth == 0) {
+//              // In case last or only packet with header and padCnt length is exactly mtyWidth
+//              lastOrOnlyPktFragNum
+//            } else {
+//              lastOrOnlyPktFragNum + 1
+//            }
+//          } else {
+//            maxPayloadFragNumPerPkt + 1 // First or middle packet has one extra fragment for header
+//          }
+          val pktFragNum = computePktFragNum(
+            pmtuLen,
+            busWidth,
+            opcode,
+            payloadLenBytes,
+            pktIdx,
+            pktNum
+          )
 
           for (fragIdx <- 0 until pktFragNum) {
             val fragLast = fragIdx == pktFragNum - 1
             val mty = computeMty(
+              pmtuLen,
+              busWidth,
+              opcode,
               fragLast,
               pktIdx,
               pktNum,
-              mtyWidth,
-              payloadLenBytes,
-              headerLenBytes.toLong,
-              lastPktPadCnt,
-              pmtuLenBytes.toLong
+//              mtyWidth,
+              payloadLenBytes
+//              headerLenBytes.toLong,
+//              lastPktPadCnt,
+//              pmtuLenBytes.toLong
             )
 
 //            println(
@@ -1211,8 +1392,8 @@ object RdmaDataPktSim {
               pktIdx,
               pktNum,
               payloadLenBytes,
-              headerLenBytes,
-              padCnt,
+//              headerLenBytes,
+//              padCnt,
               mty,
               pmtuLen,
               busWidth
@@ -1245,18 +1426,89 @@ object RdmaDataPktSim {
       }
     }
 
+  def helper(
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      opcode: OpCode.Value,
+      payloadLenBytes: PktLen
+  ) = {
+    val maxPayloadFragNumPerPkt =
+      SendWriteReqReadRespInputGen.maxFragNumPerPkt(pmtuLen, busWidth)
+    val mtyWidth = SendWriteReqReadRespInputGen.busWidthBytes(busWidth)
+    val pmtuLenBytes = SendWriteReqReadRespInputGen.pmtuLenBytes(pmtuLen)
+    val lastPktPadCnt =
+      (PAD_COUNT_FULL - (payloadLenBytes.toInt % PAD_COUNT_FULL)) % PAD_COUNT_FULL
+    val headerLenBytes = opcode.getPktHeaderLenBytes()
+
+    (
+      maxPayloadFragNumPerPkt,
+      mtyWidth,
+      pmtuLenBytes,
+      lastPktPadCnt,
+      headerLenBytes
+    )
+  }
+
+  def computePktFragNum(
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      opcode: OpCode.Value,
+      payloadLenBytes: PktLen,
+      pktIdx: PktNum,
+      pktNum: PktNum
+  ): FragNum = {
+//    val maxPayloadFragNumPerPkt =
+//      SendWriteReqReadRespInputGen.maxFragNumPerPkt(pmtuLen, busWidth)
+//    val mtyWidth = SendWriteReqReadRespInputGen.busWidthBytes(busWidth)
+//    val pmtuLenBytes = SendWriteReqReadRespInputGen.pmtuLenBytes(pmtuLen)
+//    val lastPktPadCnt =
+//      (PAD_COUNT_FULL - (payloadLenBytes.toInt % PAD_COUNT_FULL)) % PAD_COUNT_FULL
+//    val headerLenBytes = opcode.getPktHeaderLenBytes()
+    val (
+      maxPayloadFragNumPerPkt,
+      mtyWidth,
+      pmtuLenBytes,
+      lastPktPadCnt,
+      headerLenBytes
+    ) = helper(pmtuLen, busWidth, opcode, payloadLenBytes)
+
+    val lastOrOnlyPktTotalLenBytes = {
+      val lastOrOnlyPktPayloadLenBytes =
+        payloadLenBytes.toInt % pmtuLenBytes
+      if (lastOrOnlyPktPayloadLenBytes == 0) {
+        // In case last or only packet payload length is exactly pmtuLenBytes
+        pmtuLenBytes + headerLenBytes + lastPktPadCnt
+      } else {
+        lastOrOnlyPktPayloadLenBytes + headerLenBytes + lastPktPadCnt
+      }
+    }
+
+    val pktFragNum = if (pktIdx == pktNum - 1) { // Last or only packet
+      val lastOrOnlyPktFragNum = lastOrOnlyPktTotalLenBytes / mtyWidth
+      if (lastOrOnlyPktTotalLenBytes % mtyWidth == 0) {
+        // In case last or only packet with header and padCnt length is exactly mtyWidth
+        lastOrOnlyPktFragNum
+      } else {
+        lastOrOnlyPktFragNum + 1
+      }
+    } else {
+      maxPayloadFragNumPerPkt + 1 // First or middle packet has one extra fragment for header
+    }
+    pktFragNum
+  }
+
   def setRdmaDataFrag(
       pktFrag: RdmaDataPkt,
       psn: PSN,
       opcode: OpCode.Value,
       fragIdx: FragIdx,
-//                      pktFragNum: FragNum,
+//    pktFragNum: FragNum,
       fragLast: FragLast,
       pktIdx: PktIdx,
       pktNum: PktNum,
       payloadLenBytes: PktLen,
-      headerLenBytes: HeaderLen,
-      padCnt: Int,
+//      headerLenBytes: HeaderLen,
+//      padCnt: Int,
       mty: BigInt,
       pmtuLen: PMTU.Value,
       busWidth: BusWidth.Value
@@ -1264,8 +1516,10 @@ object RdmaDataPktSim {
     pktFrag.bth.psn #= psn
     pktFrag.bth.opcodeFull #= opcode.id
 
-    val mtyWidth = SendWriteReqReadRespInputGen.busWidthBytes(busWidth)
-    val pmtuLenBytes = SendWriteReqReadRespInputGen.pmtuLenBytes(pmtuLen)
+    val (_, mtyWidth, pmtuLenBytes, lastPktPadCnt, headerLenBytes) =
+      helper(pmtuLen, busWidth, opcode, payloadLenBytes)
+    val padCnt = if (pktIdx == pktNum - 1) lastPktPadCnt else 0
+
     require(
       pmtuLenBytes % mtyWidth == 0,
       f"${simTime()} time: invalid pmtuLenBytes=${pmtuLenBytes}, should be multiple of mtyWidth=${mtyWidth}"
@@ -1303,15 +1557,21 @@ object RdmaDataPktSim {
   }
 
   def computeMty(
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      opcode: OpCode.Value,
       fragLast: FragLast,
       pktIdx: PktIdx,
       pktNum: PktNum,
-      mtyWidth: WidthBytes,
-      payloadLenBytes: PktLen,
-      headerLenBytes: PktLen,
-      lastPktPadCnt: PadCnt,
-      pmtuLenBytes: PktLen
+//      mtyWidth: WidthBytes,
+      payloadLenBytes: PktLen
+//      headerLenBytes: PktLen,
+//      lastPktPadCnt: PadCnt,
+//      pmtuLenBytes: PktLen
   ): BigInt = {
+    val (_, mtyWidth, pmtuLenBytes, lastPktPadCnt, headerLenBytes) =
+      helper(pmtuLen, busWidth, opcode, payloadLenBytes)
+
     val mty = if (fragLast) {
       if (pktIdx == pktNum - 1) { // Final fragment of last or only packet
         val finalFragValidBytes =

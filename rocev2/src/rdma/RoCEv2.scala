@@ -329,9 +329,11 @@ object RoCEv2 {
   def main(args: Array[String]): Unit = {
     new SpinalConfig(
       defaultClockDomainFrequency = FixedFrequency(200 MHz),
+      defaultConfigForClockDomains = ClockDomainConfig(resetKind = SYNC),
       mode = SystemVerilog,
       oneFilePerComponent = true,
       targetDirectory = "./rtl",
+//      romReuse = true, // TODO: turn on once 1.6.5 is released
       verbose = true
     ).generate(new RoCEv2(numMaxQPs = 4, BusWidth.W512))
 //      .printPruned()

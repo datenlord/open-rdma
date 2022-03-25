@@ -70,7 +70,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
         dut.io.retryWorkReq.pktNum #= pktNum
         val retryStartPsn = randomRetryStartPsn(curPsn, pktNum)
         dut.io.qpAttr.retryStartPsn #= retryStartPsn
-        nextPsn = MiscUtils.psnAdd(nextPsn, pktNum)
+        nextPsn = PsnSim.psnAdd(nextPsn, pktNum)
         dut.io.qpAttr.npsn #= nextPsn
 //        println(
 //          f"${simTime()} time: the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, retryStartPsn=${retryStartPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
@@ -137,10 +137,10 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
             lenOut = outAtomicReq._3
           }
           assert(
-            MiscUtils.psnCmp(retryStartPsnIn, psnIn, curPsn = psnIn) >= 0,
+            PsnSim.psnCmp(retryStartPsnIn, psnIn, curPsn = psnIn) >= 0,
             f"${simTime()} time: retryStartPsnIn=${retryStartPsnIn}%X should >= psnIn=${psnIn}%X in PSN order"
           )
-          val psnDiff = MiscUtils.psnDiff(retryStartPsnIn, psnIn)
+          val psnDiff = PsnSim.psnDiff(retryStartPsnIn, psnIn)
           val dmaReadOffset = psnDiff << pmtuLen.id
 //        println(
 //            f"${simTime()} time: output PSN=${psnOut}%X not match input retryStartPsnIn=${retryStartPsnIn}%X"
@@ -222,7 +222,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
         }
         val pktNum = MiscUtils.computePktNum(pktLen, pmtuLen)
         dut.io.retryWorkReq.pktNum #= pktNum
-        nextPsn = MiscUtils.psnAdd(nextPsn, pktNum)
+        nextPsn = PsnSim.psnAdd(nextPsn, pktNum)
         dut.io.qpAttr.npsn #= nextPsn
 //        println(
 //          f"${simTime()} time: the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
@@ -345,7 +345,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
         dut.io.retryWorkReq.workReq.lenBytes #= pktLen
         val pktNum = MiscUtils.computePktNum(pktLen, pmtuLen)
         dut.io.retryWorkReq.pktNum #= pktNum
-        nextPsn = MiscUtils.psnAdd(nextPsn, pktNum)
+        nextPsn = PsnSim.psnAdd(nextPsn, pktNum)
         dut.io.qpAttr.npsn #= nextPsn
 //        println(
 //          f"${simTime()} time: the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
@@ -445,7 +445,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
         }
         val pktNum = MiscUtils.computePktNum(pktLen, pmtuLen)
         dut.io.retryWorkReq.pktNum #= pktNum
-        nextPsn = MiscUtils.psnAdd(nextPsn, pktNum)
+        nextPsn = PsnSim.psnAdd(nextPsn, pktNum)
         dut.io.qpAttr.npsn #= nextPsn
 //        println(
 //          f"${simTime()} time: the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
