@@ -502,7 +502,7 @@ object StreamAddHeader {
   ): Stream[Fragment[HeaderDataAndMty[T]]] = {
     require(
       widthOf(inputStream.data) == busWidth.id,
-      s"widthOf(inputStream.data)=${widthOf(inputStream.data)} should == busWidth.id=${busWidth.id}"
+      s"widthOf(inputStream.data)=${widthOf(inputStream.data)} should equal busWidth.id=${busWidth.id}"
     )
     val result =
       new StreamAddHeader(inputHeader.headerType, busWidth)
@@ -538,7 +538,7 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
   val inputWidthBytes = inputWidth / BYTE_WIDTH
   require(
     inputWidthBytes == inputMtyWidth,
-    s"inputWidthBytes=${inputWidthBytes} should == inputMtyWidth=${inputMtyWidth}"
+    s"inputWidthBytes=${inputWidthBytes} should equal inputMtyWidth=${inputMtyWidth}"
   )
   require(
     busWidth.id % BYTE_WIDTH == 0,
@@ -729,7 +729,7 @@ class StreamRemoveHeader(busWidth: BusWidth) extends Component {
   val inputWidthBytes = inputWidth / BYTE_WIDTH
   require(
     inputWidthBytes == inputMtyWidth,
-    s"inputWidthBytes=${inputWidthBytes} should == inputMtyWidth=${inputMtyWidth}"
+    s"inputWidthBytes=${inputWidthBytes} should equal inputMtyWidth=${inputMtyWidth}"
   )
   // TODO: assert message cannot use non-Spinal-Data variable
   assert(
@@ -1119,7 +1119,7 @@ object StreamOneHotMux {
   def apply[T <: Data](select: Bits, inputs: Vec[Stream[T]]): Stream[T] = {
     require(
       widthOf(select) == inputs.size,
-      s"widthOf(select)=${widthOf(select)} should == inputs.size=${inputs.size}"
+      s"widthOf(select)=${widthOf(select)} should equal inputs.size=${inputs.size}"
     )
 
     val streamOneHotMux =
@@ -1144,9 +1144,10 @@ class StreamOneHotMux[T <: Data](dataType: HardType[T], portCount: Int)
   io.output.valid := False
   io.output.payload := io.inputs(0).payload
   for (idx <- 0 until portCount) {
-    io.inputs(idx).ready := io.select(idx)
+    io.inputs(idx).ready := False
     when(io.select(idx)) {
-      io.output.valid := io.select(idx)
+      io.output.valid := io.inputs(idx).valid
+      io.inputs(idx).ready := io.output.ready
       io.output.payload := io.inputs(idx).payload
     }
   }

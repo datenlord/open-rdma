@@ -1617,7 +1617,7 @@ case class WorkComp() extends Bundle {
 
     require(
       widthOf(IETH()) == widthOf(ImmDt()),
-      s"widthOf(IETH())=${widthOf(IETH())} should == widthOf(ImmDt())=${widthOf(ImmDt())}"
+      s"widthOf(IETH())=${widthOf(IETH())} should equal widthOf(ImmDt())=${widthOf(ImmDt())}"
     )
     require(
       widthOf(pktFragData) >= widthOf(BTH()) + widthOf(ImmDt()),

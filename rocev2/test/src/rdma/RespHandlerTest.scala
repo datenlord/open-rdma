@@ -316,7 +316,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
 
             if (ackPsnOut != ackPsnIn) {
               println(
-                f"${simTime()} time: ackPsnIn=${ackPsnIn}%X should == ackPsnOut=${ackPsnOut}%X"
+                f"${simTime()} time: ackPsnIn=${ackPsnIn}%X should equal ackPsnOut=${ackPsnOut}%X"
               )
               println(
                 f"${simTime()} time: WR: workReqOpCodeIn=${workReqOpCodeIn}, psnStartInIn=${psnStartInIn}=${psnStartInIn}%X, workReqEndPsn=${workReqEndPsn}=${workReqEndPsn}%X, ackPsnOut=${ackPsnOut}=${ackPsnOut}%X, pktNumIn=${pktNumIn}=${pktNumIn}%X"
@@ -324,13 +324,13 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
             }
 
             ackPsnOut shouldBe ackPsnIn withClue
-              f"${simTime()} time: ackPsnIn=${ackPsnIn}%X should == ackPsnOut=${ackPsnOut}%X"
+              f"${simTime()} time: ackPsnIn=${ackPsnIn}%X should equal ackPsnOut=${ackPsnOut}%X"
 
             workCompIdOut shouldBe workReqIdIn withClue
-              f"${simTime()} time: workCompIdOut=${workCompIdOut}%X should == workReqIdIn=${workReqIdIn}%X"
+              f"${simTime()} time: workCompIdOut=${workCompIdOut}%X should equal workReqIdIn=${workReqIdIn}%X"
 
             lenBytesOut shouldBe lenBytesIn withClue
-              f"${simTime()} time: lenBytesOut=${lenBytesOut}%X should == lenBytesIn=${lenBytesIn}%X"
+              f"${simTime()} time: lenBytesOut=${lenBytesOut}%X should equal lenBytesIn=${lenBytesIn}%X"
 
             if (workReqEndPsn != ackPsnIn) { // Coalesce ACK case
 
@@ -565,10 +565,10 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
 //          )
 
           psnStartInReadRespMeta shouldBe psnStartInWorkReqQueryResp withClue
-            f"${simTime()} time: psnStartInReadRespMeta=${psnStartInReadRespMeta}%X should == psnStartInWorkReqQueryResp=${psnStartInWorkReqQueryResp}%X"
+            f"${simTime()} time: psnStartInReadRespMeta=${psnStartInReadRespMeta}%X should equal psnStartInWorkReqQueryResp=${psnStartInWorkReqQueryResp}%X"
 
           psnStartInWorkReqQueryResp shouldBe psnStartInAddrCacheResp withClue
-            f"${simTime()} time: psnStartInWorkReqQueryResp=${psnStartInWorkReqQueryResp}%X should == psnStartInAddrCacheResp=${psnStartInAddrCacheResp}%X"
+            f"${simTime()} time: psnStartInWorkReqQueryResp=${psnStartInWorkReqQueryResp}%X should equal psnStartInAddrCacheResp=${psnStartInAddrCacheResp}%X"
 
           for (fragIdx <- 0 until totalFragNum) {
             val psnIn = psnStartInReadRespMeta + (fragIdx / maxFragNumPerPkt)
@@ -583,10 +583,10 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
             ) = MiscUtils.safeDeQueue(txReadRespQueue, dut.clockDomain)
 
             psnIn shouldBe psnInReadResp withClue
-              f"${simTime()} time: psnIn=${psnIn}%X should == psnInReadResp=${psnInReadResp}%X"
+              f"${simTime()} time: psnIn=${psnIn}%X should equal psnInReadResp=${psnInReadResp}%X"
 
             psnInReadResp shouldBe psnInDmaWriteReq withClue
-              f"${simTime()} time: psnInReadResp=${psnInReadResp}%X should == psnInDmaWriteReq=${psnInDmaWriteReq}%X"
+              f"${simTime()} time: psnInReadResp=${psnInReadResp}%X should equal psnInDmaWriteReq=${psnInDmaWriteReq}%X"
 
             phyAddrOutDmaWriteReq shouldBe phyAddrInAddrCacheResp withClue
               f"${simTime()} time: phyAddrInAddrCacheResp=${phyAddrInAddrCacheResp}%X == phyAddrOutDmaWriteReq=${phyAddrOutDmaWriteReq}%X"
@@ -595,10 +595,10 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
               f"${simTime()} time: workReqIdInWorkReqQueryResp=${workReqIdInWorkReqQueryResp}%X == workReqIdOutDmaWriteReq=${workReqIdOutDmaWriteReq}%X"
 
             dataOutDmaWriteReq shouldBe dataInReadResp withClue
-              f"${simTime()} time: dataInReadResp=${dataInReadResp}%X should == dataOutDmaWriteReq=${dataOutDmaWriteReq}%X"
+              f"${simTime()} time: dataInReadResp=${dataInReadResp}%X should equal dataOutDmaWriteReq=${dataOutDmaWriteReq}%X"
 
             isLastOutDmaWriteReq shouldBe isLastInReadResp withClue
-              f"${simTime()} time: isLastInReadResp=${isLastInReadResp} should == isLastOutDmaWriteReq=${isLastOutDmaWriteReq}"
+              f"${simTime()} time: isLastInReadResp=${isLastInReadResp} should equal isLastOutDmaWriteReq=${isLastOutDmaWriteReq}"
           }
           matchQueue.enqueue(psnStartInReadRespMeta)
 //          println(f"${simTime()} time: ${matchQueue.size} matches")
@@ -696,12 +696,12 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
 
       streamSlaveRandomizer(dut.io.atomicRespDmaWriteReq.req, dut.clockDomain)
       MiscUtils.checkConditionAlways(dut.clockDomain)(
-        dut.io.atomicRespDmaWriteReq.req.valid.toBoolean == false
+        !dut.io.atomicRespDmaWriteReq.req.valid.toBoolean
       )
 
       streamSlaveRandomizer(dut.io.atomicRespDmaWriteReq.req, dut.clockDomain)
       MiscUtils.checkConditionAlways(dut.clockDomain)(
-        dut.io.atomicRespDmaWriteReq.req.valid.toBoolean == false
+        !dut.io.atomicRespDmaWriteReq.req.valid.toBoolean
       )
 
       MiscUtils.checkInputOutputQueues(
