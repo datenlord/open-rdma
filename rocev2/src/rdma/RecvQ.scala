@@ -1801,9 +1801,9 @@ class RqOut(busWidth: BusWidth) extends Component {
     .translateWith(
       io.rxDupAtomicResp.asRdmaDataPktFrag(busWidth)
     )
-  val txVec =
+  val normalRespVec =
     Vec(rxSendWriteResp, io.rxReadResp.pktFrag, rxAtomicResp, rxErrResp)
-  val txSelOH = txVec.map(resp => {
+  val normalRespOutSelOH = normalRespVec.map(resp => {
     val psnRangeMatch = resp.valid && psnOutRangeFifo.io.pop.valid &&
       PsnUtil.lte(psnOutRangeFifo.io.pop.start, resp.bth.psn, io.qpAttr.epsn) &&
       PsnUtil.lte(resp.bth.psn, psnOutRangeFifo.io.pop.end, io.qpAttr.epsn)
@@ -1818,29 +1818,40 @@ class RqOut(busWidth: BusWidth) extends Component {
     }
     psnRangeMatch
   })
-  val hasPktToOutput = txSelOH.orR
-//  when(psnOutRangeFifo.io.pop.valid && !hasPktToOutput) {
-//    // TODO: no output in OutPsnRange should be normal case
-//    report(
-//      message =
-//        L"${REPORT_TIME} time: no output packet in OutPsnRange: startPsn=${psnOutRangeFifo.io.pop.start}, endPsn=${psnOutRangeFifo.io.pop.end}, psnOutRangeFifo.io.pop.valid=${psnOutRangeFifo.io.pop.valid}",
-//      severity = FAILURE
-//    )
-//  }
 
-  val txOutputSel = StreamOneHotMux(select = txSelOH.asBits(), inputs = txVec)
-  psnOutRangeFifo.io.pop.ready := txOutputSel.bth.psn === psnOutRangeFifo.io.pop.end && txOutputSel.lastFire
-  io.opsnInc.inc := txOutputSel.fire
-  io.opsnInc.psnVal := txOutputSel.bth.psn
+  val hasPktToOutput = normalRespOutSelOH.orR
+  val normalRespOutSel = StreamOneHotMux(
+    select = normalRespOutSelOH.asBits(),
+    inputs = normalRespVec
+  )
+  val (normalRespOut4PsnOutRange, normalRespOut4ReadAtomicRstCache) =
+    StreamFork2(normalRespOutSel)
+  val normalRespOut = FragmentStreamConditionalJoinStream(
+    inputFragmentStream = normalRespOut4PsnOutRange,
+    inputStream = psnOutRangeFifo.io.pop,
+    joinCond = normalRespOut4PsnOutRange.bth.psn === psnOutRangeFifo.io.pop.end
+  )
+//  psnOutRangeFifo.io.pop.ready := txOutputSel.bth.psn === psnOutRangeFifo.io.pop.end && txOutputSel.lastFire
+  io.opsnInc.inc := normalRespOutSel.lastFire
+  io.opsnInc.psnVal := normalRespOutSel.bth.psn
 
-  val txDupRespVec =
+  val dupRespVec =
     Vec(rxDupSendWriteResp, io.rxDupReadResp.pktFrag, rxDupAtomicResp)
   // TODO: duplicate output also needs to keep PSN order
-  val txDupOutputSel =
-    StreamArbiterFactory.roundRobin.fragmentLock.on(txDupRespVec)
+  val dupRespOut =
+    StreamArbiterFactory.roundRobin.fragmentLock.on(dupRespVec)
 
   io.tx.pktFrag <-/< StreamArbiterFactory.roundRobin.fragmentLock
-    .onArgs(txDupOutputSel, txOutputSel.continueWhen(hasPktToOutput))
+    .onArgs(
+      dupRespOut,
+      normalRespOut ~~ { payloadData =>
+        val result = cloneOf(io.tx.pktFrag.payloadType)
+        result.fragment := payloadData._1
+        result.last := payloadData.last
+        result
+      }
+    )
+//    .onArgs(txDupOutputSel, txOutputSel.continueWhen(hasPktToOutput))
 
   val isReadReq = OpCode.isReadReqPkt(psnOutRangeFifo.io.pop.opcode)
   val isAtomicReq = OpCode.isAtomicReqPkt(psnOutRangeFifo.io.pop.opcode)
@@ -1852,27 +1863,38 @@ class RqOut(busWidth: BusWidth) extends Component {
       severity = FAILURE
     )
   }
-  io.readAtomicRstCachePop.ready := txOutputSel.lastFire && txOutputSel.bth.psn === (io.readAtomicRstCachePop.psnStart + (io.readAtomicRstCachePop.pktNum - 1))
+
+  val normalRespOutJoinReadAtomicRstCacheCond = (isReadReq || isAtomicReq) &&
+    (normalRespOut4ReadAtomicRstCache.bth.psn === (io.readAtomicRstCachePop.psnStart + (io.readAtomicRstCachePop.pktNum - 1)))
+  val normalRespOutJoinReadAtomicRstCache = FragmentStreamConditionalJoinStream(
+    inputFragmentStream = normalRespOut4ReadAtomicRstCache,
+    inputStream = io.readAtomicRstCachePop,
+    joinCond = normalRespOutJoinReadAtomicRstCacheCond
+  )
+  StreamSink(NoData) << normalRespOutJoinReadAtomicRstCache.translateWith(
+    NoData
+  )
+//  io.readAtomicRstCachePop.ready := txOutputSel.lastFire && txOutputSel.bth.psn === (io.readAtomicRstCachePop.psnStart + (io.readAtomicRstCachePop.pktNum - 1))
   when(io.readAtomicRstCachePop.fire) {
-    assert(
-      assertion = isReadReq || isAtomicReq,
-      message =
-        L"${REPORT_TIME} time: the output should correspond to read/atomic resp, io.readAtomicRstCachePop.fire=${io.readAtomicRstCachePop.fire}, but psnOutRangeFifo.io.pop.opcode=${psnOutRangeFifo.io.pop.opcode}",
-      severity = FAILURE
-    )
-    assert(
-      assertion = psnOutRangeFifo.io.pop.fire,
-      message =
-        L"${REPORT_TIME} time: io.readAtomicRstCachePop.fire=${io.readAtomicRstCachePop.fire} and psnOutRangeFifo.io.pop.fire=${psnOutRangeFifo.io.pop.fire} should fire at the same time",
-      severity = FAILURE
-    )
+//    assert(
+//      assertion = isReadReq || isAtomicReq,
+//      message =
+//        L"${REPORT_TIME} time: the output should correspond to read/atomic resp, io.readAtomicRstCachePop.fire=${io.readAtomicRstCachePop.fire}, but psnOutRangeFifo.io.pop.opcode=${psnOutRangeFifo.io.pop.opcode}",
+//      severity = FAILURE
+//    )
+//    assert(
+//      assertion = psnOutRangeFifo.io.pop.fire,
+//      message =
+//        L"${REPORT_TIME} time: io.readAtomicRstCachePop.fire=${io.readAtomicRstCachePop.fire} and psnOutRangeFifo.io.pop.fire=${psnOutRangeFifo.io.pop.fire} should fire at the same time",
+//      severity = FAILURE
+//    )
     assert(
       assertion = checkRespOpCodeMatch(
         io.readAtomicRstCachePop.opcode,
-        txOutputSel.bth.opcode
+        normalRespOut4ReadAtomicRstCache.bth.opcode
       ),
       message =
-        L"${REPORT_TIME} time: io.readAtomicRstCachePop.opcode=${io.readAtomicRstCachePop.opcode} should match txOutputSel.bth.opcode=${txOutputSel.bth.opcode}",
+        L"${REPORT_TIME} time: io.readAtomicRstCachePop.opcode=${io.readAtomicRstCachePop.opcode} should match normalRespOut4ReadAtomicRstCache.bth.opcode=${normalRespOut4ReadAtomicRstCache.bth.opcode}",
       severity = FAILURE
     )
   }

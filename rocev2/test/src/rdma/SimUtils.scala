@@ -97,9 +97,17 @@ object SendWriteReqReadRespInputGen {
 
     // The total request/response length is from 1 byte to 2G=2^31 bytes
     val totalLenGen =
-      dmaRespIdxGen.map(_ =>
-        1 + scala.util.Random.nextInt((avgReqRespLen - 1).toInt)
-      )
+      dmaRespIdxGen.map(_ => 1 + Random.nextInt((avgReqRespLen - 1).toInt))
+    totalLenGen
+  }
+
+  private def genPayloadLen(randSeed: Int) = {
+    val dmaRespIdxGen = NaturalNumber.from(0)
+
+    // The total request/response length is from 1 byte to 2G=2^31 bytes
+    val randomGen = new Random(randSeed)
+    val totalLenGen =
+      dmaRespIdxGen.map(_ => 1 + randomGen.nextInt((maxReqRespLen - 1).toInt))
     totalLenGen
   }
 
@@ -117,7 +125,39 @@ object SendWriteReqReadRespInputGen {
     )
 
     val reqRespLenUnderMaxFragNUm = mtyWidth *
-      (scala.util.Random.nextInt(maxFragNum - 1) + 1)
+      (Random.nextInt(maxFragNum - 1) + 1)
+    require(
+      reqRespLenUnderMaxFragNUm >= mtyWidth,
+      f"${simTime()} time: reqRespLenUnderMaxFragNUm=${reqRespLenUnderMaxFragNUm} should >= mtyWidth=${mtyWidth}"
+    )
+    val dmaRespIdxGen = NaturalNumber.from(0)
+
+    // The total request/response length is from 1 byte to 2G=2^31 bytes
+    val totalLenGen =
+      dmaRespIdxGen.map(_ => 1 + Random.nextInt(reqRespLenUnderMaxFragNUm - 1))
+    totalLenGen
+  }
+
+  private def genPayloadLen(
+      busWidth: BusWidth.Value,
+      maxFragNum: FragNum,
+      randSeed: Int
+  ) = {
+    val mtyWidth = busWidthBytes(busWidth)
+    require(
+      mtyWidth > 0,
+      f"${simTime()} time: mtyWidth=${mtyWidth} should be positive"
+    )
+
+    val fragNumLimit = maxReqRespLen / mtyWidth
+    require(
+      maxFragNum <= fragNumLimit,
+      f"input maxFragNum=${maxFragNum} is too large, should <= fragNumLimit=${fragNumLimit}"
+    )
+
+    val randomGen = new Random(randSeed)
+    val reqRespLenUnderMaxFragNUm = mtyWidth *
+      (randomGen.nextInt(maxFragNum - 1) + 1)
     require(
       reqRespLenUnderMaxFragNUm >= mtyWidth,
       f"${simTime()} time: reqRespLenUnderMaxFragNUm=${reqRespLenUnderMaxFragNUm} should >= mtyWidth=${mtyWidth}"
@@ -127,18 +167,8 @@ object SendWriteReqReadRespInputGen {
     // The total request/response length is from 1 byte to 2G=2^31 bytes
     val totalLenGen =
       dmaRespIdxGen.map(_ =>
-        1 + scala.util.Random.nextInt(reqRespLenUnderMaxFragNUm - 1)
+        1 + randomGen.nextInt(reqRespLenUnderMaxFragNUm - 1)
       )
-    totalLenGen
-  }
-
-  private def genPayloadLen(randSeed: Int) = {
-    val dmaRespIdxGen = NaturalNumber.from(0)
-
-    // The total request/response length is from 1 byte to 2G=2^31 bytes
-    val randomGen = new Random(randSeed)
-    val totalLenGen =
-      dmaRespIdxGen.map(_ => 1 + randomGen.nextInt((maxReqRespLen - 1).toInt))
     totalLenGen
   }
 
@@ -181,6 +211,16 @@ object SendWriteReqReadRespInputGen {
 
   def getItr(pmtuLen: PMTU.Value, busWidth: BusWidth.Value, randSeed: Int) = {
     val payloadLenGen = genPayloadLen(randSeed)
+    genOtherItr(payloadLenGen, pmtuLen, busWidth)
+  }
+
+  def getItr(
+      maxFragNum: Int,
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      randSeed: Int
+  ) = {
+    val payloadLenGen = genPayloadLen(busWidth, maxFragNum, randSeed)
     genOtherItr(payloadLenGen, pmtuLen, busWidth)
   }
 }
@@ -478,7 +518,7 @@ object StreamSimUtil {
           )
           if (fragIdx == totalFragNum - 1) {
             withClue(
-              f"${simTime()} time: this fragment with fragIdx=${fragIdx}%X is the last one, pktIdx=${pktIdx}%X should == pktNum=${pktNum}%X-1"
+              f"${simTime()} time: this fragment with fragIdx=${fragIdx}%X is the last one, pktIdx=${pktIdx}%X should equal pktNum=${pktNum}%X-1"
             )(pktIdx shouldBe (pktNum - 1))
           }
           clockDomain.waitSamplingWhere(
@@ -550,7 +590,7 @@ object StreamSimUtil {
               )
               if (fragIdx == totalFragNum - 1) {
                 withClue(
-                  f"${simTime()} time: this fragment with fragIdx=${fragIdx}%X is the last one, pktIdx=${pktIdx}%X should == pktNum=${pktNum}%X-1"
+                  f"${simTime()} time: this fragment with fragIdx=${fragIdx}%X is the last one, pktIdx=${pktIdx}%X should equal pktNum=${pktNum}%X-1"
                 )(pktIdx shouldBe (pktNum - 1))
               }
               clockDomain.waitSamplingWhere(
@@ -786,11 +826,10 @@ object MiscUtils {
   def randomHeaderByteWidth(): Int = {
     val headerMtyValidWidthRange = maxHeaderWidthBytes - minHeaderWidthBytes
     val headerMtyMultiplier = 4 // Header width is multiple of 4 bytes
-    minHeaderWidthBytes + scala.util.Random
-      .between(
-        0,
-        headerMtyValidWidthRange / headerMtyMultiplier
-      ) * headerMtyMultiplier // between(minInclusive: Int, maxExclusive: Int)
+    minHeaderWidthBytes + Random.between(
+      0,
+      headerMtyValidWidthRange / headerMtyMultiplier
+    ) * headerMtyMultiplier // between(minInclusive: Int, maxExclusive: Int)
   }
 }
 

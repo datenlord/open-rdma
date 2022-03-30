@@ -189,13 +189,13 @@ class SqDmaReadRespHandlerTest extends AnyFunSuite {
 //              f"${simTime()} time: respLenInDmaResp=${respLenInDmaResp} == respLenOutDmaResp=${respLenOutDmaResp}, respLenInCache=${respLenInCache} == respLenOutCache=${respLenOutCache}, respLenInDmaResp=${respLenInDmaResp} == respLenInCache=${respLenInCache}"
 //            )
             respLenOutDmaResp shouldBe respLenInDmaResp withClue
-              f"${simTime()} time: respLenInDmaResp=${respLenInDmaResp} should == respLenOutDmaResp=${respLenOutDmaResp}"
+              f"${simTime()} time: respLenInDmaResp=${respLenInDmaResp} should equal respLenOutDmaResp=${respLenOutDmaResp}"
 
             respLenOutCache shouldBe respLenInCache withClue
-              f"${simTime()} time: respLenInCache=${respLenInCache} should == respLenOutCache=${respLenOutCache}"
+              f"${simTime()} time: respLenInCache=${respLenInCache} should equal respLenOutCache=${respLenOutCache}"
 
             respLenInDmaResp shouldBe respLenInCache withClue
-              f"${simTime()} time: respLenInDmaResp=${respLenInDmaResp} should == respLenInCache=${respLenInCache}"
+              f"${simTime()} time: respLenInDmaResp=${respLenInDmaResp} should equal respLenInCache=${respLenInCache}"
 
 //          println(
 //            f"${simTime()} time: output response data io.cachedWorkReqAndDmaReadResp.dmaReadResp.data=${dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.data.toBigInt}%X not match input response data io.dmaReadResp.resp.data=${dataIn}%X"

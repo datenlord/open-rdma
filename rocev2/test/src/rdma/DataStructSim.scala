@@ -1415,7 +1415,7 @@ object RdmaDataPktSim {
 //            if (pktIdx == pktNum - 1 && fragIdx == pktFragNum - 1) {
 //              require(
 //                pktIdx == pktNum - 1,
-//                f"${simTime()} time: this fragment with fragIdx=${fragIdx}%X is the last one, pktIdx=${pktIdx}%X should == pktNum=${pktNum}%X-1"
+//                f"${simTime()} time: this fragment with fragIdx=${fragIdx}%X is the last one, pktIdx=${pktIdx}%X should equal pktNum=${pktNum}%X-1"
 //              )
 //            }
             clockDomain.waitSamplingWhere(
