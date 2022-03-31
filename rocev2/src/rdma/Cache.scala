@@ -560,6 +560,7 @@ class QpAddrCacheAgent extends Component {
     is(AddrQueryInitiator.SQ_RESP) {
       txSel := sqRespIdx
     }
+    // UNREACHABLE DEFAULT STATEMENT
 //    default {
 //      report(
 //        message =
