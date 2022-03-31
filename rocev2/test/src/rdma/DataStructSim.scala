@@ -5,6 +5,7 @@ import spinal.core.sim._
 import spinal.lib._
 
 import ConstantSettings._
+import OpCodeSim._
 import RdmaConstants._
 import RdmaTypeReDef._
 import StreamSimUtil._
@@ -51,7 +52,10 @@ object RdmaTypeReDef {
   type AethCode = Int
   type AethValue = Int
   type AethMsn = Int
-  type AtomicAckEthOrig = BigInt
+
+  type AtomicComp = BigInt
+  type AtomicSwap = BigInt
+  type AtomicOrig = BigInt
 }
 
 object PsnSim {
@@ -155,6 +159,44 @@ class PsnSim(val psn: PSN) {
 }
 
 object WorkCompSim {
+  def setOpCodeFromSqWorkReqOpCode(
+      workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
+  ): SpinalEnumElement[WorkCompOpCode.type] = {
+    // TODO: check WR opcode without WC opcode equivalent
+    //    val TM_ADD = Value(130)
+    //    val TM_DEL = Value(131)
+    //    val TM_SYNC = Value(132)
+    //    val TM_RECV = Value(133)
+    //    val TM_NO_TAG = Value(134)
+    workReqOpCode match {
+      case WorkReqOpCode.RDMA_WRITE | WorkReqOpCode.RDMA_WRITE_WITH_IMM =>
+        WorkCompOpCode.RDMA_WRITE
+      case WorkReqOpCode.SEND | WorkReqOpCode.SEND_WITH_IMM |
+          WorkReqOpCode.SEND_WITH_INV =>
+        WorkCompOpCode.SEND
+      case WorkReqOpCode.RDMA_READ =>
+        WorkCompOpCode.RDMA_READ
+      case WorkReqOpCode.ATOMIC_CMP_AND_SWP =>
+        WorkCompOpCode.COMP_SWAP
+      case WorkReqOpCode.ATOMIC_FETCH_AND_ADD =>
+        WorkCompOpCode.FETCH_ADD
+      case WorkReqOpCode.LOCAL_INV =>
+        WorkCompOpCode.LOCAL_INV
+      case WorkReqOpCode.BIND_MW =>
+        WorkCompOpCode.BIND_MW
+      case WorkReqOpCode.TSO =>
+        WorkCompOpCode.TSO
+      case WorkReqOpCode.DRIVER1 =>
+        WorkCompOpCode.DRIVER1
+      case _ => {
+        println(
+          L"${simTime()} time: no matched WC opcode at SQ side for WR opcode=${workReqOpCode} when in simulation"
+        )
+        ???
+      }
+    }
+  }
+
   def rqCheckWorkCompStatus(
       ackType: SpinalEnumElement[AckType.type],
       workCompStatus: SpinalEnumElement[WorkCompStatus.type]
@@ -255,6 +297,26 @@ object WorkCompSim {
 }
 
 object WorkReqSim {
+  implicit class WorkReqOpCodeExt(
+      val workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
+  ) {
+    def isSendReq(): Boolean = {
+      workReqSend.contains(workReqOpCode)
+    }
+
+    def isWriteReq(): Boolean = {
+      workReqWrite.contains(workReqOpCode)
+    }
+
+    def isReadReq(): Boolean = {
+      workReqRead.contains(workReqOpCode)
+    }
+
+    def isAtomicReq(): Boolean = {
+      workReqAtomic.contains(workReqOpCode)
+    }
+  }
+
   val workReqSend = Seq(
     WorkReqOpCode.SEND,
     WorkReqOpCode.SEND_WITH_IMM,
@@ -269,29 +331,29 @@ object WorkReqSim {
   val workReqAtomic =
     Seq(WorkReqOpCode.ATOMIC_CMP_AND_SWP, WorkReqOpCode.ATOMIC_FETCH_AND_ADD)
 
-  def isSendReq(
-      workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
-  ): Boolean = {
-    workReqSend.contains(workReqOpCode)
-  }
-
-  def isWriteReq(
-      workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
-  ): Boolean = {
-    workReqWrite.contains(workReqOpCode)
-  }
-
-  def isReadReq(
-      workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
-  ): Boolean = {
-    workReqRead.contains(workReqOpCode)
-  }
-
-  def isAtomicReq(
-      workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
-  ): Boolean = {
-    workReqAtomic.contains(workReqOpCode)
-  }
+//  def isSendReq(
+//      workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
+//  ): Boolean = {
+//    workReqSend.contains(workReqOpCode)
+//  }
+//
+//  def isWriteReq(
+//      workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
+//  ): Boolean = {
+//    workReqWrite.contains(workReqOpCode)
+//  }
+//
+//  def isReadReq(
+//      workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
+//  ): Boolean = {
+//    workReqRead.contains(workReqOpCode)
+//  }
+//
+//  def isAtomicReq(
+//      workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
+//  ): Boolean = {
+//    workReqAtomic.contains(workReqOpCode)
+//  }
 
   def randomReadAtomicOpCode(): SpinalEnumElement[WorkReqOpCode.type] = {
     val opCodes = WorkReqOpCode.RDMA_READ +: workReqAtomic
@@ -670,16 +732,52 @@ object AethSim {
   }
 }
 
+object AtomicEthSim {
+  def extract(
+      fragData: PktFragData,
+      busWidth: BusWidth.Value
+  ): (VirtualAddr, LRKey, AtomicSwap, AtomicComp) = {
+    val bthWidth = widthOf(BTH())
+    val atomicEthWidth = widthOf(AtomicEth())
+    require(
+      busWidth.id >= bthWidth + atomicEthWidth,
+      f"${simTime()} time: input busWidth=${busWidth.id} should >= widthOf(BTH())=${bthWidth} + widthOf(AtomicEth())=${atomicEthWidth}"
+    )
+
+    val addrShiftAmt = busWidth.id - bthWidth - MEM_ADDR_WIDTH
+    val addrBitMask = setAllBits(MEM_ADDR_WIDTH) << addrShiftAmt
+
+    val rkeyShiftAmt =
+      busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
+    val rkeyBitMask = setAllBits(LRKEY_IMM_DATA_WIDTH) << rkeyShiftAmt
+
+    val swapShiftAmt =
+      busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - LONG_WIDTH
+    val swapBitMask = setAllBits(LONG_WIDTH) << swapShiftAmt
+
+    val compShiftAmt =
+      busWidth.id - bthWidth - atomicEthWidth
+    val compBitMask = setAllBits(LONG_WIDTH) << compShiftAmt
+
+    val addr = (fragData & addrBitMask) >> addrShiftAmt
+    val rkey = (fragData & rkeyBitMask) >> rkeyShiftAmt
+    val comp = (fragData & compBitMask) >> compShiftAmt
+    val swap = (fragData & swapBitMask) >> swapShiftAmt
+
+    (addr, rkey.toLong, swap, comp)
+  }
+}
+
 object AtomicAckEthSim {
   def extract(
       fragData: PktFragData,
       busWidth: BusWidth.Value
-  ): PktFragData = {
+  ): AtomicOrig = {
     val bthWidth = widthOf(BTH())
     val aethWidth = widthOf(AETH())
     val atomicAckEthWidth = widthOf(AtomicAckEth())
     require(
-      busWidth.id >= bthWidth + atomicAckEthWidth,
+      busWidth.id >= bthWidth + aethWidth + atomicAckEthWidth,
       f"${simTime()} time: input busWidth=${busWidth.id} should >= widthOf(BTH())=${bthWidth} + width(AETH())=${aethWidth} + widthOf(AtomicAckEth())=${atomicAckEthWidth}"
     )
 
@@ -761,7 +859,7 @@ object RethSim {
   def extract(
       fragData: PktFragData,
       busWidth: BusWidth.Value
-  ): (PhysicalAddr, LRKey, PktLen) = {
+  ): (VirtualAddr, LRKey, PktLen) = {
     require(
       busWidth.id >= bthWidth + rethWidth,
       f"${simTime()} time: input busWidth=${busWidth.id} should >= widthOf(BTH())=${bthWidth} + widthOf(RETH())=${rethWidth}"
@@ -1271,12 +1369,11 @@ object AddrCacheSim {
 }
 
 object RdmaDataPktSim {
-  import OpCodeSim._
-
-  def pktFragStreamMasterDriverAlwaysValid[T <: Data](
+  private def pktFragStreamMasterDriverHelper[T <: Data](
       stream: Stream[Fragment[T]],
       getRdmaPktData: T => RdmaDataPkt,
-      clockDomain: ClockDomain
+      clockDomain: ClockDomain,
+      alwaysValid: Boolean
   )(
       outerLoopBody: => (
           PsnStart,
@@ -1317,40 +1414,12 @@ object RdmaDataPktSim {
           workReqOpCode
         ) =
           outerLoopBody
-//        val maxPayloadFragNumPerPkt =
-//          SendWriteReqReadRespInputGen.maxFragNumPerPkt(pmtuLen, busWidth)
-//        val mtyWidth = SendWriteReqReadRespInputGen.busWidthBytes(busWidth)
-//        val pmtuLenBytes = SendWriteReqReadRespInputGen.pmtuLenBytes(pmtuLen)
-//        val lastPktPadCnt =
-//          (PAD_COUNT_FULL - (payloadLenBytes.toInt % PAD_COUNT_FULL)) % PAD_COUNT_FULL
 
         // Inner loop
         for (pktIdx <- 0 until pktNum) {
           val opcode = WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx, pktNum)
           val headerLenBytes = opcode.getPktHeaderLenBytes()
-//          val padCnt = if (pktIdx == pktNum - 1) lastPktPadCnt else 0
           val psn = psnStart + pktIdx
-//          val lastOrOnlyPktTotalLenBytes = {
-//            val lastOrOnlyPktPayloadLenBytes =
-//              payloadLenBytes.toInt % pmtuLenBytes
-//            if (lastOrOnlyPktPayloadLenBytes == 0) {
-//              // In case last or only packet payload length is exactly pmtuLenBytes
-//              pmtuLenBytes + headerLenBytes + lastPktPadCnt
-//            } else {
-//              lastOrOnlyPktPayloadLenBytes + headerLenBytes + lastPktPadCnt
-//            }
-//          }
-//          val pktFragNum = if (pktIdx == pktNum - 1) { // Last or only packet
-//            val lastOrOnlyPktFragNum = lastOrOnlyPktTotalLenBytes / mtyWidth
-//            if (lastOrOnlyPktTotalLenBytes % mtyWidth == 0) {
-//              // In case last or only packet with header and padCnt length is exactly mtyWidth
-//              lastOrOnlyPktFragNum
-//            } else {
-//              lastOrOnlyPktFragNum + 1
-//            }
-//          } else {
-//            maxPayloadFragNumPerPkt + 1 // First or middle packet has one extra fragment for header
-//          }
           val pktFragNum = computePktFragNum(
             pmtuLen,
             busWidth,
@@ -1369,36 +1438,39 @@ object RdmaDataPktSim {
               fragLast,
               pktIdx,
               pktNum,
-//              mtyWidth,
               payloadLenBytes
-//              headerLenBytes.toLong,
-//              lastPktPadCnt,
-//              pmtuLenBytes.toLong
             )
 
 //            println(
 //              f"${simTime()} time: opcode=${opcode}, pktIdx=${pktIdx}%X, pktNum=${pktNum}%X, fragIdx=${fragIdx}%X, pktFragNum=${pktFragNum}%X, fragLast=${fragLast}, mty=${mty}%X, PSN=${psn}%X, headerLenBytes=${headerLenBytes}%X, payloadLenBytes=${payloadLenBytes}%X, lastOrOnlyPktTotalLenBytes=${lastOrOnlyPktTotalLenBytes}%X, padCnt=${padCnt}%X"
 //            )
-            stream.valid #= true
-            stream.payload.randomize()
+            do {
+              if (alwaysValid) {
+                stream.valid #= true
+              } else {
+                stream.valid.randomize()
+              }
+              stream.payload.randomize()
+              sleep(0)
+              if (!stream.valid.toBoolean) {
+                clockDomain.waitSampling()
+              }
+            } while (!stream.valid.toBoolean)
+
             stream.last #= fragLast // Set last must after set payload, since last is part of the payload
             setRdmaDataFrag(
               getRdmaPktData(stream.fragment),
               psn,
               opcode,
               fragIdx,
-//              pktFragNum,
               fragLast,
               pktIdx,
               pktNum,
               payloadLenBytes,
-//              headerLenBytes,
-//              padCnt,
               mty,
               pmtuLen,
               busWidth
             )
-            sleep(0)
 
             innerLoopFunc(
               psn,
@@ -1426,7 +1498,175 @@ object RdmaDataPktSim {
       }
     }
 
-  def helper(
+  def pktFragStreamMasterDriver[T <: Data](
+      stream: Stream[Fragment[T]],
+      getRdmaPktData: T => RdmaDataPkt,
+      clockDomain: ClockDomain
+  )(
+      outerLoopBody: => (
+          PsnStart,
+          FragNum,
+          PktNum,
+          PMTU.Value,
+          BusWidth.Value,
+          PktLen,
+          SpinalEnumElement[WorkReqOpCode.type]
+      )
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          PktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit =
+    pktFragStreamMasterDriverHelper(
+      stream,
+      getRdmaPktData,
+      clockDomain,
+      alwaysValid = false
+    )(outerLoopBody)(innerLoopFunc)
+
+  def pktFragStreamMasterDriverAlwaysValid[T <: Data](
+      stream: Stream[Fragment[T]],
+      getRdmaPktData: T => RdmaDataPkt,
+      clockDomain: ClockDomain
+  )(
+      outerLoopBody: => (
+          PsnStart,
+          FragNum,
+          PktNum,
+          PMTU.Value,
+          BusWidth.Value,
+          PktLen,
+          SpinalEnumElement[WorkReqOpCode.type]
+      )
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          PktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit =
+    pktFragStreamMasterDriverHelper(
+      stream,
+      getRdmaPktData,
+      clockDomain,
+      alwaysValid = true
+    )(outerLoopBody)(innerLoopFunc)
+
+//    fork {
+//      stream.valid #= false
+////      sleep(0)
+//      clockDomain.waitSampling()
+//
+//      // Outer loop
+//      while (true) {
+//        val (
+//          psnStart,
+//          _, // payloadFragNum,
+//          pktNum,
+//          pmtuLen,
+//          busWidth,
+//          payloadLenBytes,
+//          workReqOpCode
+//        ) =
+//          outerLoopBody
+//
+//        // Inner loop
+//        for (pktIdx <- 0 until pktNum) {
+//          val opcode = WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx, pktNum)
+//          val headerLenBytes = opcode.getPktHeaderLenBytes()
+//          val psn = psnStart + pktIdx
+//          val pktFragNum = computePktFragNum(
+//            pmtuLen,
+//            busWidth,
+//            opcode,
+//            payloadLenBytes,
+//            pktIdx,
+//            pktNum
+//          )
+//
+//          for (fragIdx <- 0 until pktFragNum) {
+//            val fragLast = fragIdx == pktFragNum - 1
+//            val mty = computeMty(
+//              pmtuLen,
+//              busWidth,
+//              opcode,
+//              fragLast,
+//              pktIdx,
+//              pktNum,
+//              payloadLenBytes
+//            )
+//
+////            println(
+////              f"${simTime()} time: opcode=${opcode}, pktIdx=${pktIdx}%X, pktNum=${pktNum}%X, fragIdx=${fragIdx}%X, pktFragNum=${pktFragNum}%X, fragLast=${fragLast}, mty=${mty}%X, PSN=${psn}%X, headerLenBytes=${headerLenBytes}%X, payloadLenBytes=${payloadLenBytes}%X, lastOrOnlyPktTotalLenBytes=${lastOrOnlyPktTotalLenBytes}%X, padCnt=${padCnt}%X"
+////            )
+//            do {
+//              stream.valid.randomize()
+////              stream.valid #= true
+//              stream.payload.randomize()
+//              sleep(0)
+//              if (!stream.valid.toBoolean) {
+//                clockDomain.waitSampling()
+//              }
+//            } while(!stream.valid.toBoolean)
+//
+//            stream.last #= fragLast // Set last must after set payload, since last is part of the payload
+//            setRdmaDataFrag(
+//              getRdmaPktData(stream.fragment),
+//              psn,
+//              opcode,
+//              fragIdx,
+//              fragLast,
+//              pktIdx,
+//              pktNum,
+//              payloadLenBytes,
+//              mty,
+//              pmtuLen,
+//              busWidth
+//            )
+//
+//            innerLoopFunc(
+//              psn,
+//              psnStart,
+//              fragLast,
+//              fragIdx,
+//              pktFragNum,
+//              pktIdx,
+//              pktNum,
+//              payloadLenBytes,
+//              headerLenBytes,
+//              opcode
+//            )
+////            if (pktIdx == pktNum - 1 && fragIdx == pktFragNum - 1) {
+////              require(
+////                pktIdx == pktNum - 1,
+////                f"${simTime()} time: this fragment with fragIdx=${fragIdx}%X is the last one, pktIdx=${pktIdx}%X should equal pktNum=${pktNum}%X-1"
+////              )
+////            }
+//            clockDomain.waitSamplingWhere(
+//              stream.valid.toBoolean && stream.ready.toBoolean
+//            )
+//          }
+//        }
+//      }
+//    }
+
+  def buildPktMetaDataHelper(
       pmtuLen: PMTU.Value,
       busWidth: BusWidth.Value,
       opcode: OpCode.Value,
@@ -1457,20 +1697,13 @@ object RdmaDataPktSim {
       pktIdx: PktNum,
       pktNum: PktNum
   ): FragNum = {
-//    val maxPayloadFragNumPerPkt =
-//      SendWriteReqReadRespInputGen.maxFragNumPerPkt(pmtuLen, busWidth)
-//    val mtyWidth = SendWriteReqReadRespInputGen.busWidthBytes(busWidth)
-//    val pmtuLenBytes = SendWriteReqReadRespInputGen.pmtuLenBytes(pmtuLen)
-//    val lastPktPadCnt =
-//      (PAD_COUNT_FULL - (payloadLenBytes.toInt % PAD_COUNT_FULL)) % PAD_COUNT_FULL
-//    val headerLenBytes = opcode.getPktHeaderLenBytes()
     val (
       maxPayloadFragNumPerPkt,
       mtyWidth,
       pmtuLenBytes,
       lastPktPadCnt,
       headerLenBytes
-    ) = helper(pmtuLen, busWidth, opcode, payloadLenBytes)
+    ) = buildPktMetaDataHelper(pmtuLen, busWidth, opcode, payloadLenBytes)
 
     val lastOrOnlyPktTotalLenBytes = {
       val lastOrOnlyPktPayloadLenBytes =
@@ -1502,13 +1735,10 @@ object RdmaDataPktSim {
       psn: PSN,
       opcode: OpCode.Value,
       fragIdx: FragIdx,
-//    pktFragNum: FragNum,
       fragLast: FragLast,
       pktIdx: PktIdx,
       pktNum: PktNum,
       payloadLenBytes: PktLen,
-//      headerLenBytes: HeaderLen,
-//      padCnt: Int,
       mty: BigInt,
       pmtuLen: PMTU.Value,
       busWidth: BusWidth.Value
@@ -1517,7 +1747,7 @@ object RdmaDataPktSim {
     pktFrag.bth.opcodeFull #= opcode.id
 
     val (_, mtyWidth, pmtuLenBytes, lastPktPadCnt, headerLenBytes) =
-      helper(pmtuLen, busWidth, opcode, payloadLenBytes)
+      buildPktMetaDataHelper(pmtuLen, busWidth, opcode, payloadLenBytes)
     val padCnt = if (pktIdx == pktNum - 1) lastPktPadCnt else 0
 
     require(
@@ -1570,7 +1800,7 @@ object RdmaDataPktSim {
 //      pmtuLenBytes: PktLen
   ): BigInt = {
     val (_, mtyWidth, pmtuLenBytes, lastPktPadCnt, headerLenBytes) =
-      helper(pmtuLen, busWidth, opcode, payloadLenBytes)
+      buildPktMetaDataHelper(pmtuLen, busWidth, opcode, payloadLenBytes)
 
     val mty = if (fragLast) {
       if (pktIdx == pktNum - 1) { // Final fragment of last or only packet

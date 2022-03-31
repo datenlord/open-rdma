@@ -322,6 +322,7 @@ case class NPsnInc() extends Bundle {
   val incVal = UInt(PSN_WIDTH bits)
 }
 
+// Both SQ and RQ have oPSN
 case class OPsnInc() extends Bundle {
   val inc = Bool()
   val psnVal = UInt(PSN_WIDTH bits)
@@ -350,7 +351,7 @@ case class QpAttrData() extends Bundle {
   val npsn = UInt(PSN_WIDTH bits)
   val rqOutPsn = UInt(PSN_WIDTH bits)
   val sqOutPsn = UInt(PSN_WIDTH bits)
-  val pmtu = Bits(PMTU_WIDTH bits)
+  val pmtu = UInt(PMTU_WIDTH bits)
   val maxPendingReadAtomicReqNum = UInt(MAX_WR_NUM_WIDTH bits)
   val maxDstPendingReadAtomicReqNum = UInt(MAX_WR_NUM_WIDTH bits)
   val sqpn = UInt(QPN_WIDTH bits)
@@ -1269,7 +1270,7 @@ case class ScatterGatherList() extends Bundle {
 
 case class WorkReq() extends Bundle {
   val id = Bits(WR_ID_WIDTH bits)
-  val opcode = WorkReqOpCode() // Bits(WR_OPCODE_WIDTH bits)
+  val opcode = WorkReqOpCode()
   val raddr = UInt(MEM_ADDR_WIDTH bits)
   val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
 //  val solicited = Bool()
@@ -1730,6 +1731,7 @@ case class WorkComp() extends Bundle {
       is(WorkReqOpCode.DRIVER1) {
         opcode := WorkCompOpCode.DRIVER1
       }
+      // UNREACHABLE DEFAULT STATEMENT
 //      default {
 //        report(
 //          message =
@@ -2093,18 +2095,18 @@ case class SqOrRetryQpAddrCacheAgentReadBus() extends Bundle with IMasterSlave {
   }
 }
 
-case class RespPsnRange() extends Bundle {
-  val opcode = Bits(OPCODE_WIDTH bits)
+trait PsnRange extends Bundle {
   val start = UInt(PSN_WIDTH bits)
   // end PSN is included in the range
   val end = UInt(PSN_WIDTH bits)
 }
 
-case class ReqPsnRange() extends Bundle {
-  val opcode = WorkReqOpCode() // Bits(WR_OPCODE_WIDTH bits)
-  val start = UInt(PSN_WIDTH bits)
-  // end PSN is included in the range
-  val end = UInt(PSN_WIDTH bits)
+case class RespPsnRange() extends PsnRange {
+  val opcode = Bits(OPCODE_WIDTH bits)
+}
+
+case class ReqPsnRange() extends PsnRange {
+  val workReqOpCode = WorkReqOpCode()
 }
 
 case class UdpMetaData() extends Bundle {
@@ -2470,9 +2472,8 @@ case class ReadReq() extends RdmaReq {
       val result = Fragment(RdmaDataPkt(busWidth))
       result.last := True
       result.bth := bth
-      result.data := (bth.asBigEndianBits() ## reth.asBigEndianBits()).resize(
-        busWidth.id
-      )
+      result.data := (bth.asBigEndianBits() ## reth.asBigEndianBits())
+        .resizeLeft(busWidth.id)
       result.mty := (setAllBits(reqWidthBytes) <<
         (busWidthBytes - reqWidthBytes))
     }.result
@@ -2533,9 +2534,8 @@ case class Acknowledge() extends Response {
       result.data := (bth.asBigEndianBits() ## aeth.asBigEndianBits())
         .resizeLeft(busWidth.id)
 
-      result.mty := (setAllBits(
-        ackWidthBytes
-      ) << (busWidthBytes - ackWidthBytes))
+      result.mty := (setAllBits(ackWidthBytes) <<
+        (busWidthBytes - ackWidthBytes))
     }.result
 
   def setAck(aeth: AETH, psn: UInt, dqpn: UInt): this.type = {
@@ -2614,7 +2614,7 @@ case class AtomicReq() extends RdmaBasePacket {
       result.last := True
       result.bth := bth
       result.data := (bth.asBigEndianBits() ## atomicEth.asBigEndianBits())
-        .resize(busWidth.id)
+        .resizeLeft(busWidth.id)
 
       result.mty := (setAllBits(reqWidthBytes) <<
         (busWidthBytes - reqWidthBytes))
@@ -2673,8 +2673,6 @@ case class AtomicResp() extends Response {
         .resizeLeft(busWidth.id)
       result.mty := (setAllBits(ackWidthBytes) <<
         (busWidthBytes - ackWidthBytes))
-
-//      report(L"${REPORT_TIME} time: PSN=${bth.psn}, bth=${bth.asBigEndianBits()}, aeth=${aeth.asBigEndianBits()}, atomicAckEth=${atomicAckEth.asBigEndianBits()}, result.data=${result.data}, aeth.rsvd=${aeth.rsvd}, aeth.code=${aeth.code}, aeth.value=${aeth.value}, aeth.msn=${aeth.msn}, atomicAckEth.orig=${atomicAckEth.orig}")
     }.result
 
   def set(dqpn: UInt, psn: UInt, orig: Bits): this.type = {

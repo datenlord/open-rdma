@@ -199,6 +199,7 @@ case class AETH() extends RdmaHeader {
         code := AethCode.RNR.id
         value := rnrTimeOut
       }
+      // UNREACHABLE DEFAULT STATEMENT
 //      default {
 //        code := AethCode.RSVD.id
 //        value := 0

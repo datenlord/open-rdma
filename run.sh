@@ -41,6 +41,9 @@ fi
 # SQ Test
 $MILL rocev2.test.testOnly rdma.SendReqGeneratorTest
 $MILL rocev2.test.testOnly rdma.WriteReqGeneratorTest
+$MILL rocev2.test.testOnly rdma.WorkReqValidatorTest
+$MILL rocev2.test.testOnly rdma.WorkReqCachePushAndReadAtomicHandlerTest
+$MILL rocev2.test.testOnly rdma.SqOutTest
 
 # Retry Handler Test
 $MILL rocev2.test.testOnly rdma.RetryHandlerAndDmaReadInitTest

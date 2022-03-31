@@ -226,27 +226,104 @@ object SendWriteReqReadRespInputGen {
 }
 
 object StreamSimUtil {
+  private def streamMasterDriverHelper[T <: Data](
+      stream: Stream[T],
+      clockDomain: ClockDomain,
+      alwaysValid: Boolean
+  )(assignments: => Unit): Unit =
+    fork {
+      stream.valid #= false
+      clockDomain.waitSampling()
+
+      while (true) {
+        if (alwaysValid) {
+          stream.valid #= true
+        } else {
+          stream.valid.randomize()
+        }
+        stream.payload.randomize()
+        sleep(0)
+
+        if (stream.valid.toBoolean) {
+          assignments
+          clockDomain.waitSamplingWhere(
+            stream.valid.toBoolean && stream.ready.toBoolean
+          )
+        } else {
+          clockDomain.waitSampling()
+        }
+      }
+    }
+
   def streamMasterDriver[T <: Data](
       stream: Stream[T],
       clockDomain: ClockDomain
-  )(assignments: => Unit): Unit = fork {
-    stream.valid #= false
-    clockDomain.waitSampling()
+  )(assignments: => Unit): Unit =
+    streamMasterDriverHelper(stream, clockDomain, alwaysValid = false)(
+      assignments
+    )
+//  fork {
+//    stream.valid #= false
+//    clockDomain.waitSampling()
+//
+//    while (true) {
+//      stream.valid.randomize()
+//      stream.payload.randomize()
+//      sleep(0)
+//      if (stream.valid.toBoolean) {
+//        assignments
+//        clockDomain.waitSamplingWhere(
+//          stream.valid.toBoolean && stream.ready.toBoolean
+//        )
+//      } else {
+//        clockDomain.waitSampling()
+//      }
+//    }
+//  }
 
-    while (true) {
-      stream.valid.randomize()
-      stream.payload.randomize()
-      sleep(0)
-      if (stream.valid.toBoolean) {
-        assignments
-        clockDomain.waitSamplingWhere(
-          stream.valid.toBoolean && stream.ready.toBoolean
-        )
-      } else {
-        clockDomain.waitSampling()
-      }
-    }
-  }
+  def streamMasterDriverAlwaysValid[T <: Data](
+      stream: Stream[T],
+      clockDomain: ClockDomain
+  )(assignments: => Unit): Unit =
+    streamMasterDriverHelper(stream, clockDomain, alwaysValid = true)(
+      assignments
+    )
+//    fork {
+//    stream.valid #= false
+//    clockDomain.waitSampling()
+//
+//    while (true) {
+//      stream.valid #= true
+//      stream.payload.randomize()
+//      sleep(0)
+//      if (stream.valid.toBoolean) {
+//        assignments
+//        clockDomain.waitSamplingWhere(
+//          stream.valid.toBoolean && stream.ready.toBoolean
+//        )
+//      } else {
+//        clockDomain.waitSampling()
+//      }
+//    }
+//  }
+
+  //  def streamMasterDriverOneShot[T <: Data](
+  //      stream: Stream[T],
+  //      clockDomain: ClockDomain
+  //  )(assignments: => Unit): Unit = fork {
+  //    stream.valid #= false
+  //    clockDomain.waitSampling()
+  //
+  //    stream.valid #= true
+  //    stream.payload.randomize()
+  //    sleep(0)
+  //    assignments
+  //    clockDomain.waitSamplingWhere(
+  //      stream.valid.toBoolean && stream.ready.toBoolean
+  //    )
+  //    stream.valid #= false
+  //    clockDomain.waitSampling()
+  //  }
 
   def streamSlaveRandomizer[T <: Data](
       stream: Stream[T],
@@ -277,46 +354,6 @@ object StreamSimUtil {
       clockDomain.waitFallingEdge()
       if (stream.valid.toBoolean && stream.ready.toBoolean) {
         body
-      }
-    }
-  }
-
-  def streamMasterDriverOneShot[T <: Data](
-      stream: Stream[T],
-      clockDomain: ClockDomain
-  )(assignments: => Unit): Unit = fork {
-    stream.valid #= false
-    clockDomain.waitSampling()
-
-    stream.valid #= true
-    stream.payload.randomize()
-    sleep(0)
-    assignments
-    clockDomain.waitSamplingWhere(
-      stream.valid.toBoolean && stream.ready.toBoolean
-    )
-    stream.valid #= false
-    clockDomain.waitSampling()
-  }
-
-  def streamMasterDriverAlwaysValid[T <: Data](
-      stream: Stream[T],
-      clockDomain: ClockDomain
-  )(assignments: => Unit): Unit = fork {
-    stream.valid #= false
-    clockDomain.waitSampling()
-
-    while (true) {
-      stream.valid #= true
-      stream.payload.randomize()
-      sleep(0)
-      if (stream.valid.toBoolean) {
-        assignments
-        clockDomain.waitSamplingWhere(
-          stream.valid.toBoolean && stream.ready.toBoolean
-        )
-      } else {
-        clockDomain.waitSampling()
       }
     }
   }
@@ -457,7 +494,7 @@ object StreamSimUtil {
 
     respQueue
   }
-
+  /*
   def pktFragStreamMasterDriverAlwaysValid[T <: Data, InternalData](
       stream: Stream[Fragment[T]],
       clockDomain: ClockDomain
@@ -527,7 +564,7 @@ object StreamSimUtil {
         }
       }
     }
-
+   */
   def pktFragStreamMasterDriver[T <: Data, InternalData](
       stream: Stream[Fragment[T]],
       clockDomain: ClockDomain

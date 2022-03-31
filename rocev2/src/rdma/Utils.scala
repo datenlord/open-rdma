@@ -114,7 +114,7 @@ object DmaReadRespSegment {
   def apply[T <: Data](
       input: Stream[Fragment[T]],
       flush: Bool,
-      pmtu: Bits,
+      pmtu: UInt,
       busWidth: BusWidth,
       isReqZeroDmaLen: T => Bool
   ): Stream[Fragment[T]] = {
@@ -135,7 +135,7 @@ class DmaReadRespSegment[T <: Data](
 ) extends Component {
   val io = new Bundle {
     val flush = in(Bool())
-    val pmtu = in(Bits(PMTU_WIDTH bits))
+    val pmtu = in(UInt(PMTU_WIDTH bits))
     val reqAndDmaReadRespIn = slave(Stream(Fragment(fragType)))
     val reqAndDmaReadRespOut = master(Stream(Fragment(fragType)))
   }
@@ -1069,13 +1069,6 @@ class StreamArbiterTree[T <: Data](
 object StreamOneHotDeMux {
   def apply[T <: Data](input: Stream[T], select: Bits): Vec[Stream[T]] = {
     val portCount = widthOf(select)
-    when(input.valid) {
-      assert(
-        assertion = CountOne(select) <= 1,
-        message = L"${REPORT_TIME} time: select=${select} should be one hot",
-        severity = FAILURE
-      )
-    }
 
     val streamOneHotDeMux = new StreamOneHotDeMux(input.payload, portCount)
     streamOneHotDeMux.io.input << input
@@ -1095,7 +1088,8 @@ class StreamOneHotDeMux[T <: Data](dataType: HardType[T], portCount: Int)
   when(io.input.valid) {
     assert(
       assertion = CountOne(io.select) <= 1,
-      message = L"${REPORT_TIME} time: io.select=${io.select} is not one hot",
+      message =
+        L"${REPORT_TIME} time: io.select=${io.select} is not one hot, io.select should have no more than one bit as true, when io.input is valid",
       severity = FAILURE
     )
   }
@@ -1140,6 +1134,16 @@ class StreamOneHotMux[T <: Data](dataType: HardType[T], portCount: Int)
     val output = master(Stream(dataType()))
   }
   require(portCount > 0, s"portCount=${portCount} must > 0")
+
+  val inputValid = io.inputs.map(_.valid).reduceBalancedTree(_ || _)
+  when(inputValid) {
+    assert(
+      assertion = CountOne(io.select) <= 1,
+      message =
+        L"${REPORT_TIME} time: de-mux conditions io.select=${io.select} should have no more than one true condition when input streams have valid input",
+      severity = FAILURE
+    )
+  }
 
   io.output.valid := False
   io.output.payload := io.inputs(0).payload
@@ -1358,6 +1362,61 @@ object mergeRdmaHeaderMty {
   }.result
 }
 
+object SeqOut {
+  def apply[TPsnRange <: PsnRange](
+      curPsn: UInt,
+      flush: Bool,
+      outPsnRangeFifoPush: Stream[TPsnRange],
+      outDataStreamVec: Vec[Stream[Fragment[RdmaDataPkt]]],
+      outputValidateFunc: (TPsnRange, RdmaDataPkt) => Unit,
+      // Outputs:
+      hasPktToOutput: Bool,
+      opsnInc: OPsnInc
+  ) = new Composite(curPsn, "SeqOut") {
+    // TODO: set max pending request number using QpAttrData
+    val psnOutRangeFifo = StreamFifoLowLatency(
+      outPsnRangeFifoPush.payloadType(),
+      depth = PENDING_REQ_NUM
+    )
+    psnOutRangeFifo.io.flush := flush
+    psnOutRangeFifo.io.push << outPsnRangeFifoPush
+
+    val outStreamVec = Vec(outDataStreamVec.map(_.throwWhen(flush)))
+    val outSelOH = outStreamVec.map(resp => {
+      val psnRangeMatch = resp.valid && psnOutRangeFifo.io.pop.valid &&
+        PsnUtil.lte(psnOutRangeFifo.io.pop.start, resp.bth.psn, curPsn) &&
+        PsnUtil.lte(resp.bth.psn, psnOutRangeFifo.io.pop.end, curPsn)
+      when(psnRangeMatch) {
+        outputValidateFunc(psnOutRangeFifo.io.pop, resp)
+      }
+      psnRangeMatch
+    })
+
+    hasPktToOutput := outSelOH.orR
+    val outStreamSel = StreamOneHotMux(
+      select = outSelOH.asBits(),
+      inputs = outStreamVec
+    )
+
+    val outJoinStream = FragmentStreamConditionalJoinStream(
+      inputFragmentStream = outStreamSel,
+      inputStream = psnOutRangeFifo.io.pop,
+      joinCond = outStreamSel.bth.psn === psnOutRangeFifo.io.pop.end
+    )
+    val outStream = outJoinStream.translateWith {
+      val result = cloneOf(outDataStreamVec(0).payloadType)
+      result.fragment := outJoinStream._1
+      result.last := outJoinStream.isLast
+      result
+    }
+
+    opsnInc.inc := outStreamSel.lastFire
+    opsnInc.psnVal := outStreamSel.bth.psn
+
+    val result = (outStream, psnOutRangeFifo)
+  }.result
+}
+
 object IPv4Addr {
   def apply(ipv4Str: String): Bits = {
     ipv4Str match {
@@ -1387,34 +1446,7 @@ object IPv4Addr {
     //    ipBits
   }
 }
-/*
-object extractReadAtomicEth {
-  def apply(inputPktFrag: RdmaDataPkt, busWidth: BusWidth) =
-    new Composite(inputPktFrag, "extractReadAtomicEth") {
-      val busWidthBytes = busWidth.id / BYTE_WIDTH
-      val bthLenBytes = widthOf(BTH()) / BYTE_WIDTH
-      val rethLenBytes = widthOf(RETH()) / BYTE_WIDTH
-      val atomicEthLenBytes = widthOf(AtomicEth()) / BYTE_WIDTH
 
-      // Bus width should be larger than BTH + AtomicEth width
-      require(
-        atomicEthLenBytes + bthLenBytes <= busWidthBytes,
-        s"must have AtomicEth width=${atomicEthLenBytes} bytes + BTH width=${bthLenBytes} bytes <= busWidthBytes=${busWidthBytes} bytes"
-      )
-      // For easiness, bus width should be larger than BTH + RETH width
-      require(
-        bthLenBytes + rethLenBytes <= busWidthBytes,
-        s"busWidthBytes=${busWidthBytes} should be larger than BTH width=${bthLenBytes} bytes + RETH width=${rethLenBytes} btyes"
-      )
-
-      // BTH is included in inputPktFrag.data
-      val reth = inputPktFrag.extractReth()
-      val atomicEth = inputPktFrag.extractAtomicEth()
-
-      val result = (reth, atomicEth)
-    }.result
-}
- */
 //// TODO: remove this once Spinal HDL upgraded to 1.6.2
 //object ComponentEnrichment {
 //  implicit class ComponentExt[T <: Component](val that: T) {
@@ -1716,7 +1748,7 @@ object respPadCountCheck {
 }
 
 object ePsnIncrease {
-  def apply(pktFrag: RdmaDataPkt, pmtu: Bits): UInt =
+  def apply(pktFrag: RdmaDataPkt, pmtu: UInt): UInt =
     new Composite(pktFrag, "ePsnIncrease") {
       val result = UInt(PSN_WIDTH bits)
       val isReadReq = OpCode.isReadReqPkt(pktFrag.bth.opcode)
@@ -1742,7 +1774,7 @@ object ePsnIncrease {
 //========== Packet related utilities ==========
 
 object computePktNum {
-  def apply(lenBytes: UInt, pmtu: Bits): UInt =
+  def apply(lenBytes: UInt, pmtu: UInt): UInt =
     new Composite(lenBytes, "computePktNum") {
 //      val result = UInt(PSN_WIDTH bits)
       val residueMaxWidth = PMTU.U4096.id
@@ -1822,7 +1854,7 @@ object computePktNum {
 }
 
 object pmtuPktLenBytes {
-  def apply(pmtu: Bits): UInt = new Composite(pmtu, "pmtuPktLenBytes") {
+  def apply(pmtu: UInt): UInt = new Composite(pmtu, "pmtuPktLenBytes") {
     val result = UInt(PMTU_FRAG_NUM_WIDTH bits)
     switch(pmtu) {
       // The PMTU enum value itself means right shift amount of bits
@@ -1854,7 +1886,7 @@ object pmtuPktLenBytes {
 }
 
 object pmtuLenMask {
-  def apply(pmtu: Bits): Bits = new Composite(pmtu, "pmtuLenMask") {
+  def apply(pmtu: UInt): Bits = new Composite(pmtu, "pmtuLenMask") {
     val result = Bits(PMTU_FRAG_NUM_WIDTH bits)
     switch(pmtu) {
       // The value means right shift amount of bits
@@ -1889,12 +1921,31 @@ object pmtuLenMask {
   * NOTE: divisor must be power of 2
   */
 object divideByPmtuUp {
-  def apply(dividend: UInt, pmtu: Bits): UInt =
+  private def checkPmtu(pmtu: UInt): Bool =
+    new Composite(pmtu, "divideByPmtuUp_checkPmtu") {
+      val result = pmtu.mux(
+        PMTU.U256.id -> True,
+        PMTU.U512.id -> True,
+        PMTU.U1024.id -> True,
+        PMTU.U2048.id -> True,
+        PMTU.U4096.id -> True,
+        default -> False
+      )
+    }.result
+
+  def apply(dividend: UInt, pmtu: UInt): UInt =
     new Composite(dividend, "divideByPmtuUp") {
-      val shiftAmt = pmtuPktLenBytes(pmtu)
+      assert(
+        assertion = checkPmtu(pmtu),
+        message =
+          L"${REPORT_TIME} time: divideByPmtuUp encounters invalid PMTU=${pmtu}",
+        severity = FAILURE
+      )
+
+      val shiftAmt = pmtu
       val remainder = moduloByPmtu(dividend, pmtu)
-      val result =
-        dividend >> shiftAmt + remainder.orR.asUInt.resize(widthOf(dividend))
+      val result = (dividend >> shiftAmt) +
+        (remainder.orR ? U(1) | U(0))
     }.result
 }
 
@@ -1902,7 +1953,7 @@ object divideByPmtuUp {
   * NOTE: divisor must be power of 2
   */
 object moduloByPmtu {
-  def apply(dividend: UInt, pmtu: Bits): UInt =
+  def apply(dividend: UInt, pmtu: UInt): UInt =
     new Composite(dividend, "moduloByPmtu") {
 //    require(
 //      widthOf(dividend) >= widthOf(divisor),
@@ -2052,66 +2103,9 @@ object PartialRetry {
       retryDmaReadLenBytes
     )
   }.result
-  /*
-  def readReqRetry(
-    qpAttr: QpAttrData,
-    inputPktFrag: RdmaDataPkt,
-    inputRstCacheData: ReadAtomicRstCacheData,
-    inputValid: Bool
-  ) = new Composite(inputPktFrag, "PartialRetry_readReqRetry") {
-    val retryFromBeginning = PsnUtil
-      .lte(inputPktFrag.bth.psn, inputRstCacheData.psnStart, qpAttr.epsn)
-    // For partial read retry, compute the partial read DMA length
-    val psnDiff = PsnUtil.diff(inputPktFrag.bth.psn, inputRstCacheData.psnStart)
-    val retryStartPsn = cloneOf(inputRstCacheData.psnStart)
-    retryStartPsn := inputRstCacheData.psnStart
-    val retryDmaReadStartAddr = cloneOf(inputRstCacheData.pa)
-    retryDmaReadStartAddr := inputRstCacheData.pa
-    val retryWorkReqRemoteStartAddr = cloneOf(inputRstCacheData.va)
-    retryWorkReqRemoteStartAddr := inputRstCacheData.va
-    val retryDmaReadLenBytes = cloneOf(inputRstCacheData.dlen)
-    retryDmaReadLenBytes := inputRstCacheData.dlen
-    when(inputValid && !retryFromBeginning) {
-      assert(
-        assertion = PsnUtil.lt(
-          inputPktFrag.bth.psn,
-          inputRstCacheData.psnStart + inputRstCacheData.pktNum,
-          qpAttr.npsn
-        ),
-        message =
-          L"${REPORT_TIME} time: inputPktFrag.bth.psn=${inputPktFrag.bth.psn} should < inputRstCacheData.psnStart=${inputRstCacheData.psnStart} + inputRstCacheData.pktNum=${inputRstCacheData.pktNum} = ${inputRstCacheData.psnStart + inputRstCacheData.pktNum} in PSN order",
-        severity = FAILURE
-      )
-      val retryDmaReadOffset =
-        (psnDiff << qpAttr.pmtu.asUInt).resize(RDMA_MAX_LEN_WIDTH)
 
-      // Support partial retry
-      retryStartPsn := inputPktFrag.bth.psn
-      // TODO: handle PA offset with scatter-gather
-      retryDmaReadStartAddr := inputRstCacheData.pa + retryDmaReadOffset
-      retryWorkReqRemoteStartAddr := inputRstCacheData.va + retryDmaReadOffset
-      retryDmaReadLenBytes := inputRstCacheData.dlen - retryDmaReadOffset
-//    val pktNum = computePktNum(retryWorkReq.workReq.lenBytes, qpAttr.pmtu)
-      val pktNum = inputRstCacheData.pktNum
-      assert(
-        assertion = psnDiff < pktNum,
-        message =
-          L"${REPORT_TIME} time: psnDiff=${psnDiff} should < pktNum=${pktNum}, inputPktFrag.bth.psn=${inputPktFrag.bth.psn}, inputRstCacheData.psnStart=${inputRstCacheData.psnStart}, qpAttr.epsn=${qpAttr.epsn}, qpAttr.npsn=${qpAttr.npsn}, inputPktFrag.bth.opcode=${inputPktFrag.bth.opcode}",
-        severity = FAILURE
-      )
-    }
-
-    val result = (
-      retryFromBeginning,
-      retryStartPsn,
-      retryDmaReadStartAddr,
-      retryWorkReqRemoteStartAddr,
-      retryDmaReadLenBytes
-    )
-  }.result
-   */
   def retryHelper(
-      qpAttrPmtu: Bits,
+      qpAttrPmtu: UInt,
       curPsn: UInt,
       retryReqValid: Bool,
       retryFromBeginning: Bool,
@@ -2137,9 +2131,6 @@ object PartialRetry {
     val retryReqLenBytes = cloneOf(origReqLenBytes)
     retryReqLenBytes := origReqLenBytes
     when(retryReqValid && !retryFromBeginning) {
-//      report(
-//        L"${REPORT_TIME} time: psnDiff=${psnDiff} < origReqPktNum=${origReqPktNum}, retryReqPsn=${retryReqPsn}, retryPhysicalAddr=${retryPhysicalAddr} = origReqPsnStart=${origReqPsnStart} + retryDmaReadOffset=${retryDmaReadOffset}, curPsn=${curPsn}",
-//      )
       assert(
         assertion = PsnUtil.lt(
           retryReqPsn,
@@ -2151,7 +2142,7 @@ object PartialRetry {
         severity = FAILURE
       )
       val retryDmaReadOffset =
-        (psnDiff << qpAttrPmtu.asUInt).resize(RDMA_MAX_LEN_WIDTH)
+        (psnDiff << qpAttrPmtu).resize(RDMA_MAX_LEN_WIDTH)
 
       // Support partial retry
       retryStartPsn := retryReqPsn

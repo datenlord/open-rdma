@@ -13,6 +13,7 @@ import RdmaConstants._
 import StreamSimUtil._
 import RdmaTypeReDef._
 import PsnSim._
+import WorkReqSim._
 
 class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
@@ -120,9 +121,17 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
         var (paOut, psnOut, lenOut, rKeyOut, vaOut) =
           (BigInt(0), 0, 0L, 0L, BigInt(0))
         while (true) {
-          val (retryStartPsnIn, paIn, psnIn, lenIn, opCodeIn, vaIn, rKeyIn) =
+          val (
+            retryStartPsnIn,
+            paIn,
+            psnIn,
+            lenIn,
+            workReqOpCodeIn,
+            vaIn,
+            rKeyIn
+          ) =
             MiscUtils.safeDeQueue(inputQueue, dut.clockDomain)
-          if (WorkReqSim.isReadReq(opCodeIn)) {
+          if (workReqOpCodeIn.isReadReq()) {
             val outReadReq =
               MiscUtils.safeDeQueue(outputReadQueue, dut.clockDomain)
             psnOut = outReadReq._1
@@ -156,7 +165,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
           lenOut shouldBe lenIn - dmaReadOffset withClue
             f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X - dmaReadOffset=${dmaReadOffset}%X"
 
-          if (WorkReqSim.isReadReq(opCodeIn)) {
+          if (workReqOpCodeIn.isReadReq()) {
 
             rKeyOut shouldBe rKeyIn withClue
               f"${simTime()} time: output rkey=${rKeyOut}%X not match input rkey=${rKeyIn}%X"
@@ -212,7 +221,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
         dut.io.retryWorkReq.psnStart #= curPsn
         val workReqOpCode = WorkReqSim.randomReadAtomicOpCode()
         dut.io.retryWorkReq.workReq.opcode #= workReqOpCode
-        val pktLen = if (WorkReqSim.isAtomicReq(workReqOpCode)) {
+        val pktLen = if (workReqOpCode.isAtomicReq()) {
           dut.io.retryWorkReq.workReq.lenBytes #= ATOMIC_DATA_LEN
           ATOMIC_DATA_LEN.toLong
         } else {
@@ -269,9 +278,9 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
       fork {
         var (psnOut, lenOut, rKeyOut, vaOut) = (0, 0L, 0L, BigInt(0))
         while (true) {
-          val (psnIn, lenIn, opCodeIn, vaIn, rKeyIn) =
+          val (psnIn, lenIn, workReqOpCodeIn, vaIn, rKeyIn) =
             MiscUtils.safeDeQueue(inputQueue, dut.clockDomain)
-          if (WorkReqSim.isReadReq(opCodeIn)) {
+          if (workReqOpCodeIn.isReadReq()) {
             val outReadReq =
               MiscUtils.safeDeQueue(outputReadQueue, dut.clockDomain)
             psnOut = outReadReq._1
@@ -435,7 +444,7 @@ class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
         dut.io.retryWorkReq.psnStart #= curPsn
         val workReqOpCode = WorkReqSim.randomReadAtomicOpCode()
         dut.io.retryWorkReq.workReq.opcode #= workReqOpCode
-        val pktLen = if (WorkReqSim.isAtomicReq(workReqOpCode)) {
+        val pktLen = if (workReqOpCode.isAtomicReq()) {
           dut.io.retryWorkReq.workReq.lenBytes #= ATOMIC_DATA_LEN
           ATOMIC_DATA_LEN.toLong
         } else {

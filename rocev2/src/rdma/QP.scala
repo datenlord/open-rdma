@@ -432,6 +432,7 @@ class QpCtrl extends Component {
   val rqFsm = rqInternalFsm()
 
   val psnCtrl = new Area {
+    // TODO: should increase PSN under normal state?
     // Increase PSN
     when(io.psnInc.rq.epsn.inc) {
       qpAttr.epsn := qpAttr.epsn + io.psnInc.rq.epsn.incVal

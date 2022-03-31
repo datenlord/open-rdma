@@ -15,6 +15,7 @@ import PsnSim._
 import RdmaConstants._
 import StreamSimUtil._
 import RdmaTypeReDef._
+import WorkReqSim._
 
 class ReqCommCheckTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
@@ -260,7 +261,7 @@ class ReqRnrCheckTest extends AnyFunSuite {
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.rxQCtrl.flush #= false
 
-      RdmaDataPktSim.pktFragStreamMasterDriverAlwaysValid(
+      RdmaDataPktSim.pktFragStreamMasterDriver(
         dut.io.rx.checkRst,
         (r: RqReqCheckStageOutput) => r.pktFrag,
         dut.clockDomain
@@ -494,7 +495,7 @@ class ReqDmaInfoExtractorTest extends AnyFunSuite {
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.rxQCtrl.stateErrFlush #= false
 
-      RdmaDataPktSim.pktFragStreamMasterDriverAlwaysValid(
+      RdmaDataPktSim.pktFragStreamMasterDriver(
         dut.io.rx.reqWithRxBuf,
         (r: RqReqWithRxBuf) => r.pktFrag,
         dut.clockDomain
@@ -859,7 +860,7 @@ class PktLenCheckTest extends AnyFunSuite {
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.rxQCtrl.stateErrFlush #= false
 
-      RdmaDataPktSim.pktFragStreamMasterDriverAlwaysValid(
+      RdmaDataPktSim.pktFragStreamMasterDriver(
         dut.io.rx.reqWithRxBufAndDmaInfo,
         (r: RqReqWithRxBufAndDmaInfo) => r.pktFrag,
         dut.clockDomain
@@ -1048,7 +1049,7 @@ class ReqSplitterAndNakGenTest extends AnyFunSuite {
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.rxQCtrl.stateErrFlush #= false
 
-      RdmaDataPktSim.pktFragStreamMasterDriverAlwaysValid(
+      RdmaDataPktSim.pktFragStreamMasterDriver(
         dut.io.rx.reqWithRxBufAndDmaInfo,
         (r: RqReqWithRxBufAndDmaInfo) => r.pktFrag,
         dut.clockDomain
@@ -1511,7 +1512,7 @@ class RqSendWriteDmaReqInitiatorTest extends AnyFunSuite {
     dut.io.qpAttr.pmtu #= pmtuLen.id
     dut.io.rxQCtrl.stateErrFlush #= false
 
-    RdmaDataPktSim.pktFragStreamMasterDriverAlwaysValid(
+    RdmaDataPktSim.pktFragStreamMasterDriver(
       dut.io.rx.reqWithRxBufAndDmaInfo,
       (r: RqReqWithRxBufAndDmaInfo) => r.pktFrag,
       dut.clockDomain
@@ -1709,7 +1710,7 @@ class SendWriteRespGeneratorTest extends AnyFunSuite {
     dut.io.qpAttr.pmtu #= pmtuLen.id
     dut.io.rxQCtrl.stateErrFlush #= false
 
-    RdmaDataPktSim.pktFragStreamMasterDriverAlwaysValid(
+    RdmaDataPktSim.pktFragStreamMasterDriver(
       dut.io.rx.reqWithRxBufAndDmaInfo,
       (r: RqReqWithRxBufAndDmaInfo) => r.pktFrag,
       dut.clockDomain
@@ -2118,7 +2119,7 @@ class DupReqHandlerAndReadAtomicRstCacheQueryTest extends AnyFunSuite {
       dut.io.qpAttr.epsn #= fixedEPsn
       dut.io.rxQCtrl.stateErrFlush #= false
 
-      RdmaDataPktSim.pktFragStreamMasterDriverAlwaysValid(
+      RdmaDataPktSim.pktFragStreamMasterDriver(
         dut.io.rx.checkRst,
         (r: RqReqCheckStageOutput) => r.pktFrag,
         dut.clockDomain
@@ -2752,7 +2753,6 @@ class RqOutTest extends AnyFunSuite {
   val maxFragNum = 137
 
   val simCfg = SimConfig.allOptimisation.withWave
-    .withConfig(SpinalConfig(anonymSignalPrefix = "tmp"))
     .compile(new RqOut(busWidth))
 
   def insertToOutPsnRangeQueue(
@@ -2779,10 +2779,10 @@ class RqOutTest extends AnyFunSuite {
       val workReqOpCode = WorkReqSim.randomSendWriteReadAtomicOpCode()
       val psnEnd = psnStart +% (pktNum - 1)
 
-      val isReadReq = WorkReqSim.isReadReq(workReqOpCode)
-      val isAtomicReq = WorkReqSim.isAtomicReq(workReqOpCode)
-      val isSendReq = WorkReqSim.isSendReq(workReqOpCode)
-      val isWriteReq = WorkReqSim.isWriteReq(workReqOpCode)
+      val isReadReq = workReqOpCode.isReadReq()
+      val isAtomicReq = workReqOpCode.isAtomicReq()
+      val isSendReq = workReqOpCode.isSendReq()
+      val isWriteReq = workReqOpCode.isWriteReq()
 //      println(
 //        f"${simTime()} time: psnStart=${psnStart}%X, psnEnd=${psnEnd}%X, workReqOpCode: isSendReq=${isSendReq}, isWriteReq=${isWriteReq} isReadReq=${isReadReq}, isAtomicReq=${isAtomicReq}"
 //      )
@@ -2887,7 +2887,7 @@ class RqOutTest extends AnyFunSuite {
             AethCode,
             AethValue,
             AethMsn,
-            AtomicAckEthOrig
+            AtomicOrig
         )
       ]()
 
@@ -2903,19 +2903,26 @@ class RqOutTest extends AnyFunSuite {
             AethCode,
             AethValue,
             AethMsn,
-            AtomicAckEthOrig
+            AtomicOrig
         )
       ]()
 
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.rxQCtrl.stateErrFlush #= false
 
-      // Disable normal/error response or duplicate response
-      if (normalOrDupResp) { // Normal response
+      // Disable normal/error responses or duplicate responses
+      if (normalOrDupResp) { // Normal responses
         dut.io.rxDupSendWriteResp.valid #= false
         dut.io.rxDupReadResp.pktFrag.valid #= false
         dut.io.rxDupAtomicResp.valid #= false
-      } else { // Duplicate response
+
+        // When hasErrResp, all send/write responses are NAK
+        if (hasErrResp) {
+          dut.io.rxSendWriteResp.valid #= false
+        } else {
+          dut.io.rxErrResp.valid #= false
+        }
+      } else { // Duplicate responses
         dut.io.readAtomicRstCachePop.valid #= false
         dut.io.outPsnRangeFifoPush.valid #= false
 
@@ -2984,7 +2991,7 @@ class RqOutTest extends AnyFunSuite {
         }
       }
 
-      // Either send/write response or error response
+      // Either send/write responses or error responses
       val sendWriteRespOrErrRespIn = if (normalOrDupResp) {
         if (hasErrResp) {
           dut.io.rxErrResp
@@ -3147,14 +3154,14 @@ class RqOutTest extends AnyFunSuite {
       )
       MiscUtils.checkInputOutputQueues(
         dut.clockDomain,
-        inputAtomicRespQueue,
-        outputAtomicRespQueue,
+        inputReadRespQueue,
+        outputReadRespQueue,
         MATCH_CNT
       )
       MiscUtils.checkInputOutputQueues(
         dut.clockDomain,
-        inputReadRespQueue,
-        outputReadRespQueue,
+        inputAtomicRespQueue,
+        outputAtomicRespQueue,
         MATCH_CNT
       )
     }

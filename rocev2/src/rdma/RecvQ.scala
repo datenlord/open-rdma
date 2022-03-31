@@ -673,7 +673,8 @@ class ReqDmaInfoExtractor(busWidth: BusWidth) extends Component {
       result.hasNak := txNormal.hasNak
       result.nakAeth := txNormal.nakAeth
       result.reqTotalLenValid := False
-      result.reqTotalLenBytes := 0
+      result.reqTotalLenBytes
+        .assignDontCare() // This field will be updated in PktLenCheck
       result.rxBufValid := txNormal.rxBufValid
       result.rxBuf := rxBuf
       result.dmaInfo := dmaInfo
@@ -838,7 +839,8 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
       result.hasNak := outputHasNak
       result.nakAeth := outputNakAeth
       result.reqTotalLenValid := False
-      result.reqTotalLenBytes := 0
+      result.reqTotalLenBytes
+        .assignDontCare() // This field will be updated in PktLenCheck
       result.rxBufValid := joinStream._1.rxBufValid
       result.rxBuf := joinStream._1.rxBuf
       result.dmaInfo.pa := joinStream._2.pa
@@ -1235,8 +1237,8 @@ class RqReadAtomicDmaReqBuilder(busWidth: BusWidth) extends Component {
         rstCacheData.va := reth.va
         rstCacheData.rkey := reth.rkey
         rstCacheData.dlen := reth.dlen
-        rstCacheData.swap := 0
-        rstCacheData.comp := 0
+        rstCacheData.swap.assignDontCare()
+        rstCacheData.comp.assignDontCare()
       } otherwise {
         rstCacheData.va := atomicEth.va
         rstCacheData.rkey := atomicEth.rkey
@@ -1244,7 +1246,7 @@ class RqReadAtomicDmaReqBuilder(busWidth: BusWidth) extends Component {
         rstCacheData.swap := atomicEth.swap
         rstCacheData.comp := atomicEth.comp
       }
-      rstCacheData.atomicRst := 0
+      rstCacheData.atomicRst.assignDontCare()
       rstCacheData.duplicate := False
       result
     }
@@ -1741,6 +1743,7 @@ class AtomicRespGenerator(busWidth: BusWidth) extends Component {
       initiator = DmaInitiator.RQ_ATOMIC_WR,
       sqpn = io.qpAttr.sqpn,
       psn = atomicResp.bth.psn,
+      // TODO: set the following fields with actual value
       pa = 0,
       workReqId = 0, // TODO: RQ has no WR ID, need refactor
       data = 0,
@@ -1772,14 +1775,6 @@ class RqOut(busWidth: BusWidth) extends Component {
     val tx = master(RdmaDataBus(busWidth))
   }
 
-  // TODO: set max pending request number using QpAttrData
-  val psnOutRangeFifo = StreamFifoLowLatency(
-    io.outPsnRangeFifoPush.payloadType(),
-    depth = PENDING_REQ_NUM
-  )
-  psnOutRangeFifo.io.flush := io.rxQCtrl.stateErrFlush
-  psnOutRangeFifo.io.push << io.outPsnRangeFifoPush
-
   val rxSendWriteResp = io.rxSendWriteResp
     .throwWhen(io.rxQCtrl.stateErrFlush)
     .translateWith(
@@ -1803,37 +1798,30 @@ class RqOut(busWidth: BusWidth) extends Component {
     )
   val normalRespVec =
     Vec(rxSendWriteResp, io.rxReadResp.pktFrag, rxAtomicResp, rxErrResp)
-  val normalRespOutSelOH = normalRespVec.map(resp => {
-    val psnRangeMatch = resp.valid && psnOutRangeFifo.io.pop.valid &&
-      PsnUtil.lte(psnOutRangeFifo.io.pop.start, resp.bth.psn, io.qpAttr.epsn) &&
-      PsnUtil.lte(resp.bth.psn, psnOutRangeFifo.io.pop.end, io.qpAttr.epsn)
-    when(psnRangeMatch) {
-      assert(
-        assertion =
-          checkRespOpCodeMatch(psnOutRangeFifo.io.pop.opcode, resp.bth.opcode),
-        message =
-          L"${REPORT_TIME} time: request opcode=${psnOutRangeFifo.io.pop.opcode} and response opcode=${resp.bth.opcode} not match",
-        severity = FAILURE
-      )
-    }
-    psnRangeMatch
-  })
 
-  val hasPktToOutput = normalRespOutSelOH.orR
-  val normalRespOutSel = StreamOneHotMux(
-    select = normalRespOutSelOH.asBits(),
-    inputs = normalRespVec
+  val hasPktToOutput = Bool()
+  val (normalRespOutSel, psnOutRangeFifo) = SeqOut(
+    curPsn = io.qpAttr.epsn,
+    flush = io.rxQCtrl.stateErrFlush,
+    outPsnRangeFifoPush = io.outPsnRangeFifoPush,
+    outDataStreamVec = normalRespVec,
+    outputValidateFunc =
+      (psnOutRangeFifoPop: RespPsnRange, resp: RdmaDataPkt) => {
+        assert(
+          assertion = checkRespOpCodeMatch(
+            reqOpCode = psnOutRangeFifoPop.opcode,
+            respOpCode = resp.bth.opcode
+          ),
+          message =
+            L"${REPORT_TIME} time: request opcode=${psnOutRangeFifoPop.opcode} and response opcode=${resp.bth.opcode} not match, resp.bth.psn=${resp.bth.psn}, psnOutRangeFifo.io.pop.start=${psnOutRangeFifoPop.start}, psnOutRangeFifo.io.pop.end=${psnOutRangeFifoPop.end}",
+          severity = FAILURE
+        )
+      },
+    hasPktToOutput = hasPktToOutput,
+    opsnInc = io.opsnInc
   )
-  val (normalRespOut4PsnOutRange, normalRespOut4ReadAtomicRstCache) =
+  val (normalRespOut, normalRespOut4ReadAtomicRstCache) =
     StreamFork2(normalRespOutSel)
-  val normalRespOut = FragmentStreamConditionalJoinStream(
-    inputFragmentStream = normalRespOut4PsnOutRange,
-    inputStream = psnOutRangeFifo.io.pop,
-    joinCond = normalRespOut4PsnOutRange.bth.psn === psnOutRangeFifo.io.pop.end
-  )
-//  psnOutRangeFifo.io.pop.ready := txOutputSel.bth.psn === psnOutRangeFifo.io.pop.end && txOutputSel.lastFire
-  io.opsnInc.inc := normalRespOutSel.lastFire
-  io.opsnInc.psnVal := normalRespOutSel.bth.psn
 
   val dupRespVec =
     Vec(rxDupSendWriteResp, io.rxDupReadResp.pktFrag, rxDupAtomicResp)
@@ -1841,17 +1829,12 @@ class RqOut(busWidth: BusWidth) extends Component {
   val dupRespOut =
     StreamArbiterFactory.roundRobin.fragmentLock.on(dupRespVec)
 
-  io.tx.pktFrag <-/< StreamArbiterFactory.roundRobin.fragmentLock
+  val finalOutStream = StreamArbiterFactory.roundRobin.fragmentLock
     .onArgs(
       dupRespOut,
-      normalRespOut ~~ { payloadData =>
-        val result = cloneOf(io.tx.pktFrag.payloadType)
-        result.fragment := payloadData._1
-        result.last := payloadData.last
-        result
-      }
+      normalRespOut
     )
-//    .onArgs(txDupOutputSel, txOutputSel.continueWhen(hasPktToOutput))
+  io.tx.pktFrag <-/< finalOutStream.throwWhen(io.rxQCtrl.stateErrFlush)
 
   val isReadReq = OpCode.isReadReqPkt(psnOutRangeFifo.io.pop.opcode)
   val isAtomicReq = OpCode.isAtomicReqPkt(psnOutRangeFifo.io.pop.opcode)
@@ -1890,11 +1873,11 @@ class RqOut(busWidth: BusWidth) extends Component {
 //    )
     assert(
       assertion = checkRespOpCodeMatch(
-        io.readAtomicRstCachePop.opcode,
-        normalRespOut4ReadAtomicRstCache.bth.opcode
+        reqOpCode = io.readAtomicRstCachePop.opcode,
+        respOpCode = normalRespOut4ReadAtomicRstCache.bth.opcode
       ),
       message =
-        L"${REPORT_TIME} time: io.readAtomicRstCachePop.opcode=${io.readAtomicRstCachePop.opcode} should match normalRespOut4ReadAtomicRstCache.bth.opcode=${normalRespOut4ReadAtomicRstCache.bth.opcode}",
+        L"${REPORT_TIME} time: io.readAtomicRstCachePop.opcode=${io.readAtomicRstCachePop.opcode} should match normalRespOut4ReadAtomicRstCache.bth.opcode=${normalRespOut4ReadAtomicRstCache.bth.opcode}, normalRespOut4ReadAtomicRstCache.bth.psn=${normalRespOut4ReadAtomicRstCache.bth.psn}, io.readAtomicRstCachePop.psnStart=${io.readAtomicRstCachePop.psnStart}, io.readAtomicRstCachePop.pktNum=${io.readAtomicRstCachePop.pktNum}",
       severity = FAILURE
     )
   }

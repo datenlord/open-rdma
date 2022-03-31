@@ -157,6 +157,8 @@ class ReqSender(busWidth: BusWidth) extends Component {
   io.txReadReq << workReqCachePushAndReadAtomicHandler.io.txReadReq
 }
 
+// TODO: support PENDING_REQ_NUM limit
+// TODO: keep track of pending read/atomic requests
 class WorkReqValidator extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
@@ -173,27 +175,32 @@ class WorkReqValidator extends Component {
   val addrCacheQueryBuilder = new Area {
     val workReq = io.workReq.payload
 
-    val forkStream = StreamFork(
-      // Should generate WC for the flushed WR
-      io.workReq.haltWhen(io.txQCtrl.fenceOrRetry),
-      portCount = 3
+    val (workReq4Queue, workReq4AddrCacheQuery) = StreamFork2(
+      io.workReq.haltWhen(io.txQCtrl.fenceOrRetry)
     )
-    val (workReq4Queue, workReq4AddrCacheQuery, sqOutPsnRangeFifoPush) =
-      (forkStream(0), forkStream(1), forkStream(2))
+//    val forkStream = StreamFork(
+//      // Should generate WC for the flushed WR
+//      io.workReq.haltWhen(io.txQCtrl.fenceOrRetry),
+//      portCount = 3
+//    )
+//    val (workReq4Queue, workReq4AddrCacheQuery, sqOutPsnRangeFifoPush) =
+//      (forkStream(0), forkStream(1), forkStream(2))
     // Update nPSN each time io.workReq fires
     val numReqPkt = divideByPmtuUp(workReq.lenBytes, io.qpAttr.pmtu)
-    val psnEnd = io.qpAttr.npsn + numReqPkt - 1
-    io.npsnInc.incVal := numReqPkt.resize(PSN_WIDTH)
-    io.npsnInc.inc := io.workReq.fire
+//    val psnEnd = io.qpAttr.npsn + (numReqPkt - 1)
 
-    io.sqOutPsnRangeFifoPush <-/< sqOutPsnRangeFifoPush
-      .translateWith {
-        val result = cloneOf(io.sqOutPsnRangeFifoPush.payloadType)
-        result.opcode := workReq.opcode
-        result.start := io.qpAttr.npsn
-        result.end := psnEnd.resize(PSN_WIDTH)
-        result
-      }
+    io.npsnInc.incVal := numReqPkt.resize(PSN_WIDTH)
+    io.npsnInc.inc := io.workReq.fire && !io.txQCtrl.wrongStateFlush
+
+//    io.sqOutPsnRangeFifoPush <-/< sqOutPsnRangeFifoPush
+//      .throwWhen(io.txQCtrl.wrongStateFlush)
+//      .translateWith {
+//        val result = cloneOf(io.sqOutPsnRangeFifoPush.payloadType)
+//        result.opcode := workReq.opcode
+//        result.start := io.qpAttr.npsn
+//        result.end := psnEnd.resize(PSN_WIDTH)
+//        result
+//      }
 
     // To query AddCache, it needs several cycle delay.
     // In order to not block pipeline, use a FIFO to cache incoming data.
@@ -203,7 +210,8 @@ class WorkReqValidator extends Component {
         result.workReq := workReq
         result.psnStart := io.qpAttr.npsn
         result.pktNum := numReqPkt.resize(PSN_WIDTH)
-        result.pa := 0 // PA will be updated after QpAddrCacheAgent query
+        result.pa
+          .assignDontCare() // PA will be updated after QpAddrCacheAgent query
         result.rnrCnt := 0 // New WR has no RNR
         result.retryCnt := 0 // New WR has no retry
         result
@@ -230,7 +238,8 @@ class WorkReqValidator extends Component {
     val inputValid = addrCacheQueryBuilder.inputWorkReqQueue.valid
     val inputCachedWorkReq = addrCacheQueryBuilder.inputWorkReqQueue.payload
 
-    val addrCacheRespValid = io.addrCacheRead.resp.valid
+    val addrCacheRespValid =
+      io.addrCacheRead.resp.valid && !io.txQCtrl.wrongStateFlush
     val sizeValid = io.addrCacheRead.resp.sizeValid
     val keyValid = io.addrCacheRead.resp.keyValid
     val accessValid = io.addrCacheRead.resp.accessValid
@@ -249,27 +258,20 @@ class WorkReqValidator extends Component {
     val checkPass =
       inputValid && addrCacheRespValid && !keyErr && !bufLenErr && !accessErr
 
+    val addrCacheReadResp =
+      io.addrCacheRead.resp.throwWhen(io.txQCtrl.wrongStateFlush)
     val joinStream = StreamConditionalJoin(
       addrCacheQueryBuilder.inputWorkReqQueue,
-      io.addrCacheRead.resp.throwWhen(io.txQCtrl.wrongStateFlush),
+      addrCacheReadResp,
       joinCond = !io.txQCtrl.wrongStateFlush
     )
-//    val (errIdx, succIdx) = (0, 1)
-//    val txSel = UInt(1 bit)
-//    when(checkPass) {
-//      txSel := succIdx
-//    } elsewhen (io.txQCtrl.wrongStateFlush) {
-//      txSel := errIdx
-//    } otherwise {
-//      txSel := errIdx
-//    }
-//    val twoStreams = StreamDemux(joinStream, select = txSel, portCount = 2)
+
     val (errorStream, normalStream) = StreamDeMuxByOneCondition(
       joinStream,
       checkPass && !io.txQCtrl.wrongStateFlush
     )
 
-    val workCompErrStatus = WorkCompStatus() // Bits(WC_STATUS_WIDTH bits)
+    val workCompErrStatus = WorkCompStatus()
     when(bufLenErr) {
       workCompErrStatus := WorkCompStatus.LOC_LEN_ERR
     } elsewhen (keyErr || accessErr) {
@@ -304,13 +306,25 @@ class WorkReqValidator extends Component {
       )
     }
 
-    io.workReqToCache <-/< normalStream.translateWith(
-      normalStream._1
+    val (normalOut4WorkReqCache, normalOut4SqOutPsnRangeFifoPush) = StreamFork2(
+      normalStream
     )
+    io.workReqToCache <-/< normalOut4WorkReqCache.translateWith(
+      normalOut4WorkReqCache._1
+    )
+
+    io.sqOutPsnRangeFifoPush <-/< normalOut4SqOutPsnRangeFifoPush
+      .throwWhen(io.txQCtrl.wrongStateFlush) ~~ { payloadData =>
+      val psnEnd = payloadData._1.psnStart + (payloadData._1.pktNum - 1)
+      val result = cloneOf(io.sqOutPsnRangeFifoPush.payloadType)
+      result.workReqOpCode := payloadData._1.workReq.opcode
+      result.start := payloadData._1.psnStart
+      result.end := psnEnd.resize(PSN_WIDTH)
+      result
+    }
   }
 }
 
-// TODO: keep track of pending read/atomic requests
 class WorkReqCachePushAndReadAtomicHandler extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
@@ -331,27 +345,28 @@ class WorkReqCachePushAndReadAtomicHandler extends Component {
   val isWriteWorkReq = WorkReqOpCode.isWriteReq(cachedWorkReq.workReq.opcode)
   val isReadWorkReq = WorkReqOpCode.isReadReq(cachedWorkReq.workReq.opcode)
   val isAtomicWorkReq = WorkReqOpCode.isAtomicReq(cachedWorkReq.workReq.opcode)
-  val (sendWriteWorkReqIdx, readWorkReqIdx, atomicWorkReqIdx, otherWorkReqIdx) =
-    (0, 1, 2, 3)
-  val txSel = UInt(2 bits)
-  when(isSendWorkReq || isWriteWorkReq) {
-    txSel := sendWriteWorkReqIdx
-  } elsewhen (isReadWorkReq) {
-    txSel := readWorkReqIdx
-  } elsewhen (isAtomicWorkReq) {
-    txSel := atomicWorkReqIdx
-  } otherwise {
-    txSel := otherWorkReqIdx
-  }
-  when(cachedWorkReqValid) {
-    assert(
-      assertion =
-        isSendWorkReq || isWriteWorkReq || isReadWorkReq || isAtomicWorkReq,
-      message =
-        L"${REPORT_TIME} time: the WR is not send/write/read/atomic, WR opcode=${cachedWorkReq.workReq.opcode}",
-      severity = FAILURE
-    )
-  }
+
+//  val (sendWriteWorkReqIdx, readWorkReqIdx, atomicWorkReqIdx, otherWorkReqIdx) =
+//    (0, 1, 2, 3)
+//  val txSel = UInt(2 bits)
+//  when(isSendWorkReq || isWriteWorkReq) {
+//    txSel := sendWriteWorkReqIdx
+//  } elsewhen (isReadWorkReq) {
+//    txSel := readWorkReqIdx
+//  } elsewhen (isAtomicWorkReq) {
+//    txSel := atomicWorkReqIdx
+//  } otherwise {
+//    txSel := otherWorkReqIdx
+//  }
+//  when(cachedWorkReqValid) {
+//    assert(
+//      assertion =
+//        isSendWorkReq || isWriteWorkReq || isReadWorkReq || isAtomicWorkReq,
+//      message =
+//        L"${REPORT_TIME} time: the WR is not send/write/read/atomic, WR opcode=${cachedWorkReq.workReq.opcode}",
+//      severity = FAILURE
+//    )
+//  }
 
   // Handle fence
   io.workReqHasFence := cachedWorkReqValid && cachedWorkReq.workReq.fence
@@ -368,11 +383,18 @@ class WorkReqCachePushAndReadAtomicHandler extends Component {
   io.workReqCachePush <-/< workReq4CachePush
   io.cachedWorkReqOut <-/< workReq4DownStream
 
-  val fourStreams = StreamDemux(workReq4Output, select = txSel, portCount = 4)
+  val (sendWriteWorkReqIdx, readWorkReqIdx, atomicWorkReqIdx) = (0, 1, 2)
+  val threeStreams = StreamDeMuxByConditions(
+    workReq4Output,
+    isSendWorkReq || isWriteWorkReq,
+    isReadWorkReq,
+    isAtomicWorkReq
+  )
+//  val fourStreams = StreamDemux(workReq4Output, select = txSel, portCount = 4)
   // Just discard non-send/write/read/atomic WR
-  StreamSink(NoData) << fourStreams(otherWorkReqIdx).translateWith(NoData)
+//  StreamSink(NoData) << fourStreams(otherWorkReqIdx).translateWith(NoData)
 
-  io.txAtomicReq <-/< fourStreams(atomicWorkReqIdx).translateWith {
+  io.txAtomicReq <-/< threeStreams(atomicWorkReqIdx).translateWith {
     val isCompSwap =
       cachedWorkReq.workReq.opcode === WorkReqOpCode.ATOMIC_CMP_AND_SWP
     val result = AtomicReq().set(
@@ -387,7 +409,7 @@ class WorkReqCachePushAndReadAtomicHandler extends Component {
     result
   }
 
-  io.txReadReq <-/< fourStreams(readWorkReqIdx).translateWith {
+  io.txReadReq <-/< threeStreams(readWorkReqIdx).translateWith {
     val result = ReadReq().set(
       dqpn = io.qpAttr.dqpn,
       psn = cachedWorkReq.psnStart,
@@ -398,7 +420,7 @@ class WorkReqCachePushAndReadAtomicHandler extends Component {
     result
   }
 
-  io.dmaRead.req <-/< fourStreams(sendWriteWorkReqIdx).translateWith {
+  io.dmaRead.req <-/< threeStreams(sendWriteWorkReqIdx).translateWith {
     val result = cloneOf(io.dmaRead.req.payloadType)
     result.set(
       initiator = DmaInitiator.SQ_RD,
@@ -410,12 +432,13 @@ class WorkReqCachePushAndReadAtomicHandler extends Component {
   }
 }
 
-// TODO: SQ output should output retry requests first
+// TODO: duplicate requests must be in PSN order
 class SqOut(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
     val opsnInc = out(OPsnInc())
+    val retryFlushDone = out(Bool())
     val outPsnRangeFifoPush = slave(Stream(ReqPsnRange()))
     val rxSendReq = slave(RdmaDataBus(busWidth))
     val rxWriteReq = slave(RdmaDataBus(busWidth))
@@ -425,10 +448,46 @@ class SqOut(busWidth: BusWidth) extends Component {
     val rxWriteReqRetry = slave(RdmaDataBus(busWidth))
     val rxReadReqRetry = slave(Stream(ReadReq()))
     val rxAtomicReqRetry = slave(Stream(AtomicReq()))
-    val retryFlushDone = out(Bool())
     val tx = master(RdmaDataBus(busWidth))
   }
 
+  val rxReadReq =
+    io.rxReadReq.translateWith(io.rxReadReq.asRdmaDataPktFrag(busWidth))
+  val rxReadReqRetry = io.rxReadReqRetry.translateWith(
+    io.rxReadReqRetry.asRdmaDataPktFrag(busWidth)
+  )
+  val rxAtomicReq =
+    io.rxAtomicReq.translateWith(io.rxAtomicReq.asRdmaDataPktFrag(busWidth))
+  val rxAtomicReqRetry = io.rxAtomicReqRetry.translateWith(
+    io.rxAtomicReqRetry.asRdmaDataPktFrag(busWidth)
+  )
+  val normalReqVec =
+    Vec(io.rxSendReq.pktFrag, io.rxWriteReq.pktFrag, rxReadReq, rxAtomicReq)
+
+  val hasPktToOutput = Bool()
+  val (normalReqOut, psnOutRangeFifo) = SeqOut(
+    curPsn = io.qpAttr.npsn,
+    flush = io.txQCtrl.wrongStateFlush,
+    outPsnRangeFifoPush = io.outPsnRangeFifoPush,
+    outDataStreamVec = normalReqVec,
+    outputValidateFunc =
+      (psnOutRangeFifoPop: ReqPsnRange, req: RdmaDataPkt) => {
+        assert(
+          assertion = checkWorkReqOpCodeMatch(
+            psnOutRangeFifoPop.workReqOpCode,
+            req.bth.opcode
+          ),
+          message =
+            // TODO: check SpinalEnumCraft print bug
+            L"${REPORT_TIME} time: WR opcode does not match request opcode=${req.bth.opcode}, req.bth.psn=${req.bth.psn}, psnOutRangeFifo.io.pop.start=${psnOutRangeFifoPop.start}, psnOutRangeFifo.io.pop.end=${psnOutRangeFifoPop.end}",
+//            L"${REPORT_TIME} time: WR opcode=${psnOutRangeFifoPop.workReqOpCode} does not match request opcode=${req.bth.opcode}, req.bth.psn=${req.bth.psn}, psnOutRangeFifo.io.pop.start=${psnOutRangeFifoPop.start}, psnOutRangeFifo.io.pop.end=${psnOutRangeFifoPop.end}",
+          severity = FAILURE
+        )
+      },
+    hasPktToOutput = hasPktToOutput,
+    opsnInc = io.opsnInc
+  )
+  /*
   // TODO: set max pending request number using QpAttrData
   val psnOutRangeFifo = StreamFifoLowLatency(
     io.outPsnRangeFifoPush.payloadType(),
@@ -436,22 +495,7 @@ class SqOut(busWidth: BusWidth) extends Component {
   )
   psnOutRangeFifo.io.push << io.outPsnRangeFifoPush
 
-  val rxReadReq =
-    io.rxReadReq.translateWith(io.rxReadReq.asRdmaDataPktFrag(busWidth))
-  val rxReadReqRetry =
-    io.rxReadReqRetry.translateWith(
-      io.rxReadReqRetry.asRdmaDataPktFrag(busWidth)
-    )
-  val rxAtomicReq =
-    io.rxAtomicReq.translateWith(io.rxAtomicReq.asRdmaDataPktFrag(busWidth))
-  val rxAtomicReqRetry =
-    io.rxAtomicReqRetry.translateWith(
-      io.rxAtomicReqRetry.asRdmaDataPktFrag(busWidth)
-    )
-
-  val txVec =
-    Vec(io.rxSendReq.pktFrag, io.rxWriteReq.pktFrag, rxReadReq, rxAtomicReq)
-  val txSelOH = txVec.map(req => {
+  val normalReqOutSelOH = normalReqVec.map(req => {
     val psnRangeMatch =
       psnOutRangeFifo.io.pop.start <= req.bth.psn && req.bth.psn <= psnOutRangeFifo.io.pop.end
     when(psnRangeMatch && psnOutRangeFifo.io.pop.valid) {
@@ -461,13 +505,13 @@ class SqOut(busWidth: BusWidth) extends Component {
           req.bth.opcode
         ),
         message =
-          L"${REPORT_TIME} time: WR opcode=${psnOutRangeFifo.io.pop.opcode} does not match request opcode=${req.bth.opcode}",
+          L"${REPORT_TIME} time: WR opcode=${psnOutRangeFifo.io.pop.opcode} does not match request opcode=${req.bth.opcode}, req.bth.psn=${req.bth.psn}, psnOutRangeFifo.io.pop.start=${psnOutRangeFifo.io.pop.start}, psnOutRangeFifo.io.pop.end=${psnOutRangeFifo.io.pop.end}",
         severity = FAILURE
       )
     }
     psnRangeMatch
   })
-  val hasPktToOutput = !txSelOH.orR
+  val hasPktToOutput = normalReqOutSelOH.orR
   when(psnOutRangeFifo.io.pop.valid && !hasPktToOutput) {
     // TODO: no output in OutPsnRange should be normal case
     report(
@@ -476,20 +520,24 @@ class SqOut(busWidth: BusWidth) extends Component {
       severity = FAILURE
     )
   }
-  val txOutputSel = StreamOneHotMux(select = txSelOH.asBits(), inputs = txVec)
-  psnOutRangeFifo.io.pop.ready := txOutputSel.bth.psn === psnOutRangeFifo.io.pop.end && txOutputSel.fire
-  io.opsnInc.inc := txOutputSel.fire
-  io.opsnInc.psnVal := txOutputSel.bth.psn
-
-  val txRetryVec = Vec(
+  val normalReqOut = StreamOneHotMux(select = normalReqOutSelOH.asBits(), inputs = normalReqVec)
+  psnOutRangeFifo.io.pop.ready := normalReqOut.bth.psn === psnOutRangeFifo.io.pop.end && normalReqOut.lastFire
+  io.opsnInc.inc := normalReqOut.fire
+  io.opsnInc.psnVal := normalReqOut.bth.psn
+   */
+  val retryReqVec = Vec(
     io.rxSendReqRetry.pktFrag,
     io.rxWriteReqRetry.pktFrag,
     rxReadReqRetry,
     rxAtomicReqRetry
   )
-  val txOutput = StreamArbiterFactory.roundRobin.fragmentLock
-    .on(txRetryVec :+ txOutputSel.continueWhen(hasPktToOutput))
-  io.tx.pktFrag <-/< txOutput.throwWhen(io.txQCtrl.wrongStateFlush)
+  // TODO: duplicate output also needs to keep PSN order
+  val retryReqOut =
+    StreamArbiterFactory.roundRobin.fragmentLock.on(retryReqVec)
+  // SQ should output retry requests first
+  val finalOutStream = StreamArbiterFactory.lowerFirst.fragmentLock
+    .onArgs(normalReqOut, retryReqOut)
+  io.tx.pktFrag <-/< finalOutStream.throwWhen(io.txQCtrl.wrongStateFlush)
 
   io.retryFlushDone := io.txQCtrl.retry && (io.rxSendReqRetry.pktFrag.fire || io.rxWriteReqRetry.pktFrag.fire || io.rxReadReqRetry.fire || io.rxAtomicReqRetry.fire)
 }
