@@ -6,6 +6,7 @@ import spinal.lib._
 
 import ConstantSettings._
 import OpCodeSim._
+//import PsnSim._
 import RdmaConstants._
 import RdmaTypeReDef._
 import StreamSimUtil._
@@ -31,6 +32,7 @@ object RdmaTypeReDef {
   type PSN = Int
   type PsnStart = Int
   type PsnEnd = Int
+  type PsnNext = Int
   type QueryPsn = Int
   type QuerySuccess = Boolean
   type QPN = Int
@@ -118,19 +120,19 @@ object PsnSim {
     }
   }
 
-  /** psnA + psnB, modulo by TOTAL_PSN
-    */
-  def psnAdd(psnA: Int, psnB: Int): Int = {
-    require(
-      psnA >= 0 && psnB >= 0,
-      f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both >= 0"
-    )
-    require(
-      psnA < TOTAL_PSN && psnB < TOTAL_PSN,
-      f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both < TOTAL_PSN=${TOTAL_PSN}"
-    )
-    (psnA + psnB) % TOTAL_PSN
-  }
+//  /** psnA + psnB, modulo by TOTAL_PSN
+//    */
+//  def psnAdd(psnA: Int, psnB: Int): Int = {
+//    require(
+//      psnA >= 0 && psnB >= 0,
+//      f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both >= 0"
+//    )
+//    require(
+//      psnA < TOTAL_PSN && psnB < TOTAL_PSN,
+//      f"${simTime()} time: psnA=${psnA}, psnB=${psnB} should both < TOTAL_PSN=${TOTAL_PSN}"
+//    )
+//    (psnA + psnB) % TOTAL_PSN
+//  }
 }
 
 class PsnSim(val psn: PSN) {
@@ -216,7 +218,6 @@ object WorkCompSim {
 
     workCompStatus shouldBe matchStatus withClue
       f"${simTime()} time: workCompStatus=${workCompStatus} not match expected matchStatus=${matchStatus}"
-
   }
 
   def rqCheckWorkCompOpCode(
@@ -1367,6 +1368,193 @@ object AddrCacheSim {
     )
   }
 }
+/*
+object CamFifoSim {
+  private def camFifoHelper[Treq <: Data, Tresp <: Data, ReqData, RespData](
+      reqStream: Stream[Treq],
+      respStream: Stream[Tresp],
+      onReqFire: (Treq, mutable.Queue[ReqData]) => Unit,
+      buildResp: (Tresp, ReqData) => Unit,
+      onRespFire: (Tresp, mutable.Queue[RespData]) => Unit,
+      clockDomain: ClockDomain
+  ): mutable.Queue[RespData] = {
+    val reqQueue = mutable.Queue[ReqData]()
+    val respQueue = mutable.Queue[RespData]()
+
+    fork {
+      reqStream.ready #= false
+//      respStream.valid #= false
+      clockDomain.waitSampling()
+
+      while (true) {
+        if (reqStream.valid.toBoolean) {
+          reqStream.ready #= true
+          onReqFire(reqStream.payload, reqQueue)
+          clockDomain.waitSampling()
+//          reqStream.ready #= false
+
+//        while (true) {
+//          respStream.valid #= true
+//          respStream.payload.randomize()
+//          buildResp(respStream.payload, reqQueue)
+//          clockDomain.waitSamplingWhere(
+//            respStream.valid.toBoolean && respStream.ready.toBoolean
+//          )
+//          onRespFire(respStream.payload, respQueue)
+//          respStream.valid #= false
+//        }
+        } else {
+          clockDomain.waitSampling()
+        }
+      }
+    }
+
+    fork {
+      respStream.valid #= false
+      clockDomain.waitSampling()
+
+      while (true) {
+        val reqData = MiscUtils.safeDeQueue(reqQueue, clockDomain)
+
+        respStream.valid #= true
+        respStream.payload.randomize()
+        buildResp(respStream.payload, reqData)
+        clockDomain.waitSamplingWhere(
+          respStream.valid.toBoolean && respStream.ready.toBoolean
+        )
+        onRespFire(respStream.payload, respQueue)
+        respStream.valid #= false
+      }
+    }
+    respQueue
+  }
+
+  private def randomWorkReqStartPsn(
+      retryStartPsn: PsnStart,
+      pktNum: PktNum
+  ): PSN = {
+    // RDMA max packet length 2GB=2^31
+    val randomPsnDiff = scala.util.Random.nextInt(pktNum - 1)
+    val originalStartPsn = retryStartPsn -% randomPsnDiff
+//    println(f"${simTime()} time: randomPsnDiff=${randomPsnDiff}%X, pktNum=${pktNum}%X, retryStartPsn=${retryStartPsn}%X, originalStartPsn=${originalStartPsn}%X")
+    originalStartPsn
+  }
+
+  def queryAndResp(
+      camFifoScanBus: CamFifoScanBus[CachedWorkReq],
+      qpAttr: QpAttrData,
+      clockDomain: ClockDomain,
+      pmtuLen: PMTU.Value,
+      isPartialRetry: Boolean,
+      isRetryOverLimit: Boolean
+  ) = {
+    camFifoScanBus.popPtr #= 0
+    camFifoScanBus.pushPtr #= PENDING_REQ_NUM - 1
+
+    val retryLimit = 3
+    qpAttr.maxRetryCnt #= retryLimit
+    qpAttr.pmtu #= pmtuLen.id
+
+    val onReqFire =
+      (
+          reqData: CamFifoRetryScanReq,
+          reqQueue: mutable.Queue[
+            (PsnStart, SpinalEnumElement[RetryReason.type])
+          ]
+      ) => {
+        reqQueue.enqueue(
+          (reqData.retryStartPsn.toInt, reqData.retryReason.toEnum)
+        )
+        ()
+      }
+
+    val invalidPsn = -1
+    var nextPsn = invalidPsn
+    var retryStartPsn = invalidPsn
+    val buildResp =
+      (
+          camFifoResp: CamFifoRetryScanResp[CachedWorkReq],
+          reqData: (PsnStart, SpinalEnumElement[RetryReason.type])
+      ) => {
+        if (nextPsn == invalidPsn) {
+          val (reqRetryStartPsn, _) = reqData
+          nextPsn = reqRetryStartPsn
+        }
+
+        if (isRetryOverLimit) {
+          camFifoResp.data.rnrCnt #= retryLimit + 1
+          camFifoResp.data.retryCnt #= retryLimit + 1
+        } else {
+          camFifoResp.data.rnrCnt #= 0
+          camFifoResp.data.retryCnt #= 0
+        }
+        val workReqOpCode = WorkReqSim.randomSendWriteReadOpCode()
+        camFifoResp.data.workReq.opcode #= workReqOpCode
+        val pktLen = WorkReqSim.randomDmaLength()
+        camFifoResp.data.workReq.lenBytes #= pktLen
+        val pktNum = MiscUtils.computePktNum(pktLen, pmtuLen)
+        camFifoResp.data.pktNum #= pktNum
+        val curPsn = nextPsn
+        if (isPartialRetry) {
+          // If partial retry, curPsn is retryStartPsn,
+          // and then generate a random PSN as WorkReq psnStart
+          val retryWorkReqOriginalStartPsn =
+            randomWorkReqStartPsn(curPsn, pktNum)
+          camFifoResp.data.psnStart #= retryWorkReqOriginalStartPsn
+        } else {
+          camFifoResp.data.psnStart #= curPsn
+        }
+        retryStartPsn = curPsn
+        nextPsn = nextPsn +% pktNum
+        qpAttr.npsn #= nextPsn
+        qpAttr.retryStartPsn #= retryStartPsn
+      }
+
+    val onRespFire = (
+        camFifoResp: CamFifoRetryScanResp[CachedWorkReq],
+        respQueue: mutable.Queue[
+          (
+              PsnStart,
+//              PsnNext,
+              PhysicalAddr,
+              PsnStart,
+              PktNum,
+              PktLen,
+              SpinalEnumElement[WorkReqOpCode.type],
+              VirtualAddr,
+              LRKey
+          )
+        ]
+    ) => {
+      respQueue.enqueue(
+        (
+          retryStartPsn,
+//          nextPsn,
+          camFifoResp.data.pa.toBigInt,
+          camFifoResp.data.psnStart.toInt,
+          camFifoResp.data.pktNum.toInt,
+          camFifoResp.data.workReq.lenBytes.toLong,
+          camFifoResp.data.workReq.opcode.toEnum,
+          camFifoResp.data.workReq.raddr.toBigInt,
+          camFifoResp.data.workReq.rkey.toLong
+        )
+      )
+//      println(
+//        f"${simTime()} time: retryStartPsn=${retryStartPsn}%X=${retryStartPsn}, camFifoResp.data.psnStart=${camFifoResp.data.psnStart.toInt}%X=${camFifoResp.data.psnStart.toInt}, camFifoResp.data.pktNum=${camFifoResp.data.pktNum.toInt}%X=${camFifoResp.data.pktNum.toInt}, camFifoResp.data.rnrCnt=${camFifoResp.data.rnrCnt.toInt}, camFifoResp.data.rnrCnt=${camFifoResp.data.retryCnt.toInt}"
+//      )
+      ()
+    }
+
+    camFifoHelper(
+      reqStream = camFifoScanBus.scanReq,
+      respStream = camFifoScanBus.scanResp,
+      onReqFire = onReqFire,
+      buildResp = buildResp,
+      onRespFire = onRespFire,
+      clockDomain = clockDomain
+    )
+  }
+}*/
 
 object RdmaDataPktSim {
   private def pktFragStreamMasterDriverHelper[T <: Data](

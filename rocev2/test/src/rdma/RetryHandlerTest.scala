@@ -4,8 +4,8 @@ import spinal.core._
 import spinal.core.sim._
 
 import org.scalatest.funsuite.AnyFunSuite
-import org.scalatest.matchers.should.Matchers._
-import org.scalatest.AppendedClues._
+//import org.scalatest.matchers.should.Matchers._
+//import org.scalatest.AppendedClues._
 import scala.collection.mutable
 
 import ConstantSettings._
@@ -15,472 +15,438 @@ import RdmaTypeReDef._
 import PsnSim._
 import WorkReqSim._
 
-class RetryHandlerAndDmaReadInitTest extends AnyFunSuite {
+class WorkReqCacheTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
+  val pmtuLen = PMTU.U1024
+  val depth = 32
+
+  val simCfg = SimConfig.allOptimisation.withWave
+    .withConfig(SpinalConfig(anonymSignalPrefix = "tmp"))
+    .compile(new WorkReqCache(depth))
+
+  test("WorkReqCache normal case") {
+    testFunc()
+  }
+
+  test("WorkReqCache retry case") {
+    testRetryScan()
+  }
+
+  def testRetryScan(): Unit = simCfg.doSim { dut =>
+    dut.clockDomain.forkStimulus(10)
+
+    dut.io.txQCtrl.retry #= false
+    dut.io.txQCtrl.wrongStateFlush #= false
+    dut.io.pop.ready #= false
+    dut.io.retryScanCtrlBus.startPulse #= false
+    dut.io.retryScanCtrlBus.retryReason #= RetryReason.SEQ_ERR
+    dut.io.queryPort4SqRespDmaWrite.req.valid #= false
+
+    val inputQueue = mutable.Queue[
+      (
+          PhysicalAddr,
+          PsnStart,
+          PktNum,
+          PktLen,
+          SpinalEnumElement[WorkReqOpCode.type],
+          VirtualAddr,
+          LRKey
+      )
+    ]()
+    val outputQueue = mutable.Queue[
+      (
+          PhysicalAddr,
+          PsnStart,
+          PktNum,
+          PktLen,
+          SpinalEnumElement[WorkReqOpCode.type],
+          VirtualAddr,
+          LRKey
+      )
+    ]()
+    val retryQueue = mutable.Queue[
+      (
+          PhysicalAddr,
+          PsnStart,
+          PktNum,
+          PktLen,
+          SpinalEnumElement[WorkReqOpCode.type],
+          VirtualAddr,
+          LRKey
+      )
+    ]()
+
+    streamMasterDriver(dut.io.push, dut.clockDomain) {
+      // Just random assignment to dut.io.push
+    }
+    onStreamFire(dut.io.push, dut.clockDomain) {
+//      println(f"${simTime()} time, dut.io.push.workReq.id=${dut.io.push.workReq.id.toBigInt}%X")
+      inputQueue.enqueue(
+        (
+          dut.io.push.pa.toBigInt,
+          dut.io.push.psnStart.toInt,
+          dut.io.push.pktNum.toInt,
+          dut.io.push.workReq.lenBytes.toLong,
+          dut.io.push.workReq.opcode.toEnum,
+          dut.io.push.workReq.raddr.toBigInt,
+          dut.io.push.workReq.rkey.toLong
+        )
+      )
+    }
+    onStreamFire(dut.io.pop, dut.clockDomain) {
+      outputQueue.enqueue(
+        (
+          dut.io.pop.pa.toBigInt,
+          dut.io.pop.psnStart.toInt,
+          dut.io.pop.pktNum.toInt,
+          dut.io.pop.workReq.lenBytes.toLong,
+          dut.io.pop.workReq.opcode.toEnum,
+          dut.io.pop.workReq.raddr.toBigInt,
+          dut.io.pop.workReq.rkey.toLong
+        )
+      )
+    }
+
+    streamSlaveRandomizer(dut.io.retryWorkReq, dut.clockDomain)
+    onStreamFire(dut.io.retryWorkReq, dut.clockDomain) {
+//      println(f"${simTime()} time, dut.io.retryWorkReq.workReq.id=${dut.io.retryWorkReq.workReq.id.toBigInt}%X")
+      retryQueue.enqueue(
+        (
+          dut.io.retryWorkReq.pa.toBigInt,
+          dut.io.retryWorkReq.psnStart.toInt,
+          dut.io.retryWorkReq.pktNum.toInt,
+          dut.io.retryWorkReq.workReq.lenBytes.toLong,
+          dut.io.retryWorkReq.workReq.opcode.toEnum,
+          dut.io.retryWorkReq.workReq.raddr.toBigInt,
+          dut.io.retryWorkReq.workReq.rkey.toLong
+        )
+      )
+    }
+
+    fork {
+      while (true) {
+        waitUntil(dut.io.full.toBoolean)
+        dut.clockDomain.waitSampling()
+        dut.io.txQCtrl.retry #= false
+        dut.io.retryScanCtrlBus.startPulse #= true
+        dut.clockDomain.waitSampling()
+        dut.io.retryScanCtrlBus.startPulse #= false
+        waitUntil(dut.io.retryScanCtrlBus.donePulse.toBoolean)
+        dut.io.txQCtrl.retry #= false
+        dut.io.pop.ready #= true
+        waitUntil(outputQueue.size >= depth)
+        dut.io.pop.ready #= false
+        outputQueue.clear()
+      }
+    }
+    MiscUtils.checkInputOutputQueues(
+      dut.clockDomain,
+      inputQueue,
+      retryQueue,
+      MATCH_CNT
+    )
+  }
+
+  def testFunc(): Unit = simCfg.doSim { dut =>
+    dut.clockDomain.forkStimulus(10)
+
+    dut.io.txQCtrl.retry #= false
+    dut.io.txQCtrl.wrongStateFlush #= false
+    dut.io.retryWorkReq.ready #= false
+    dut.io.retryScanCtrlBus.startPulse #= false
+    dut.io.queryPort4SqRespDmaWrite.req.valid #= false
+
+    val inputQueue = mutable.Queue[
+      (
+          PhysicalAddr,
+          PsnStart,
+          PktNum,
+          PktLen,
+          SpinalEnumElement[WorkReqOpCode.type],
+          VirtualAddr,
+          LRKey
+      )
+    ]()
+    val outputQueue = mutable.Queue[
+      (
+          PhysicalAddr,
+          PsnStart,
+          PktNum,
+          PktLen,
+          SpinalEnumElement[WorkReqOpCode.type],
+          VirtualAddr,
+          LRKey
+      )
+    ]()
+
+    streamMasterDriver(dut.io.push, dut.clockDomain) {
+      // Just random assignment to dut.io.push
+    }
+    streamSlaveRandomizer(dut.io.pop, dut.clockDomain)
+    onStreamFire(dut.io.push, dut.clockDomain) {
+      inputQueue.enqueue(
+        (
+          dut.io.push.pa.toBigInt,
+          dut.io.push.psnStart.toInt,
+          dut.io.push.pktNum.toInt,
+          dut.io.push.workReq.lenBytes.toLong,
+          dut.io.push.workReq.opcode.toEnum,
+          dut.io.push.workReq.raddr.toBigInt,
+          dut.io.push.workReq.rkey.toLong
+        )
+      )
+    }
+    onStreamFire(dut.io.pop, dut.clockDomain) {
+      outputQueue.enqueue(
+        (
+          dut.io.pop.pa.toBigInt,
+          dut.io.pop.psnStart.toInt,
+          dut.io.pop.pktNum.toInt,
+          dut.io.pop.workReq.lenBytes.toLong,
+          dut.io.pop.workReq.opcode.toEnum,
+          dut.io.pop.workReq.raddr.toBigInt,
+          dut.io.pop.workReq.rkey.toLong
+        )
+      )
+    }
+
+    MiscUtils.checkInputOutputQueues(
+      dut.clockDomain,
+      inputQueue,
+      outputQueue,
+      MATCH_CNT
+    )
+  }
+}
+
+class RetryHandlerTest extends AnyFunSuite {
+  val busWidth = BusWidth.W512
+  val pmtuLen = PMTU.U1024
+
+  val simCfg = SimConfig.allOptimisation.withWave
+    .withConfig(SpinalConfig(anonymSignalPrefix = "tmp"))
+    .compile(new RetryHandler)
 
   def randomRetryStartPsn(psnStart: PsnStart, pktNum: PktNum): PSN = {
     // RDMA max packet length 2GB=2^31
     psnStart +% scala.util.Random.nextInt(pktNum)
   }
 
-  val simCfg = SimConfig.allOptimisation.withWave
-    .compile(new ReadAtomicRetryHandlerAndDmaReadInitiator)
-
-// TODO: test("send/write/read/atomic request partial retry test")
-
-  test(
-    "ReadAtomicRetryHandlerAndDmaReadInitiator send/write/read request partial retry test"
-  ) {
+  def testFunc(isRetryOverLimit: Boolean, isPartialRetry: Boolean): Unit =
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
+      val retryLimit = 3
+      dut.io.qpAttr.maxRetryCnt #= retryLimit
+      dut.io.qpAttr.pmtu #= pmtuLen.id
+      dut.io.retryScanCtrlBus.donePulse #= false
+      if (isPartialRetry) {
+        dut.io.qpAttr.retryReason #= RetryReason.SEQ_ERR
+      } else {
+        dut.io.qpAttr.retryReason #= RetryReason.RNR
+      }
+      dut.io.txQCtrl.wrongStateFlush #= false
+
       val inputQueue = mutable.Queue[
         (
-            PsnStart,
             PhysicalAddr,
             PsnStart,
+            PktNum,
             PktLen,
             SpinalEnumElement[WorkReqOpCode.type],
+            VirtualAddr,
             VirtualAddr,
             LRKey
         )
       ]()
-      val outputReadQueue = mutable.Queue[(PSN, PktLen, LRKey, VirtualAddr)]()
-      val outputDmaReqQueue = mutable.Queue[(PhysicalAddr, PsnStart, PktLen)]()
-      val matchQueue = mutable.Queue[PSN]()
-
-      var nextPsn = 0
-      val pmtuLen = PMTU.U1024
-      dut.io.qpAttr.pmtu #= pmtuLen.id
-      dut.io.qpAttr.retryReason #= RetryReason.SEQ_ERR
-      dut.io.txQCtrl.wrongStateFlush #= false
-      // Make retry limit check pass
-      dut.io.qpAttr.maxRetryCnt #= 3
-
-      // Input to DUT
-      streamMasterDriver(dut.io.retryWorkReq, dut.clockDomain) {
-        dut.io.retryWorkReq.rnrCnt #= 0
-        dut.io.retryWorkReq.retryCnt #= 0
-        val curPsn = nextPsn
-        dut.io.retryWorkReq.psnStart #= curPsn
-        val workReqOpCode = WorkReqSim.randomSendWriteReadOpCode()
-        dut.io.retryWorkReq.workReq.opcode #= workReqOpCode
-        val pktLen = WorkReqSim.randomDmaLength()
-        dut.io.retryWorkReq.workReq.lenBytes #= pktLen
-        val pktNum = MiscUtils.computePktNum(pktLen, pmtuLen)
-        dut.io.retryWorkReq.pktNum #= pktNum
-        val retryStartPsn = randomRetryStartPsn(curPsn, pktNum)
-        dut.io.qpAttr.retryStartPsn #= retryStartPsn
-        nextPsn = PsnSim.psnAdd(nextPsn, pktNum)
-        dut.io.qpAttr.npsn #= nextPsn
-//        println(
-//          f"${simTime()} time: the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, retryStartPsn=${retryStartPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
-//        )
-      }
-      onStreamFire(dut.io.retryWorkReq, dut.clockDomain) {
-        inputQueue.enqueue(
-          (
-            dut.io.qpAttr.retryStartPsn.toInt,
-            dut.io.retryWorkReq.pa.toBigInt,
-            dut.io.retryWorkReq.psnStart.toInt,
-            dut.io.retryWorkReq.workReq.lenBytes.toLong,
-            dut.io.retryWorkReq.workReq.opcode.toEnum,
-            dut.io.retryWorkReq.workReq.raddr.toBigInt,
-            dut.io.retryWorkReq.workReq.rkey.toLong
-          )
-        )
-      }
-
-      // Check DUT output
-      MiscUtils.checkConditionAlways(dut.clockDomain) {
-        !dut.io.txAtomicReqRetry.valid.toBoolean
-      }
-      streamSlaveRandomizer(dut.io.outRetryWorkReq, dut.clockDomain)
-      streamSlaveRandomizer(dut.io.txReadReqRetry, dut.clockDomain)
-      onStreamFire(dut.io.txReadReqRetry, dut.clockDomain) {
-        outputReadQueue.enqueue(
-          (
-            dut.io.txReadReqRetry.bth.psn.toInt,
-            dut.io.txReadReqRetry.reth.dlen.toLong,
-            dut.io.txReadReqRetry.reth.rkey.toLong,
-            dut.io.txReadReqRetry.reth.va.toBigInt
-          )
-        )
-      }
-      streamSlaveRandomizer(dut.io.dmaRead.req, dut.clockDomain)
-      onStreamFire(dut.io.dmaRead.req, dut.clockDomain) {
-        outputDmaReqQueue.enqueue(
-          (
-            dut.io.dmaRead.req.pa.toBigInt,
-            dut.io.dmaRead.req.psnStart.toInt,
-            dut.io.dmaRead.req.lenBytes.toLong
-          )
-        )
-      }
-      fork {
-        var (paOut, psnOut, lenOut, rKeyOut, vaOut) =
-          (BigInt(0), 0, 0L, 0L, BigInt(0))
-        while (true) {
-          val (
-            retryStartPsnIn,
-            paIn,
-            psnIn,
-            lenIn,
-            workReqOpCodeIn,
-            vaIn,
-            rKeyIn
-          ) =
-            MiscUtils.safeDeQueue(inputQueue, dut.clockDomain)
-          if (workReqOpCodeIn.isReadReq()) {
-            val outReadReq =
-              MiscUtils.safeDeQueue(outputReadQueue, dut.clockDomain)
-            psnOut = outReadReq._1
-            lenOut = outReadReq._2
-            rKeyOut = outReadReq._3
-            vaOut = outReadReq._4
-          } else {
-            val outAtomicReq =
-              MiscUtils.safeDeQueue(outputDmaReqQueue, dut.clockDomain)
-            paOut = outAtomicReq._1
-            psnOut = outAtomicReq._2
-            lenOut = outAtomicReq._3
-          }
-          assert(
-            PsnSim.psnCmp(retryStartPsnIn, psnIn, curPsn = psnIn) >= 0,
-            f"${simTime()} time: retryStartPsnIn=${retryStartPsnIn}%X should >= psnIn=${psnIn}%X in PSN order"
-          )
-          val psnDiff = PsnSim.psnDiff(retryStartPsnIn, psnIn)
-          val dmaReadOffset = psnDiff << pmtuLen.id
-//        println(
-//            f"${simTime()} time: output PSN=${psnOut}%X not match input retryStartPsnIn=${retryStartPsnIn}%X"
-//        )
-
-          psnOut shouldBe retryStartPsnIn withClue
-            f"${simTime()} time: output PSN=${psnOut}%X not match input retryStartPsnIn=${retryStartPsnIn}%X"
-
-//        println(
-//            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
-//        )
-
-          lenOut shouldBe lenIn - dmaReadOffset withClue
-            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X - dmaReadOffset=${dmaReadOffset}%X"
-
-          if (workReqOpCodeIn.isReadReq()) {
-
-            rKeyOut shouldBe rKeyIn withClue
-              f"${simTime()} time: output rkey=${rKeyOut}%X not match input rkey=${rKeyIn}%X"
-
-            vaOut shouldBe vaIn + dmaReadOffset withClue
-              f"${simTime()} time: output remote VA=${vaOut}%X not match input remote VA=${vaIn}%X + dmaReadOffset=${dmaReadOffset}%X"
-          } else {
-
-            paOut shouldBe paIn + dmaReadOffset withClue
-              f"${simTime()} time: output local PA=${paOut}%X not match input local PA=${paIn}%X + dmaReadOffset=${dmaReadOffset}%X"
-          }
-          matchQueue.enqueue(psnOut)
-        }
-      }
-
-      waitUntil(matchQueue.size > MATCH_CNT)
-    }
-  }
-
-  test(
-    "ReadAtomicRetryHandlerAndDmaReadInitiator read/atomic request whole retry test"
-  ) {
-    simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
-
-      val inputQueue = mutable.Queue[
+      val outputQueue = mutable.Queue[
         (
+            PhysicalAddr,
             PsnStart,
+            PktNum,
             PktLen,
             SpinalEnumElement[WorkReqOpCode.type],
+            VirtualAddr,
             VirtualAddr,
             LRKey
         )
       ]()
-      val outputReadQueue = mutable.Queue[(PSN, PktLen, LRKey, VirtualAddr)]()
-      val outputAtomicQueue = mutable.Queue[(PSN, LRKey, VirtualAddr)]()
-      val matchQueue = mutable.Queue[PSN]()
 
       var nextPsn = 0
-      val pmtuLen = PMTU.U1024
-      dut.io.qpAttr.pmtu #= pmtuLen.id
-      dut.io.qpAttr.retryReason #= RetryReason.SEQ_ERR
-      dut.io.txQCtrl.wrongStateFlush #= false
-      // Make retry limit check pass
-      dut.io.qpAttr.maxRetryCnt #= 3
-
-      // Input to DUT
-      streamMasterDriver(dut.io.retryWorkReq, dut.clockDomain) {
-        dut.io.retryWorkReq.rnrCnt #= 0
-        dut.io.retryWorkReq.retryCnt #= 0
+      streamMasterDriver(dut.io.retryWorkReqIn, dut.clockDomain) {
         val curPsn = nextPsn
-        dut.io.qpAttr.retryStartPsn #= curPsn
-        dut.io.retryWorkReq.psnStart #= curPsn
-        val workReqOpCode = WorkReqSim.randomReadAtomicOpCode()
-        dut.io.retryWorkReq.workReq.opcode #= workReqOpCode
+        dut.io.retryWorkReqIn.psnStart #= curPsn
+        val workReqOpCode = WorkReqSim.randomSendWriteReadAtomicOpCode()
+        dut.io.retryWorkReqIn.workReq.opcode #= workReqOpCode
         val pktLen = if (workReqOpCode.isAtomicReq()) {
-          dut.io.retryWorkReq.workReq.lenBytes #= ATOMIC_DATA_LEN
           ATOMIC_DATA_LEN.toLong
         } else {
-          val randomPktLen = WorkReqSim.randomDmaLength()
-          dut.io.retryWorkReq.workReq.lenBytes #= randomPktLen
-          randomPktLen
+          WorkReqSim.randomDmaLength()
         }
+        dut.io.retryWorkReqIn.workReq.lenBytes #= pktLen
         val pktNum = MiscUtils.computePktNum(pktLen, pmtuLen)
-        dut.io.retryWorkReq.pktNum #= pktNum
-        nextPsn = PsnSim.psnAdd(nextPsn, pktNum)
+        dut.io.retryWorkReqIn.pktNum #= pktNum
+
+        val retryStartPsn = if (isPartialRetry) {
+          randomRetryStartPsn(curPsn, pktNum)
+        } else {
+          curPsn
+        }
+        nextPsn = nextPsn +% pktNum
+        dut.io.qpAttr.retryStartPsn #= retryStartPsn
         dut.io.qpAttr.npsn #= nextPsn
-//        println(
-//          f"${simTime()} time: the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
-//        )
-      }
-      onStreamFire(dut.io.retryWorkReq, dut.clockDomain) {
+
+        if (isRetryOverLimit) {
+          dut.io.retryWorkReqIn.rnrCnt #= retryLimit + 1
+          dut.io.retryWorkReqIn.retryCnt #= retryLimit + 1
+        } else {
+          dut.io.retryWorkReqIn.rnrCnt #= 0
+          dut.io.retryWorkReqIn.retryCnt #= 0
+        }
+
+        val workReqPsnStart = curPsn
+        val pa = dut.io.retryWorkReqIn.pa.toBigInt
+        val rmtAddr = dut.io.retryWorkReqIn.workReq.raddr.toBigInt
+        val localAddr = dut.io.retryWorkReqIn.workReq.laddr.toBigInt
+        val rmtKey = dut.io.retryWorkReqIn.workReq.rkey.toLong
+        val (
+          retryWorkReqPsnStart,
+          retryWorkReqLenBytes,
+          retryWorkReqPhysicalAddr,
+          retryWorkReqRmtAddr,
+          retryWorkReqLocalAddr,
+          retryWorkReqPktNum
+        ) = if (isPartialRetry) {
+          val psnDiff = PsnSim.psnDiff(retryStartPsn, workReqPsnStart)
+          val pktLenDiff = psnDiff << pmtuLen.id
+          (
+            retryStartPsn,
+            pktLen - pktLenDiff,
+            pa + pktLenDiff,
+            rmtAddr + pktLenDiff,
+            localAddr + pktLenDiff,
+            pktNum - psnDiff
+          )
+        } else {
+          (workReqPsnStart, pktLen, pa, rmtAddr, localAddr, pktNum)
+        }
+//          println(
+//            f"${simTime()} time: nPSN=${nextPsn}%X, retryStartPsn=${retryStartPsn}%X=${retryStartPsn}, workReqPsnStart=${workReqPsnStart}%X=${workReqPsnStart}, pmtuLen=${pmtuLen.id}%X, pktLen=${pktLen}%X=${pktLen}, pa=${pa}%X=${pa}, rmtAddr=${rmtAddr}%X=${rmtAddr}, retryWorkReqLenBytes=${retryWorkReqLenBytes}%X=${retryWorkReqLenBytes}, retryWorkReqPhysicalAddr=${retryWorkReqPhysicalAddr}%X=${retryWorkReqPhysicalAddr}, retryWorkReqRmtAddr=${retryWorkReqRmtAddr}%X=${retryWorkReqRmtAddr}, retryWorkReqPktNum=${retryWorkReqPktNum}%X=${retryWorkReqPktNum}"
+//          )
         inputQueue.enqueue(
           (
-            dut.io.retryWorkReq.psnStart.toInt,
-            dut.io.retryWorkReq.workReq.lenBytes.toLong,
-            dut.io.retryWorkReq.workReq.opcode.toEnum,
-            dut.io.retryWorkReq.workReq.raddr.toBigInt,
-            dut.io.retryWorkReq.workReq.rkey.toLong
+            retryWorkReqPhysicalAddr,
+            retryWorkReqPsnStart,
+            retryWorkReqPktNum,
+            retryWorkReqLenBytes,
+            workReqOpCode,
+            retryWorkReqRmtAddr,
+            retryWorkReqLocalAddr,
+            rmtKey
           )
         )
       }
+//      val camFifoRespQueue = CamFifoSim.queryAndResp(
+//        dut.io.workReqCacheScanBus,
+//        dut.io.qpAttr,
+//        dut.clockDomain,
+//        pmtuLen,
+//        isPartialRetry,
+//        isRetryOverLimit
+//      )
 
-      // Check DUT output
-      MiscUtils.checkConditionAlways(dut.clockDomain) {
-        !dut.io.dmaRead.req.valid.toBoolean
-      }
-      streamSlaveRandomizer(dut.io.outRetryWorkReq, dut.clockDomain)
-      streamSlaveRandomizer(dut.io.txReadReqRetry, dut.clockDomain)
-      onStreamFire(dut.io.txReadReqRetry, dut.clockDomain) {
-        outputReadQueue.enqueue(
-          (
-            dut.io.txReadReqRetry.bth.psn.toInt,
-            dut.io.txReadReqRetry.reth.dlen.toLong,
-            dut.io.txReadReqRetry.reth.rkey.toLong,
-            dut.io.txReadReqRetry.reth.va.toBigInt
-          )
-        )
-      }
-      streamSlaveRandomizer(dut.io.txAtomicReqRetry, dut.clockDomain)
-      onStreamFire(dut.io.txAtomicReqRetry, dut.clockDomain) {
-        outputAtomicQueue.enqueue(
-          (
-            dut.io.txAtomicReqRetry.bth.psn.toInt,
-            dut.io.txAtomicReqRetry.atomicEth.rkey.toLong,
-            dut.io.txAtomicReqRetry.atomicEth.va.toBigInt
-          )
-        )
-      }
-      fork {
-        var (psnOut, lenOut, rKeyOut, vaOut) = (0, 0L, 0L, BigInt(0))
-        while (true) {
-          val (psnIn, lenIn, workReqOpCodeIn, vaIn, rKeyIn) =
-            MiscUtils.safeDeQueue(inputQueue, dut.clockDomain)
-          if (workReqOpCodeIn.isReadReq()) {
-            val outReadReq =
-              MiscUtils.safeDeQueue(outputReadQueue, dut.clockDomain)
-            psnOut = outReadReq._1
-            lenOut = outReadReq._2
-            rKeyOut = outReadReq._3
-            vaOut = outReadReq._4
-          } else {
-            val outAtomicReq =
-              MiscUtils.safeDeQueue(outputAtomicQueue, dut.clockDomain)
-            psnOut = outAtomicReq._1
-            rKeyOut = outAtomicReq._2
-            vaOut = outAtomicReq._3
-            lenOut = ATOMIC_DATA_LEN.toLong
-          }
-//        println(
-//            f"${simTime()} time: output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
-//        )
+//      fork {
+//        while (true) {
+//          val (
+//            retryStartPsn,
+////            nextPsn,
+//            pa,
+//            workReqPsnStart,
+//            pktNum,
+//            pktLen,
+//            workReqOpCode,
+//            rmtAddr,
+//            rmtKey
+//          ) = MiscUtils.safeDeQueue(camFifoRespQueue, dut.clockDomain)
+//          val (
+//            retryWorkReqPsnStart,
+//            retryWorkReqLenBytes,
+//            retryWorkReqPhysicalAddr,
+//            retryWorkReqRmtAddr,
+//            retryWorkReqPktNum
+//          ) = if (isPartialRetry) {
+//            val psnDiff = PsnSim.psnDiff(retryStartPsn, workReqPsnStart)
+//            val pktLenDiff = psnDiff << pmtuLen.id
+//            (
+//              retryStartPsn,
+//              pktLen - pktLenDiff,
+//              pa + pktLenDiff,
+//              rmtAddr + pktLenDiff,
+//              pktNum - psnDiff
+//            )
+//          } else {
+//            (workReqPsnStart, pktLen, pa, rmtAddr, pktNum)
+//          }
+////          println(
+////            f"${simTime()} time: nPSN=${nextPsn}%X, retryStartPsn=${retryStartPsn}%X=${retryStartPsn}, workReqPsnStart=${workReqPsnStart}%X=${workReqPsnStart}, pmtuLen=${pmtuLen.id}%X, pktLen=${pktLen}%X=${pktLen}, pa=${pa}%X=${pa}, rmtAddr=${rmtAddr}%X=${rmtAddr}, retryWorkReqLenBytes=${retryWorkReqLenBytes}%X=${retryWorkReqLenBytes}, retryWorkReqPhysicalAddr=${retryWorkReqPhysicalAddr}%X=${retryWorkReqPhysicalAddr}, retryWorkReqRmtAddr=${retryWorkReqRmtAddr}%X=${retryWorkReqRmtAddr}, retryWorkReqPktNum=${retryWorkReqPktNum}%X=${retryWorkReqPktNum}"
+////          )
+//          inputQueue.enqueue(
+//            (
+//              retryWorkReqPhysicalAddr,
+//              retryWorkReqPsnStart,
+//              retryWorkReqPktNum,
+//              retryWorkReqLenBytes,
+//              workReqOpCode,
+//              retryWorkReqRmtAddr,
+//              rmtKey
+//            )
+//          )
+//        }
+//      }
 
-          psnOut shouldBe psnIn withClue
-            f"${simTime()} time: output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
-
-//        println(
-//            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
-//        )
-
-          lenOut shouldBe lenIn withClue
-            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
-
-          rKeyOut shouldBe rKeyIn withClue
-            f"${simTime()} time: output rkey=${rKeyOut}%X not match input rkey=${rKeyIn}%X"
-
-          vaOut shouldBe vaIn withClue
-            f"${simTime()} time: output remote VA=${vaOut}%X not match input remote VA=${vaIn}%X"
-
-          matchQueue.enqueue(psnOut)
-        }
-      }
-
-      waitUntil(matchQueue.size > MATCH_CNT)
-    }
-  }
-
-  test(
-    "ReadAtomicRetryHandlerAndDmaReadInitiator send/write request whole retry test"
-  ) {
-    simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
-
-      val inputQueue = mutable.Queue[(PhysicalAddr, PsnStart, PktLen, QPN)]()
-      val outputQueue = mutable.Queue[(PhysicalAddr, PsnStart, PktLen, QPN)]()
-      val matchQueue = mutable.Queue[PSN]()
-
-      var nextPsn = 0
-      val pmtuLen = PMTU.U1024
-      dut.io.qpAttr.pmtu #= pmtuLen.id
-      dut.io.qpAttr.retryReason #= RetryReason.SEQ_ERR
-      dut.io.txQCtrl.wrongStateFlush #= false
-      // Make retry limit check pass
-      dut.io.qpAttr.maxRetryCnt #= 3
-
-      // Input to DUT
-      streamMasterDriver(dut.io.retryWorkReq, dut.clockDomain) {
-        dut.io.retryWorkReq.rnrCnt #= 0
-        dut.io.retryWorkReq.retryCnt #= 0
-        val curPsn = nextPsn
-        dut.io.qpAttr.retryStartPsn #= curPsn
-        dut.io.retryWorkReq.psnStart #= curPsn
-        val workReqOpCode = WorkReqSim.randomSendWriteOpCode()
-        dut.io.retryWorkReq.workReq.opcode #= workReqOpCode
-        val pktLen = WorkReqSim.randomDmaLength()
-        dut.io.retryWorkReq.workReq.lenBytes #= pktLen
-        val pktNum = MiscUtils.computePktNum(pktLen, pmtuLen)
-        dut.io.retryWorkReq.pktNum #= pktNum
-        nextPsn = PsnSim.psnAdd(nextPsn, pktNum)
-        dut.io.qpAttr.npsn #= nextPsn
-//        println(
-//          f"${simTime()} time: the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
-//        )
-      }
-      onStreamFire(dut.io.retryWorkReq, dut.clockDomain) {
-        inputQueue.enqueue(
-          (
-            dut.io.retryWorkReq.pa.toBigInt,
-            dut.io.retryWorkReq.psnStart.toInt,
-            dut.io.retryWorkReq.workReq.lenBytes.toLong,
-            dut.io.retryWorkReq.workReq.sqpn.toInt
-          )
-        )
-      }
-
-      // Check DUT output
-      MiscUtils.checkConditionAlways(dut.clockDomain) {
-        !dut.io.txAtomicReqRetry.valid.toBoolean && !dut.io.txReadReqRetry.valid.toBoolean
-      }
-      streamSlaveRandomizer(dut.io.outRetryWorkReq, dut.clockDomain)
-      streamSlaveRandomizer(dut.io.dmaRead.req, dut.clockDomain)
-      onStreamFire(dut.io.dmaRead.req, dut.clockDomain) {
+      streamSlaveAlwaysReady(dut.io.retryWorkReqOut, dut.clockDomain)
+      onStreamFire(dut.io.retryWorkReqOut, dut.clockDomain) {
         outputQueue.enqueue(
           (
-            dut.io.dmaRead.req.pa.toBigInt,
-            dut.io.dmaRead.req.psnStart.toInt,
-            dut.io.dmaRead.req.lenBytes.toLong,
-            dut.io.dmaRead.req.sqpn.toInt
+            dut.io.retryWorkReqOut.pa.toBigInt,
+            dut.io.retryWorkReqOut.psnStart.toInt,
+            dut.io.retryWorkReqOut.pktNum.toInt,
+            dut.io.retryWorkReqOut.workReq.lenBytes.toLong,
+            dut.io.retryWorkReqOut.workReq.opcode.toEnum,
+            dut.io.retryWorkReqOut.workReq.raddr.toBigInt,
+            dut.io.retryWorkReqOut.workReq.laddr.toBigInt,
+            dut.io.retryWorkReqOut.workReq.rkey.toLong
           )
         )
       }
-      fork {
-        while (true) {
-          val (paIn, psnIn, lenIn, sqpnIn) =
-            MiscUtils.safeDeQueue(inputQueue, dut.clockDomain)
-          val (paOut, psnOut, lenOut, sqpnOut) =
-            MiscUtils.safeDeQueue(outputQueue, dut.clockDomain)
-//        println(
-//            f"${simTime()} time: output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
-//        )
 
-          psnOut shouldBe psnIn withClue
-            f"${simTime()} time: output PSN=${psnOut}%X not match input PSN=${psnIn}%X"
-
-//        println(
-//            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
-//        )
-
-          lenOut shouldBe lenIn withClue
-            f"${simTime()} time: output lenBytes=${lenOut}%X not match input lenBytes=${lenIn}%X"
-
-          sqpnOut shouldBe sqpnIn withClue
-            f"${simTime()} time: output sqpnOut=${sqpnOut}%X not match input sqpnIn=${sqpnIn}%X"
-
-          paOut shouldBe paIn withClue
-            f"${simTime()} time: output local PA=${paOut}%X not match input local PA=${paIn}%X"
-
-          matchQueue.enqueue(psnOut)
-        }
+      if (isRetryOverLimit) {
+        MiscUtils.checkSignalWhen(
+          dut.clockDomain,
+          when = dut.io.retryWorkReqIn.valid.toBoolean,
+          signal = dut.io.errNotifier.pulse.toBoolean,
+          clue =
+            f"${simTime()} time: dut.io.errNotifier.pulse=${dut.io.errNotifier.pulse.toBoolean} should be true when dut.io.retryWorkReqIn.valid=${dut.io.retryWorkReqIn.valid.toBoolean}"
+        )
       }
 
-      waitUntil(matchQueue.size > MATCH_CNT)
+      MiscUtils.checkInputOutputQueues(
+        dut.clockDomain,
+        inputQueue,
+        outputQueue,
+        MATCH_CNT
+      )
     }
+
+  test("RetryHandler normal case") {
+    testFunc(isRetryOverLimit = false, isPartialRetry = false)
   }
 
-  test("ReadAtomicRetryHandlerAndDmaReadInitiator retry limit exceed test") {
-    simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+  test("RetryHandler partial retry case") {
+    testFunc(isRetryOverLimit = false, isPartialRetry = true)
+  }
 
-      var nextPsn = 0
-      val pmtuLen = PMTU.U1024
-      dut.io.qpAttr.pmtu #= pmtuLen.id
-      dut.io.qpAttr.retryReason #= RetryReason.SEQ_ERR
-      dut.io.txQCtrl.wrongStateFlush #= false
-
-      val maxRetryCnt = 3
-      dut.io.qpAttr.maxRetryCnt #= maxRetryCnt
-
-      val matchQueue = mutable.Queue[PsnStart]()
-      // Input to DUT
-      streamMasterDriver(dut.io.retryWorkReq, dut.clockDomain) {
-        dut.io.retryWorkReq.rnrCnt #= maxRetryCnt + 1
-        dut.io.retryWorkReq.retryCnt #= 0
-        val curPsn = nextPsn
-        dut.io.qpAttr.retryStartPsn #= curPsn
-        dut.io.retryWorkReq.psnStart #= curPsn
-        val workReqOpCode = WorkReqSim.randomReadAtomicOpCode()
-        dut.io.retryWorkReq.workReq.opcode #= workReqOpCode
-        val pktLen = if (workReqOpCode.isAtomicReq()) {
-          dut.io.retryWorkReq.workReq.lenBytes #= ATOMIC_DATA_LEN
-          ATOMIC_DATA_LEN.toLong
-        } else {
-          val randomPktLen = WorkReqSim.randomDmaLength()
-          dut.io.retryWorkReq.workReq.lenBytes #= randomPktLen
-          randomPktLen
-        }
-        val pktNum = MiscUtils.computePktNum(pktLen, pmtuLen)
-        dut.io.retryWorkReq.pktNum #= pktNum
-        nextPsn = PsnSim.psnAdd(nextPsn, pktNum)
-        dut.io.qpAttr.npsn #= nextPsn
-//        println(
-//          f"${simTime()} time: the input WR opcode=${workReqOpCode}%X, curPsn=${curPsn}%X, nextPsn=${nextPsn}%X, pktLen=${pktLen}%X, pktNum=${pktNum}%X"
-//        )
-      }
-      onStreamFire(dut.io.retryWorkReq, dut.clockDomain) {
-        if (dut.io.retryWorkReq.rnrCnt.toInt > maxRetryCnt) {
-          assert(
-            dut.io.errNotifier.pulse.toBoolean,
-            f"${simTime()} time: dut.io.errNotifier.pulse=${dut.io.errNotifier.pulse.toBoolean} should be true when RNR retry limit exceeds"
-          )
-
-          dut.io.errNotifier.errType.toEnum shouldBe SqErrType.RNR_EXC withClue
-            f"${simTime()} time: dut.io.errNotifier.errType=${dut.io.errNotifier.errType.toEnum} should be RNR_EXC"
-
-          matchQueue.enqueue(dut.io.retryWorkReq.psnStart.toInt)
-        }
-      }
-
-      // Check DUT output
-      MiscUtils.checkConditionAlways(dut.clockDomain) {
-        !dut.io.dmaRead.req.valid.toBoolean
-      }
-      streamSlaveRandomizer(dut.io.outRetryWorkReq, dut.clockDomain)
-      streamSlaveRandomizer(dut.io.txReadReqRetry, dut.clockDomain)
-      streamSlaveRandomizer(dut.io.txAtomicReqRetry, dut.clockDomain)
-    }
+  test("RetryHandler retry limit exceed case") {
+    testFunc(isRetryOverLimit = true, isPartialRetry = true)
   }
 }

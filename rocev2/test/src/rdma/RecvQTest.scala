@@ -166,10 +166,9 @@ class ReqCommCheckTest extends AnyFunSuite {
           )
         )
         if (isNormalCaseOrDupCase && isFragLast) {
-          assert(
-            dut.io.epsnInc.inc.toBoolean,
+          dut.io.epsnInc.inc.toBoolean shouldBe true withClue
             f"${simTime()} time: dut.io.epsnInc.inc=${dut.io.epsnInc.inc.toBoolean} should be true when dut.io.rx last fire"
-          )
+
           val singlePktNum = 1
           dut.io.epsnInc.incVal.toInt shouldBe singlePktNum withClue
             f"${simTime()} time: dut.io.epsnInc.incVal=${dut.io.epsnInc.incVal.toInt} should equal singlePktNum=${singlePktNum}"
@@ -2585,18 +2584,16 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
 //          f"${simTime()} time: the read request has zero DMA length, but dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.dlen=${dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.dlen.toLong}%X"
 //        )
 
-        dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.dlen.toLong shouldBe 0 withClue {
+        dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.dlen.toLong shouldBe 0 withClue
           f"${simTime()} time: the read request has zero DMA length, but dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.dlen=${dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.dlen.toLong}%X"
-        }
 
         val inputPsnStart = psnQueue.dequeue()
 //        println(
 //          f"${simTime()} time: output PSN io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart=${dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart.toInt}%X not match input PSN io.readRstCacheData.psnStart=${inputPsnStart}%X"
 //        )
 
-        dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart.toInt shouldBe inputPsnStart withClue {
+        dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart.toInt shouldBe inputPsnStart withClue
           f"${simTime()} time: output PSN io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart=${dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart.toInt}%X not match input PSN io.readRstCacheData.psnStart=${inputPsnStart}%X"
-        }
 
         matchQueue.enqueue(inputPsnStart)
       }
@@ -2706,9 +2703,8 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
       )
       onStreamFire(dut.io.readRstCacheDataAndDmaReadResp, dut.clockDomain) {
         dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart.toInt shouldBe
-          dut.io.readRstCacheDataAndDmaReadResp.dmaReadResp.psnStart.toInt withClue {
-            f"${simTime()} time:  dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart=${dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart.toInt}%X should equal dut.io.readRstCacheDataAndDmaReadResp.dmaReadResp.psnStart=${dut.io.readRstCacheDataAndDmaReadResp.dmaReadResp.psnStart.toInt}%X"
-          }
+          dut.io.readRstCacheDataAndDmaReadResp.dmaReadResp.psnStart.toInt withClue
+          f"${simTime()} time:  dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart=${dut.io.readRstCacheDataAndDmaReadResp.rstCacheData.psnStart.toInt}%X should equal dut.io.readRstCacheDataAndDmaReadResp.dmaReadResp.psnStart=${dut.io.readRstCacheDataAndDmaReadResp.dmaReadResp.psnStart.toInt}%X"
 
         val isLastFrag = dut.io.readRstCacheDataAndDmaReadResp.last.toBoolean
         if (isLastFrag) {
@@ -3111,9 +3107,9 @@ class RqOutTest extends AnyFunSuite {
             (psn, opcode, rsvd, code, value, msn, orig)
           )
         } else {
-          opcode shouldBe OpCode.ACKNOWLEDGE withClue {
+          opcode shouldBe OpCode.ACKNOWLEDGE withClue
             f"${simTime()} time: opcode=${opcode} should be ACKNOWLEDGE"
-          }
+
           outputSendWriteRespOrErrRespQueue.enqueue(
             (psn, opcode, rsvd, code, value, msn)
           )

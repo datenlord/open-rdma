@@ -23,12 +23,12 @@ case class CamFifoQueryBus[Tk <: Data, Tv <: Data](
   val req = Stream(keyType())
   val resp = Stream(CamFifoQueryResp(keyType, valueType))
 
-//  def >>(that: CamFifoQueryBus[Tk, Tv]): Unit = {
-//    this.req >> that.req
-//    this.resp << that.resp
-//  }
-//
-//  def <<(that: CamFifoQueryBus[Tk, Tv]): Unit = that >> this
+  def >>(that: CamFifoQueryBus[Tk, Tv]): Unit = {
+    this.req >> that.req
+    this.resp << that.resp
+  }
+
+  def <<(that: CamFifoQueryBus[Tk, Tv]): Unit = that >> this
 
   override def asMaster(): Unit = {
     master(req)
@@ -36,45 +36,66 @@ case class CamFifoQueryBus[Tk <: Data, Tv <: Data](
   }
 }
 
-case class CamFifoRetryScanReq(depth: Int) extends Bundle {
-  //  val scanPtr = Stream(UInt(log2Up(depth) bits))
-  val ptr = UInt(log2Up(depth) bits)
+case class RetryScanCtrlBus() extends Bundle with IMasterSlave {
+  val startPulse = Bool()
+  val donePulse = Bool()
   val retryReason = RetryReason()
   val retryStartPsn = UInt(PSN_WIDTH bits)
-}
 
-case class CamFifoRetryScanResp[Tv <: Data](valueType: HardType[Tv], depth: Int)
-    extends Bundle {
-  val data = valueType()
-}
-
-case class CamFifoScanBus[Tv <: Data](valueType: HardType[Tv], depth: Int)
-    extends Bundle
-    with IMasterSlave {
-  val empty = Bool()
-  val popPtr = UInt(log2Up(depth) bits)
-  val pushPtr = UInt(log2Up(depth) bits)
-
-  val scanReq = Stream(CamFifoRetryScanReq(depth))
-  val scanResp = Stream(CamFifoRetryScanResp(valueType, depth))
-
-  def >>(that: CamFifoScanBus[Tv]): Unit = {
-    that.scanReq << this.scanReq
-    this.scanResp << that.scanResp
-
-    this.popPtr := that.popPtr
-    this.pushPtr := that.pushPtr
-    this.empty := that.empty
+  def >>(that: RetryScanCtrlBus): Unit = {
+    that.startPulse := this.startPulse
+    this.donePulse := that.donePulse
+    that.retryReason := this.retryReason
+    that.retryStartPsn := this.retryStartPsn
   }
 
-  def <<(that: CamFifoScanBus[Tv]): Unit = that >> this
+  def <<(that: RetryScanCtrlBus): Unit = that >> this
 
   override def asMaster(): Unit = {
-    in(popPtr, pushPtr, empty)
-    master(scanReq)
-    slave(scanResp)
+    out(startPulse, retryReason, retryStartPsn)
+    in(donePulse)
   }
 }
+
+//case class CamFifoRetryScanReq(depth: Int) extends Bundle {
+//  //  val scanPtr = Stream(UInt(log2Up(depth) bits))
+//  val ptr = UInt(log2Up(depth) bits)
+//  val retryReason = RetryReason()
+//  val retryStartPsn = UInt(PSN_WIDTH bits)
+//}
+//
+//case class CamFifoRetryScanResp[Tv <: Data](valueType: HardType[Tv], depth: Int)
+//    extends Bundle {
+//  val data = valueType()
+//}
+
+//case class CamFifoScanBus[Tv <: Data](valueType: HardType[Tv], depth: Int)
+//    extends Bundle
+//    with IMasterSlave {
+//  val empty = Bool()
+//  val popPtr = UInt(log2Up(depth) bits)
+//  val pushPtr = UInt(log2Up(depth) bits)
+//
+//  val scanReq = Stream(CamFifoRetryScanReq(depth))
+//  val scanResp = Stream(CamFifoRetryScanResp(valueType, depth))
+//
+//  def >>(that: CamFifoScanBus[Tv]): Unit = {
+//    that.scanReq << this.scanReq
+//    this.scanResp << that.scanResp
+//
+//    this.popPtr := that.popPtr
+//    this.pushPtr := that.pushPtr
+//    this.empty := that.empty
+//  }
+//
+//  def <<(that: CamFifoScanBus[Tv]): Unit = that >> this
+//
+//  override def asMaster(): Unit = {
+//    in(popPtr, pushPtr, empty)
+//    master(scanReq)
+//    slave(scanResp)
+//  }
+//}
 
 case class CachedValue[T <: Data](dataType: HardType[T]) extends Bundle {
   val valid = Bool()
@@ -86,10 +107,12 @@ class CamFifo[Tk <: Data, Tv <: Data](
     valueType: HardType[Tv],
     queryFunc: (Tk, Tv) => Bool,
     depth: Int,
-    portCount: Int,
-    scanRespOnFireModifyFunc: Option[(CamFifoRetryScanReq, Tv) => Tv],
-    supportScan: Boolean
+    portCount: Int
+//    scanRespOnFireModifyFunc: Option[(CamFifoRetryScanReq, Tv) => Tv],
+//    supportScan: Boolean
 ) extends Component {
+  require(isPow2(depth), f"CamFifo depth=${depth} must be power of 2")
+
   val io = new Bundle {
     val push = slave(Stream(valueType))
     val pop = master(Stream(valueType))
@@ -99,7 +122,7 @@ class CamFifo[Tk <: Data, Tv <: Data](
     val empty = out(Bool())
     val full = out(Bool())
     val queryBusVec = Vec(slave(CamFifoQueryBus(keyType, valueType)), portCount)
-    val scanBus = slave(CamFifoScanBus(valueType, depth))
+//    val scanBus = slave(CamFifoScanBus(valueType, depth))
   }
 
   // Copied code from StreamFifoLowLatency
@@ -164,52 +187,30 @@ class CamFifo[Tk <: Data, Tv <: Data](
       }
     }
 
-    val scanModifyLogic = supportScan generate new Area {
-      io.scanBus.empty := logic.empty
-      io.scanBus.popPtr := logic.popPtr
-      io.scanBus.pushPtr := logic.pushPtr
-
-      val scanRespStream = logic.ram.streamReadSync(
-        io.scanBus.scanReq ~~ (scanRequest => scanRequest.ptr),
-        linkedData = io.scanBus.scanReq
-      )
-      io.scanBus.scanResp <-/< scanRespStream ~~ { scanResponse =>
-        val result = cloneOf(io.scanBus.scanResp.payloadType)
-        result.data := scanResponse.value.data
-        result
-      }
-      // Increase retry count
-      for (modifyFunc <- scanRespOnFireModifyFunc) {
-        when(scanRespStream.fire) {
-          logic.ram(scanRespStream.linked.ptr).data := modifyFunc(
-            scanRespStream.linked,
-            logic.ram(scanRespStream.linked.ptr).data
-          )
-        }
-      }
-
-//      io.retryScanBus.modifyReq.valid := False
-//      when(io.retryScanBus.modifyReq.valid) {
-//        // TODO: should consider CachedValue.valid?
-//        logic
-//          .ram(io.retryScanBus.modifyReq.ptr)
-//          .data := io.retryScanBus.modifyReq.data
-//        io.retryScanBus.modifyReq.valid := True
+//    val scanModifyLogic = supportScan generate new Area {
+//      io.scanBus.empty := logic.empty
+//      io.scanBus.popPtr := logic.popPtr
+//      io.scanBus.pushPtr := logic.pushPtr
+//
+//      val scanRespStream = logic.ram.streamReadSync(
+//        io.scanBus.scanReq ~~ (scanRequest => scanRequest.ptr),
+//        linkedData = io.scanBus.scanReq
+//      )
+//      io.scanBus.scanResp <-/< scanRespStream ~~ { scanResponse =>
+//        val result = cloneOf(io.scanBus.scanResp.payloadType)
+//        result.data := scanResponse.value.data
+//        result
 //      }
-
-//      io.retryScanBus.popPtr := logic.popPtr
-//      io.retryScanBus.pushPtr := logic.pushPtr
-//      io.retryScanBus.empty := logic.empty
-//      io.retryScanBus.value := logic.ram
-//        .readAsync(io.retryScanBus.scanPtr)
-//        .data
-//      // Modify Mem data
-//      when(io.retryScanBus.modifyPulse) {
-//        logic
-//          .ram(io.retryScanBus.modifyPtr)
-//          .data := io.retryScanBus.modifiedValue
+//      // Increase retry count
+//      for (modifyFunc <- scanRespOnFireModifyFunc) {
+//        when(scanRespStream.fire) {
+//          logic.ram(scanRespStream.linked.ptr).data := modifyFunc(
+//            scanRespStream.linked,
+//            logic.ram(scanRespStream.linked.ptr).data
+//          )
+//        }
 //      }
-    }
+//    }
   }
 
   def search(queryReq: Stream[TupleBundle2[Tk, UInt]]) =
@@ -230,6 +231,223 @@ class CamFifo[Tk <: Data, Tv <: Data](
       // TODO: check the timing of RAM search
       // ramIdxStream cannot be staged, to prevent FIFO write to RAM to invalidate the idxOH
       val queryResultStream = fifo.logic.ram
+        .streamReadSync(
+          ramIdxStream,
+          linkedData = TupleBundle(queryPortIdx, queryKey, found)
+        )
+    }.queryResultStream
+
+  if (portCount == 1) {
+    val busIdx = 0
+    val queryIdx = U(0, portCount bits)
+    val queryResultStream = search(
+      io.queryBusVec(busIdx)
+        .req
+        .translateWith(
+          TupleBundle(io.queryBusVec(busIdx).req.payload, queryIdx)
+        )
+    )
+    io.queryBusVec(busIdx).resp <-/< queryResultStream.translateWith {
+      val result = CamFifoQueryResp(keyType, valueType)
+      result.respValue := queryResultStream.value.data
+      result.queryKey := queryResultStream.linked._2
+      result.found := queryResultStream.linked._3
+      result
+    }
+  } else { // More than 2 query port, need arbitration
+    val queryReqVec =
+      for ((queryBus, idx) <- io.queryBusVec.zipWithIndex)
+        yield {
+          val queryPortIdx = U(idx, log2Up(portCount) bits)
+          queryBus.req.translateWith(
+            TupleBundle(queryBus.req.payload, queryPortIdx)
+          )
+        }
+
+    val queryArbitrated =
+      StreamArbiterFactory.roundRobin.transactionLock.on(queryReqVec)
+    val queryResp = search(queryArbitrated)
+    val queryRespVec = StreamDemux(
+      queryResp,
+      select = queryResp.linked._1,
+      portCount = portCount
+    )
+    for (idx <- 0 until portCount) {
+      io.queryBusVec(idx).resp.arbitrationFrom(queryRespVec(idx))
+      io.queryBusVec(idx).resp.respValue := queryRespVec(idx).value.data
+      io.queryBusVec(idx).resp.queryKey := queryRespVec(idx).linked._2
+      io.queryBusVec(idx).resp.found := queryRespVec(idx).linked._3
+    }
+  }
+}
+
+class CamScanFifo[Tk <: Data, Tv <: Data](
+    keyType: HardType[Tk],
+    valueType: HardType[Tv],
+    queryFunc: (Tk, Tv) => Bool,
+    depth: Int,
+    portCount: Int,
+    scanRespOnFireModifyFunc: (SpinalEnumCraft[RetryReason.type], Tv) => Tv
+//   supportScan: Boolean
+) extends Component {
+
+  require(isPow2(depth), f"CamScanFifo depth=${depth} must be power of 2")
+  val depthWidth = log2Up(depth)
+  val ptrWidth = depthWidth + 1
+  val twiceDepth = depth << 1
+
+  val io = new Bundle {
+    val push = slave(Stream(valueType))
+    val pop = master(Stream(valueType))
+    val flush = in(Bool())
+//    val occupancy = out(UInt(log2Up(depth + 1) bits))
+//    val availability = out(UInt(log2Up(depth + 1) bits))
+    val pushPtr = out(UInt(ptrWidth bits))
+    val popPtr = out(UInt(ptrWidth bits))
+    val empty = out(Bool())
+    val full = out(Bool())
+    val queryBusVec = Vec(slave(CamFifoQueryBus(keyType, valueType)), portCount)
+//    val scanBus = slave(CamFifoScanBus(valueType, depth))
+    val retryScanCtrlBus = slave(RetryScanCtrlBus())
+    val scanOut = master(Stream(valueType))
+  }
+
+//  val camFifo = new CamFifo(keyType, valueType, queryFunc, depth, portCount)
+//  camFifo.io.push << io.push
+//  camFifo.io.flush := io.flush
+//  io.pop << camFifo.io.pop
+//  io.occupancy := camFifo.io.occupancy
+//  io.empty := camFifo.io.empty
+//  io.full := camFifo.io.full
+//  for (idx <- 0 until portCount) {
+//    camFifo.io.queryBusVec(idx) << io.queryBusVec(idx)
+//  }
+
+  // Copied code from StreamFifoLowLatency
+  val logic = new Area {
+    val fifo = new Area {
+      val ram = Mem(CachedValue(valueType), depth)
+      val pushPtr = Counter(ptrWidth bits)
+      val popPtr = Counter(ptrWidth bits)
+      val ptrMatch = pushPtr === popPtr
+//      val risingOccupancy = RegInit(False)
+      val empty = ptrMatch
+      val full = pushPtr.msb =/= popPtr.msb && pushPtr(
+        ptrWidth - 2 downto 0
+      ) === popPtr(ptrWidth - 2 downto 0)
+
+      val pushing = io.push.fire
+      val popping = io.pop.fire
+
+      io.push.ready := !full
+      io.empty := empty
+      io.full := full
+      io.pushPtr := pushPtr.value
+      io.popPtr := popPtr.value
+
+      when(!empty) {
+        io.pop.valid := True
+        val popValue = ram.readAsync(
+          popPtr.value.resize(depthWidth),
+          readUnderWrite = writeFirst
+        )
+        io.pop.payload := popValue.data
+        // TODO: verify that can we update RAM like this?
+        popValue.valid := !io.pop.fire
+//        ram(popPtr.value).valid := !io.pop.fire
+      } otherwise {
+        io.pop.valid := io.push.valid
+        io.pop.payload := io.push.payload
+      }
+
+//      when(pushing =/= popping) {
+//        risingOccupancy := pushing
+//      }
+      when(pushing) {
+        val pushValue = CachedValue(valueType)
+        pushValue.data := io.push.payload
+        pushValue.valid := io.push.valid
+        ram(pushPtr.value.resize(depthWidth)) := pushValue
+        pushPtr.increment()
+      }
+      when(popping) {
+        popPtr.increment()
+      }
+
+//      val ptrDif = pushPtr - popPtr
+//      if (isPow2(depth))
+//        io.occupancy := ((risingOccupancy && ptrMatch) ## ptrDif).asUInt
+//      else {
+//        when(ptrMatch) {
+//          io.occupancy := Mux(risingOccupancy, U(depth), U(0))
+//        } otherwise {
+//          io.occupancy := Mux(pushPtr > popPtr, ptrDif, U(depth) + ptrDif)
+//        }
+//      }
+
+      when(io.flush) {
+        pushPtr.clear()
+        popPtr.clear()
+//        risingOccupancy := False
+      }
+    }
+
+    val scan = new Area {
+      val scanPtr = Counter(depthWidth bits)
+      when(io.flush) {
+        scanPtr.clear()
+      }
+
+      val (scanReqStream, lastReq) = StreamCounterSource(
+        io.retryScanCtrlBus.startPulse,
+        fifo.popPtr,
+        fifo.pushPtr,
+        io.flush,
+        twiceDepth
+      )
+      io.retryScanCtrlBus.donePulse := lastReq
+
+      val scanRespStream = fifo.ram.streamReadSync(
+        scanReqStream ~~ { _.resize(depthWidth) },
+        linkedData = TupleBundle(
+          scanReqStream.payload,
+          io.retryScanCtrlBus.retryReason,
+          io.retryScanCtrlBus.retryStartPsn
+        )
+      )
+      io.scanOut <-/< scanRespStream ~~ { scanResponse =>
+        val result = cloneOf(io.scanOut.payloadType)
+        result := scanResponse.value.data
+        result
+      }
+      // Increase retry count
+      when(scanRespStream.fire) {
+        fifo.ram(scanRespStream.linked._1).data := scanRespOnFireModifyFunc(
+          scanRespStream.linked._2,
+          fifo.ram(scanRespStream.linked._1).data
+        )
+      }
+    }
+  }
+
+  def search(queryReq: Stream[TupleBundle2[Tk, UInt]]) =
+    new Composite(queryReq, "CamFifo_search") {
+      val queryKey = queryReq._1
+      val queryPortIdx = queryReq._2
+      val idxOH = Vec((0 until depth).map(idx => {
+        val v = logic.fifo.ram.readAsync(
+          address = U(idx, log2Up(depth) bits),
+          // The read will get the new value (provided by the write)
+          readUnderWrite = writeFirst
+        )
+        queryFunc(queryKey, v.data) && v.valid
+      }))
+      val found = idxOH.asBits.andR
+      val idxBinary = OHToUInt(idxOH)
+      val ramIdxStream = queryReq.translateWith(idxBinary)
+      // TODO: check the timing of RAM search
+      // ramIdxStream cannot be staged, to prevent FIFO write to RAM to invalidate the idxOH
+      val queryResultStream = logic.fifo.ram
         .streamReadSync(
           ramIdxStream,
           linkedData = TupleBundle(queryPortIdx, queryKey, found)
@@ -303,9 +521,9 @@ class ReadAtomicRstCache(depth: Int) extends Component {
     queryFunc = (k: ReadAtomicRstCacheReq, v: ReadAtomicRstCacheData) =>
       v.psnStart <= k.psn && k.psn < (v.psnStart + v.pktNum),
     depth = depth,
-    portCount = 1,
-    scanRespOnFireModifyFunc = None,
-    supportScan = false
+    portCount = 1
+//    scanRespOnFireModifyFunc = None,
+//    supportScan = false
   )
   cache.io.push << io.push
   io.pop << cache.io.pop
@@ -335,17 +553,20 @@ class ReadAtomicRstCache(depth: Int) extends Component {
 class WorkReqCache(depth: Int) extends Component {
   val io = new Bundle {
 //    val qpAttr = in(QpAttrData())
+    val txQCtrl = in(TxQCtrl())
     val push = slave(Stream(CachedWorkReq()))
     val pop = master(Stream(CachedWorkReq()))
-    val occupancy = out(UInt(log2Up(depth + 1) bits))
+//    val occupancy = out(UInt(log2Up(depth + 1) bits))
     val empty = out(Bool())
-    val retryScanBus = slave(CamFifoScanBus(CachedWorkReq(), depth))
+    val full = out(Bool())
+    val retryScanCtrlBus = slave(RetryScanCtrlBus())
+    val retryWorkReq = master(Stream(CachedWorkReq()))
 //    val queryPort4SqReqDmaRead = slave(WorkReqCacheQueryBus())
     val queryPort4SqRespDmaWrite = slave(WorkReqCacheQueryBus())
 //    val queryPort4DupReqDmaRead = slave(WorkReqCacheQueryBus())
   }
 
-  val cache = new CamFifo(
+  val cache = new CamScanFifo(
     WorkReqCacheQueryReq(),
     CachedWorkReq(),
     queryFunc = (k: WorkReqCacheQueryReq, v: CachedWorkReq) =>
@@ -355,22 +576,32 @@ class WorkReqCache(depth: Int) extends Component {
     depth = depth,
     portCount = 1,
     scanRespOnFireModifyFunc =
-      Some((scanReq: CamFifoRetryScanReq, v: CachedWorkReq) => {
+      (retryReason: SpinalEnumCraft[RetryReason.type], v: CachedWorkReq) => {
         val result = cloneOf(v)
         result := v
         // TODO: which retry counter to increase after the very first retry WR
-        result.incRnrOrRetryCnt(scanReq.retryReason)
+        result.incRnrOrRetryCnt(retryReason)
         result
-      }),
-    supportScan = true
+      }
+//    supportScan = true
   )
   cache.io.push << io.push
   io.pop << cache.io.pop
   // WR cache flush is handled by RespHandler, cannot directly be flushed
   cache.io.flush := False
-  io.occupancy := cache.io.occupancy
+//  io.occupancy := cache.io.occupancy
   io.empty := cache.io.empty
-  cache.io.scanBus << io.retryScanBus
+  io.full := cache.io.full
+  cache.io.retryScanCtrlBus << io.retryScanCtrlBus
+  io.retryWorkReq << cache.io.scanOut
+
+  when(io.txQCtrl.retry) {
+    assert(
+      assertion = Formal.stable(cache.io.pushPtr),
+      message = L"${REPORT_TIME} time: during retry, no new WR can be added",
+      severity = FAILURE
+    )
+  }
 
   val queryPortVec = Vec(
 //    io.queryPort4SqReqDmaRead,

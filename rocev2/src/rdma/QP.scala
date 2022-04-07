@@ -5,7 +5,7 @@ import spinal.lib._
 import spinal.lib.fsm._
 
 import BusWidth.BusWidth
-import ConstantSettings._
+//import ConstantSettings._
 //import RdmaConstants._
 import StreamVec._
 
@@ -57,15 +57,15 @@ class QpCtrl extends Component {
     val psnInc = in(PsnIncNotifier())
     val sqNotifier = in(SqNotifier())
     val rqNotifier = in(RqNotifier())
-    val retryFlushDone = in(Bool())
+//    val retryFlushDone = in(Bool())
     val qpCreateOrModify = slave(QpCreateOrModifyBus())
     val qpAttr = out(QpAttrData())
     val rxQCtrl = out(RxQCtrl())
     val txQCtrl = out(TxQCtrl())
-    val workReqCacheScanBus = master(
-      CamFifoScanBus(CachedWorkReq(), PENDING_REQ_NUM)
-    )
-    val retryWorkReq = master(Stream(CachedWorkReq()))
+//    val workReqCacheScanBus = master(
+//      CamFifoScanBus(CachedWorkReq(), PENDING_REQ_NUM)
+//    )
+//    val retryWorkReq = master(Stream(CachedWorkReq()))
   }
 
   val qpAttr = RegInit(QpAttrData().initOrReset())
@@ -80,7 +80,7 @@ class QpCtrl extends Component {
   io.qpCreateOrModify.resp.successOrFailure := True
 
   // retryDone just means finishing re-send requests, not means all retry responses received
-  val retryDone = False
+//  val retryDone = False
 
   def errStateFsm() = new StateMachine {
     val COALESCE: State = new State with EntryPoint {
@@ -222,7 +222,7 @@ class QpCtrl extends Component {
       }
       whenIsActive {
         // retryFlushDone just means first retry WR sent, it needs to wait for new responses, stop flushing responses
-        when(io.retryFlushDone) {
+        when(io.sqNotifier.retryClear.retryFlushDone) {
           goto(RETRY)
         }
       }
@@ -230,7 +230,7 @@ class QpCtrl extends Component {
 
     val RETRY: State = new State {
       whenIsActive {
-        when(retryDone) {
+        when(io.sqNotifier.retryClear.retryWorkReqDone) {
           exit()
         }
       }
@@ -432,25 +432,29 @@ class QpCtrl extends Component {
   val rqFsm = rqInternalFsm()
 
   val psnCtrl = new Area {
-    // TODO: should increase PSN under normal state?
+    // TODO: check increase PSN under normal state?
     // Increase PSN
-    when(io.psnInc.rq.epsn.inc) {
-      qpAttr.epsn := qpAttr.epsn + io.psnInc.rq.epsn.incVal
-      // Update RQ previous received request opcode
-      qpAttr.rqPreReqOpCode := io.psnInc.rq.epsn.preReqOpCode
+    when(mainFsm.isActive(mainFsm.RTR) || mainFsm.isActive(mainFsm.RTS)) {
+      when(io.psnInc.rq.epsn.inc) {
+        qpAttr.epsn := qpAttr.epsn + io.psnInc.rq.epsn.incVal
+        // Update RQ previous received request opcode
+        qpAttr.rqPreReqOpCode := io.psnInc.rq.epsn.preReqOpCode
+      }
+      when(io.psnInc.rq.opsn.inc) {
+        qpAttr.rqOutPsn := io.psnInc.rq.opsn.psnVal
+      }
     }
-    when(io.psnInc.rq.opsn.inc) {
-      qpAttr.rqOutPsn := io.psnInc.rq.opsn.psnVal
-    }
-    when(io.psnInc.sq.npsn.inc) {
-      qpAttr.npsn := qpAttr.npsn + io.psnInc.sq.npsn.incVal
-    }
-    when(io.psnInc.sq.opsn.inc) {
-      qpAttr.sqOutPsn := io.psnInc.sq.opsn.psnVal
+    when(mainFsm.isActive(mainFsm.RTS)) {
+      when(io.psnInc.sq.npsn.inc) {
+        qpAttr.npsn := qpAttr.npsn + io.psnInc.sq.npsn.incVal
+      }
+      when(io.psnInc.sq.opsn.inc) {
+        qpAttr.sqOutPsn := io.psnInc.sq.opsn.psnVal
+      }
     }
   }
 
-  val sqRetryCtrl = new Area {
+  /*  val sqRetryCtrl = new Area {
     // TODO: consider better setup instead of PENDING_REQ_NUM + 1
     val curPtr = Counter(PENDING_REQ_NUM)
 
@@ -520,7 +524,7 @@ class QpCtrl extends Component {
       val result = cloneOf(io.retryWorkReq.payloadType)
       result := scanRespData.data
 
-      when(isRetryWholeWorkReq) {
+      when(!isRetryWholeWorkReq) {
         result.psnStart := retryStartPsn
         result.pa := retryDmaReadStartAddr
         result.workReq.raddr := retryWorkReqRemoteStartAddr
@@ -529,14 +533,24 @@ class QpCtrl extends Component {
       }
       result
     }
-  }
+  }*/
+
+  val fsmInRetryState = sqFsm.isActive(sqFsm.RETRY) ||
+    fenceFsm.isActive(fenceFsm.FENCE_RETRY)
+  val fsmEnteringRetryState = sqFsm.isEntering(sqFsm.RETRY) ||
+    fenceFsm.isEntering(fenceFsm.FENCE_RETRY)
+  // retryFlushState is a sub-state when fsmInRetryState
+  val retryFlushState =
+    sqRetryFsm.isActive(sqRetryFsm.RETRY_FLUSH) ||
+      fenceRetryFsm.isActive(fenceRetryFsm.RETRY_FLUSH)
 
   // Flush RQ if state error or RNR sent in next cycle
   val isQpStateWrong = mainFsm.isActive(mainFsm.ERR) ||
     mainFsm.isActive(mainFsm.RESET) || mainFsm.isActive(mainFsm.INIT)
   io.txQCtrl.errorFlush := errFsm.isActive(errFsm.ERR_FLUSH)
-  io.txQCtrl.retryFlush := sqRetryCtrl.retryFlushState
-  io.txQCtrl.retry := sqRetryCtrl.fsmInRetryState
+  io.txQCtrl.retry := fsmInRetryState
+  io.txQCtrl.retryStartPulse := fsmEnteringRetryState
+  io.txQCtrl.retryFlush := retryFlushState
   io.txQCtrl.fencePulse := False // TODO: currently no use, remote it?
   io.txQCtrl.fence := mainFsm.isActive(mainFsm.SQD) ||
     sqFsm.isActive(sqFsm.FENCE)
@@ -575,9 +589,9 @@ class QP(busWidth: BusWidth) extends Component {
   qpCtrl.io.psnInc.sq := sq.io.psnInc
   qpCtrl.io.rqNotifier := rq.io.notifier
   qpCtrl.io.sqNotifier := sq.io.notifier
-  qpCtrl.io.retryFlushDone := sq.io.retryFlushDone
-  sq.io.workReqCacheScanBus << qpCtrl.io.workReqCacheScanBus
-  sq.io.retryWorkReq << qpCtrl.io.retryWorkReq
+//  qpCtrl.io.retryFlushDone := sq.io.retryFlushDone
+//  sq.io.workReqCacheScanBus << qpCtrl.io.workReqCacheScanBus
+//  sq.io.retryWorkReq << qpCtrl.io.retryWorkReq
 
   // Separate incoming requests and responses
   val reqRespSplitter = new ReqRespSplitter(busWidth)
@@ -615,8 +629,8 @@ class QP(busWidth: BusWidth) extends Component {
     rqRead = rq.io.dma.read.resp,
 //    rqDup = rq.io.dma.dupRead.resp,
     rqAtomicRead = rq.io.dma.atomic.rd.resp,
-    sqRead = sq.io.dma.reqSender.resp,
-    sqDup = sq.io.dma.retry.resp
+    sqRead = sq.io.dma.reqOut.resp
+//    sqDup = sq.io.dma.retry.resp
   )
   io.dma.wr.arbitReq(dmaWrReqVec)
   io.dma.wr.deMuxRespByInitiator(

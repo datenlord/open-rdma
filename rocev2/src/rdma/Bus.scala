@@ -57,6 +57,11 @@ case class SqRetryNotifier() extends Bundle {
   }
 }
 
+case class SqRetryClear() extends Bundle {
+  val retryFlushDone = Bool()
+  val retryWorkReqDone = Bool()
+}
+
 case class RnrNakSeqClear() extends Bundle {
   val pulse = Bool()
 }
@@ -275,6 +280,7 @@ case class RqNotifier() extends Bundle {
 case class SqNotifier() extends Bundle {
   val err = SqErrNotifier()
   val retry = SqRetryNotifier()
+  val retryClear = SqRetryClear()
   val workReqHasFence = Bool()
   val workReqCacheEmpty = Bool()
   val coalesceAckDone = Bool()
@@ -302,8 +308,9 @@ case class RxQCtrl() extends Bundle {
 
 case class TxQCtrl() extends Bundle {
   val errorFlush = Bool()
-  val retryFlush = Bool()
   val retry = Bool()
+  val retryFlush = Bool()
+  val retryStartPulse = Bool()
   val fencePulse = Bool()
   val fence = Bool()
   val wrongStateFlush = Bool()
@@ -897,12 +904,11 @@ case class DmaReadBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
       rqRead: Stream[Fragment[DmaReadResp]],
 //      rqDup: Stream[Fragment[DmaReadResp]],
       rqAtomicRead: Stream[Fragment[DmaReadResp]],
-      sqRead: Stream[Fragment[DmaReadResp]],
-      sqDup: Stream[Fragment[DmaReadResp]]
+      sqRead: Stream[Fragment[DmaReadResp]]
+//      sqDup: Stream[Fragment[DmaReadResp]]
   ) = new Area {
+    /*
     val txSel = UInt(3 bits)
-//    val (rqReadIdx, rqDupIdx, rqAtomicReadIdx, sqReadIdx, sqDupIdx, otherIdx) =
-//      (0, 1, 2, 3, 4, 5)
     val (rqReadIdx, rqAtomicReadIdx, sqReadIdx, sqDupIdx, otherIdx) =
       (0, 1, 2, 3, 4)
 
@@ -934,14 +940,20 @@ case class DmaReadBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
         txSel := otherIdx
       }
     }
+     */
+    val readRespDeMuxOH = Vec(
+      resp.initiator === DmaInitiator.RQ_RD || resp.initiator === DmaInitiator.RQ_DUP,
+      resp.initiator === DmaInitiator.RQ_ATOMIC_RD,
+      resp.initiator === DmaInitiator.SQ_RD
+    )
     Vec(
       rqRead,
 //      rqDup,
       rqAtomicRead,
-      sqRead,
-      sqDup,
-      StreamSink(rqRead.payloadType)
-    ) <-/< StreamDemux(resp, select = txSel, portCount = 5) // portCount = 6
+      sqRead
+//      sqDup,
+//      StreamSink(rqRead.payloadType)
+    ) <-/< StreamOneHotDeMux(resp, readRespDeMuxOH.asBits)
   }
 
   def arbitReqAndDemuxRespByQpn(
@@ -1170,8 +1182,9 @@ case class DmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
 }
 
 case class SqDmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
-  val reqSender = DmaReadBus(busWidth)
-  val retry = DmaReadBus(busWidth)
+  val reqOut = DmaReadBus(busWidth)
+//  val reqSender = DmaReadBus(busWidth)
+//  val retry = DmaReadBus(busWidth)
   val readResp = DmaWriteBus(busWidth)
   val atomic = DmaWriteBus(busWidth)
 
@@ -1184,22 +1197,15 @@ case class SqDmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
   }
 
   def dmaRdReqVec: Vec[Stream[DmaReadReq]] = {
-    Vec(reqSender.req, retry.req)
+    Vec(reqOut.req)
   }
 
   def dmaRdRespVec: Vec[Stream[Fragment[DmaReadResp]]] = {
-    Vec(reqSender.resp, retry.resp)
+    Vec(reqOut.resp)
   }
 
-//  def >>(that: SqDmaBus): Unit = {
-//    this.sq >> that.sq
-//    this.retry >> that.retry
-//  }
-//
-//  def <<(that: SqDmaBus): Unit = that >> this
-
   override def asMaster(): Unit = {
-    master(reqSender, retry, readResp, atomic)
+    master(reqOut, readResp, atomic)
   }
 }
 
@@ -2107,6 +2113,7 @@ case class RespPsnRange() extends PsnRange {
 
 case class ReqPsnRange() extends PsnRange {
   val workReqOpCode = WorkReqOpCode()
+  val isRetryWorkReq = Bool()
 }
 
 case class UdpMetaData() extends Bundle {
@@ -2621,7 +2628,7 @@ case class AtomicReq() extends RdmaBasePacket {
     }.result
 
   def set(
-      isCompSwap: Bool,
+      isCompSwapOrFetchAdd: Bool,
       dqpn: UInt,
       psn: UInt,
       va: UInt,
@@ -2630,7 +2637,7 @@ case class AtomicReq() extends RdmaBasePacket {
       swap: Bits
   ): this.type = {
     val opcode = Bits(OPCODE_WIDTH bits)
-    when(isCompSwap) {
+    when(isCompSwapOrFetchAdd) {
       opcode := OpCode.COMPARE_SWAP.id
     } otherwise {
       opcode := OpCode.FETCH_ADD.id
