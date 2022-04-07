@@ -18,7 +18,7 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
   def workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
 
   test("zero DMA length send/write request test") {
-    simCfg.doSim { dut =>
+    simCfg.doSim(1915529676) { dut =>
       dut.clockDomain.forkStimulus(10)
 
       val inputPsnQueue = mutable.Queue[PSN]()
@@ -27,6 +27,7 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
 
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.txQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.retryFlush #= false
 
       // Input to DUT
       streamMasterDriver(dut.io.cachedWorkReqAndDmaReadResp, dut.clockDomain) {
@@ -62,7 +63,7 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
   }
 
   test("non-zero DMA length send/write request test") {
-    simCfg.doSim { dut =>
+    simCfg.doSim(858333439) { dut =>
       dut.clockDomain.forkStimulus(10)
 
       val inputDataQueue =
@@ -71,6 +72,7 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
 
       dut.io.qpAttr.pmtu #= pmtuLen.id
       dut.io.txQCtrl.wrongStateFlush #= false
+      dut.io.txQCtrl.retryFlush #= false
       dut.io.cachedWorkReqAndDmaReadResp.valid #= false
       dut.clockDomain.waitSampling()
 
@@ -156,6 +158,7 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
 
 class SendReqGeneratorTest extends SendWriteReqGeneratorTest[SendReqGenerator] {
   override val simCfg = SimConfig.allOptimisation.withWave
+    .withConfig(SpinalConfig(anonymSignalPrefix = "tmp"))
     .compile(new SendReqGenerator(busWidth))
   override val workReqOpCode = WorkReqOpCode.SEND_WITH_INV
 }
@@ -163,6 +166,7 @@ class SendReqGeneratorTest extends SendWriteReqGeneratorTest[SendReqGenerator] {
 class WriteReqGeneratorTest
     extends SendWriteReqGeneratorTest[WriteReqGenerator] {
   override val simCfg = SimConfig.allOptimisation.withWave
+    .withConfig(SpinalConfig(anonymSignalPrefix = "tmp"))
     .compile(new WriteReqGenerator(busWidth))
   override val workReqOpCode = WorkReqOpCode.RDMA_WRITE_WITH_IMM
 }

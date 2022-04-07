@@ -131,7 +131,7 @@ object ConstantSettings {
 
 object DmaInitiator extends SpinalEnum(binarySequential) {
   val RQ_RD, RQ_WR, RQ_DUP, RQ_ATOMIC_RD, RQ_ATOMIC_WR, SQ_RD, SQ_WR,
-      SQ_ATOMIC_WR, SQ_DUP = newElement()
+      SQ_ATOMIC_WR = newElement() // SQ_DUP
 }
 //object DmaInitiator extends Enumeration {
 //  type DmaInitiator = Value
@@ -237,7 +237,7 @@ object RdmaConstants {
 
   val INFINITE_RESP_TIMEOUT = 0
 
-  val TOTAL_PSN = (1 << PSN_WIDTH)
+  val TOTAL_PSN = 1 << PSN_WIDTH
   val HALF_MAX_PSN = 1 << (PSN_WIDTH - 1)
   val PSN_MASK = (1 << PSN_WIDTH) - 1
 }

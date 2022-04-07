@@ -344,7 +344,7 @@ class CoalesceAndNormalAndRetryNakHandler extends Component {
     )
   }
 
-  val workCompFlushStatus = WorkCompStatus() // Bits(WC_STATUS_WIDTH bits)
+  val workCompFlushStatus = WorkCompStatus()
   // TODO: what status should the read/atomic requests before error ACK have?
   workCompFlushStatus := WorkCompStatus.WR_FLUSH_ERR
   val zipCachedWorkReqValid = zipCachedWorkReqAndAck._1

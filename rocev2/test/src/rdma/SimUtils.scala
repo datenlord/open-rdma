@@ -10,7 +10,7 @@ import RdmaConstants._
 import RdmaTypeReDef._
 
 import org.scalatest.matchers.should.Matchers._
-//import org.scalatest.AppendedClues._
+import org.scalatest.AppendedClues._
 import scala.collection.mutable
 import scala.util.Random
 
@@ -494,77 +494,7 @@ object StreamSimUtil {
 
     respQueue
   }
-  /*
-  def pktFragStreamMasterDriverAlwaysValid[T <: Data, InternalData](
-      stream: Stream[Fragment[T]],
-      clockDomain: ClockDomain
-  )(
-      outerLoopBody: => (
-          PsnStart,
-          FragNum,
-          PktNum,
-          PMTU.Value,
-          BusWidth.Value,
-          InternalData
-      )
-  )(
-      innerLoopFunc: (
-          PSN,
-          PsnStart,
-          FragLast,
-          FragIdx,
-          FragNum,
-          PktIdx,
-          PktNum,
-          InternalData
-      ) => Unit
-  ): Unit =
-    fork {
-      stream.valid #= false
-      clockDomain.waitSampling()
 
-      // Outer loop
-      while (true) {
-        val (psnStart, totalFragNum, pktNum, pmtuLen, busWidth, internalData) =
-          outerLoopBody
-        val maxFragNumPerPkt =
-          SendWriteReqReadRespInputGen.maxFragNumPerPkt(pmtuLen, busWidth)
-
-        // Inner loop
-        for (fragIdx <- 0 until totalFragNum) {
-          val pktIdx = fragIdx / maxFragNumPerPkt
-          val psn = psnStart + pktIdx
-          val fragLast =
-            ((fragIdx % maxFragNumPerPkt) == (maxFragNumPerPkt - 1)) || (fragIdx == totalFragNum - 1)
-//          println(
-//            f"${simTime()} time: pktIdx=${pktIdx}%X, pktNum=${pktNum}%X, fragIdx=${fragIdx}%X, totalFragNum=${totalFragNum}%X, fragLast=${fragLast}, PSN=${psn}%X, maxFragNumPerPkt=${maxFragNumPerPkt}%X"
-//          )
-          stream.valid #= true
-          stream.payload.randomize()
-          sleep(0)
-
-          innerLoopFunc(
-            psn,
-            psnStart,
-            fragLast,
-            fragIdx,
-            totalFragNum,
-            pktIdx,
-            pktNum,
-            internalData
-          )
-          if (fragIdx == totalFragNum - 1) {
-            withClue(
-              f"${simTime()} time: this fragment with fragIdx=${fragIdx}%X is the last one, pktIdx=${pktIdx}%X should equal pktNum=${pktNum}%X-1"
-            )(pktIdx shouldBe (pktNum - 1))
-          }
-          clockDomain.waitSamplingWhere(
-            stream.valid.toBoolean && stream.ready.toBoolean
-          )
-        }
-      }
-    }
-   */
   def pktFragStreamMasterDriver[T <: Data, InternalData](
       stream: Stream[Fragment[T]],
       clockDomain: ClockDomain
@@ -746,12 +676,26 @@ object MiscUtils {
   def checkConditionAlways(clockDomain: ClockDomain)(cond: => Boolean) = fork {
     while (true) {
       clockDomain.waitSampling()
-      if (!cond) {
-        println(f"${simTime()} time: always condition=${cond} not satisfied")
+//      if (!cond) {
+//        println(f"${simTime()} time: always condition=${cond} not satisfied")
+//      }
+      cond shouldBe true withClue f"${simTime()} time: always condition=${cond} not satisfied"
+
+    }
+  }
+
+  def checkSignalWhen(
+      clockDomain: ClockDomain,
+      when: => Boolean,
+      signal: => Boolean,
+      clue: Any
+  ) = fork {
+    while (true) {
+      clockDomain.waitSampling()
+      if (when) {
+        signal shouldBe true withClue (clue)
+        // f"${simTime()} time: condition=${cond} not satisfied when=${when}"
       }
-      withClue(f"${simTime()} time: always condition=${cond} not satisfied")(
-        cond shouldBe true
-      )
     }
   }
 

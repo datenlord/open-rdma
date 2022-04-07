@@ -13,8 +13,7 @@ import RdmaConstants._
 // Any retried request must correspond exactly to a subset of the
 // original RDMA READ request in such a manner that all potential
 // duplicate response packets must have identical payload data and PSNs
-//
-// INCONSISTENT: retried requests are not in PSN order
+/*
 class RetryHandler(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
@@ -28,21 +27,18 @@ class RetryHandler(busWidth: BusWidth) extends Component {
     val txAtomicReq = master(Stream(AtomicReq()))
   }
 
-  val readAtomicRetryHandlerAndDmaReadInitiator =
-    new ReadAtomicRetryHandlerAndDmaReadInitiator
-  readAtomicRetryHandlerAndDmaReadInitiator.io.qpAttr := io.qpAttr
-  readAtomicRetryHandlerAndDmaReadInitiator.io.txQCtrl := io.txQCtrl
-  readAtomicRetryHandlerAndDmaReadInitiator.io.retryWorkReq << io.retryWorkReq
-//  readAtomicRetryHandlerAndDmaReadInitiator.io.workReqCacheEmpty := io.workReqCacheEmpty
-//  readAtomicRetryHandlerAndDmaReadInitiator.io.rx << io.rx
-//  io.workReqQueryPort4DupReq << readAtomicRetryHandlerAndDmaReadInitiator.io.workReqQuery
-  io.dmaRead.req << readAtomicRetryHandlerAndDmaReadInitiator.io.dmaRead.req
-  io.errNotifier := readAtomicRetryHandlerAndDmaReadInitiator.io.errNotifier
+  val retryWorkReqHandler = new RetryWorkReqHandler
+  retryWorkReqHandler.io.qpAttr := io.qpAttr
+  retryWorkReqHandler.io.txQCtrl := io.txQCtrl
+  retryWorkReqHandler.io.retryWorkReq << io.retryWorkReq
+  io.errNotifier := retryWorkReqHandler.io.errNotifier
+
+  io.dmaRead.req << retryWorkReqHandler.io.dmaRead.req
 
   val sqDmaReadRespHandler = new SqDmaReadRespHandler(busWidth)
   sqDmaReadRespHandler.io.txQCtrl := io.txQCtrl
   sqDmaReadRespHandler.io.dmaReadResp.resp << io.dmaRead.resp
-  sqDmaReadRespHandler.io.cachedWorkReq << readAtomicRetryHandlerAndDmaReadInitiator.io.outRetryWorkReq
+  sqDmaReadRespHandler.io.cachedWorkReq << retryWorkReqHandler.io.sendWriteRetryWorkReq
 //  io.workReqQueryPort4DupDmaReadResp << sqDmaReadRespHandler.io.workReqQuery
 
   val sendWriteReqSegment = new SendWriteReqSegment(busWidth)
@@ -65,171 +61,350 @@ class RetryHandler(busWidth: BusWidth) extends Component {
   io.txAtomicReq << readAtomicRetryHandlerAndDmaReadInitiator.io.txAtomicReqRetry
   io.txReadReq << readAtomicRetryHandlerAndDmaReadInitiator.io.txReadReqRetry
 }
+ */
 
-// TODO: retry does not support fence
-class ReadAtomicRetryHandlerAndDmaReadInitiator extends Component {
+class RetryHandler extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
-    val retryWorkReq = slave(Stream(CachedWorkReq()))
+//    val workReqCacheScanBus = master(
+//      CamFifoScanBus(CachedWorkReq(), PENDING_REQ_NUM)
+//    )
+    val retryScanCtrlBus = master(RetryScanCtrlBus())
+    val retryWorkReqIn = slave(Stream(CachedWorkReq()))
+    val retryWorkReqOut = master(Stream(CachedWorkReq()))
     val errNotifier = out(SqErrNotifier())
-    val txReadReqRetry = master(Stream(ReadReq()))
-    val txAtomicReqRetry = master(Stream(AtomicReq()))
-    val dmaRead = master(DmaReadReqBus())
-    val outRetryWorkReq = master(Stream(CachedWorkReq()))
+    val retryWorkReqDone = out(Bool())
   }
 
-  val retryWorkReqValid = io.retryWorkReq.valid
-  val retryWorkReq = io.retryWorkReq.payload
-  val isSendWorkReq = WorkReqOpCode.isSendReq(retryWorkReq.workReq.opcode)
-  val isWriteWorkReq = WorkReqOpCode.isWriteReq(retryWorkReq.workReq.opcode)
-  val isReadWorkReq = WorkReqOpCode.isReadReq(retryWorkReq.workReq.opcode)
-  val isAtomicWorkReq = WorkReqOpCode.isAtomicReq(retryWorkReq.workReq.opcode)
-
+  // TODO: if retry count exceeds, should fire the retry WR or not?
   // SQ into ERR state if retry count exceeds qpAttr.maxRetryCnt
+
   io.errNotifier.setNoErr()
-  when(io.retryWorkReq.valid) {
-    when(io.retryWorkReq.rnrCnt > io.qpAttr.maxRetryCnt) {
+  when(io.retryWorkReqIn.valid) {
+    when(io.retryWorkReqIn.rnrCnt > io.qpAttr.maxRetryCnt) {
       io.errNotifier.setRnrExc()
-    } elsewhen (io.retryWorkReq.retryCnt > io.qpAttr.maxRetryCnt) {
+    } elsewhen (io.retryWorkReqIn.retryCnt > io.qpAttr.maxRetryCnt) {
       io.errNotifier.setRetryExc()
     }
   }
 
-  // TODO: if retry count exceeds, should fire the retry WR or not?
-  val (retryWorkReq4Out, retryWork4Dma) = StreamFork2(
-    io.retryWorkReq.throwWhen(io.txQCtrl.wrongStateFlush)
-  )
-  io.outRetryWorkReq <-/< retryWorkReq4Out
-
+  io.retryScanCtrlBus.startPulse := io.txQCtrl.retryStartPulse
+  io.retryScanCtrlBus.retryReason := io.qpAttr.retryReason
+  io.retryScanCtrlBus.retryStartPsn := io.qpAttr.retryStartPsn
+  io.retryWorkReqDone := io.retryScanCtrlBus.donePulse
   /*
-  val (sendWriteWorkReqIdx, readWorkReqIdx, atomicWorkReqIdx, otherWorkReqIdx) =
-    (0, 1, 2, 3)
-  val txSel = UInt(2 bits)
-  when(isSendWorkReq || isWriteWorkReq) {
-    txSel := sendWriteWorkReqIdx
-  } elsewhen (isReadWorkReq) {
-    txSel := readWorkReqIdx
-  } elsewhen (isAtomicWorkReq) {
-    txSel := atomicWorkReqIdx
-  } otherwise {
-    txSel := otherWorkReqIdx
-  }
-  when(retryWorkReqValid) {
-    assert(
-      assertion =
-        isSendWorkReq || isWriteWorkReq || isReadWorkReq || isAtomicWorkReq,
-      message =
-        L"${REPORT_TIME} time: the work request to retry is not send/write/read/atomic, WR opcode=${retryWorkReq.workReq.opcode}",
-      severity = FAILURE
-    )
-  }
+  val sqRetryCtrl = new Area {
+    io.retryWorkReqDone := False
 
-  val fourStreams = StreamDemux(retryWork4Dma, select = txSel, portCount = 4)
-  // Just discard non-send/write/read/atomic WR
-  StreamSink(NoData) << fourStreams(otherWorkReqIdx).translateWith(NoData)
+    // TODO: consider better setup instead of PENDING_REQ_NUM + 1
+    val curPtr = Counter(PENDING_REQ_NUM)
+
+    when(io.retryWorkReq.fire) {
+      curPtr.increment()
+      io.retryWorkReqDone := curPtr.value === io.workReqCacheScanBus.pushPtr
+    }
+    when(io.txQCtrl.wrongStateFlush) {
+      curPtr.clear()
+    }
+    when(io.txQCtrl.retryStartPulse) {
+      assert(
+        assertion = !io.workReqCacheScanBus.empty,
+        message =
+          L"illegal retry status, received retry ACK with PSN=${io.qpAttr.retryStartPsn}, io.qpAttr.retryReason=${io.qpAttr.retryReason}, but no WR to retry, io.txQCtrl.retryStartPulse=${io.txQCtrl.retryStartPulse} but io.workReqCacheScanBus.empty=${io.workReqCacheScanBus.empty}",
+        severity = FAILURE
+      )
+      when(!io.workReqCacheScanBus.empty) {
+        // Start to retry all pending WRs
+        curPtr.valueNext := io.workReqCacheScanBus.popPtr
+      }
+    }
+
+    // TODO: refactor, this has bug
+    io.workReqCacheScanBus.scanReq << StreamSource()
+      // TODO: should throwWhen wrongStateErr?
+      .takeWhen(!io.workReqCacheScanBus.empty & io.txQCtrl.retry)
+      .translateWith {
+        val result = cloneOf(io.workReqCacheScanBus.scanReq.payloadType)
+        result.ptr := curPtr
+        result.retryReason := io.qpAttr.retryReason
+        result.retryStartPsn := io.qpAttr.retryStartPsn
+        result
+      }
+
    */
-  val (sendWriteWorkReqIdx, readWorkReqIdx, atomicWorkReqIdx) = (0, 1, 2)
-  val threeStreams = StreamDeMuxByConditions(
-    retryWork4Dma,
-    isSendWorkReq || isWriteWorkReq,
-    isReadWorkReq,
-    isAtomicWorkReq
-  )
-  io.txAtomicReqRetry <-/< threeStreams(atomicWorkReqIdx).translateWith {
-    val isCompSwap =
-      retryWorkReq.workReq.opcode === WorkReqOpCode.ATOMIC_CMP_AND_SWP
-    val result = AtomicReq().set(
-      isCompSwap,
-      dqpn = io.qpAttr.dqpn,
-      psn = retryWorkReq.psnStart,
-      va = retryWorkReq.workReq.raddr,
-      rkey = retryWorkReq.workReq.rkey,
-      comp = retryWorkReq.workReq.comp,
-      swap = retryWorkReq.workReq.swap
-    )
-    result
-  }
-
+  // Handle WR partial retry
+  // TODO: verify RNR has no partial retry
   val (
     isRetryWholeWorkReq,
     retryStartPsn,
     retryDmaReadStartAddr,
-    retryReadReqRemoteStartAddr,
-    _,
+    retryWorkReqRemoteStartAddr,
+    retryWorkReqLocalStartAddr,
+    retryWorkReqPktNum,
     retryDmaReadLenBytes
   ) = PartialRetry.workReqRetry(
     io.qpAttr,
-    retryWorkReq = retryWorkReq,
-    retryWorkReqValid = retryWorkReqValid
+    retryWorkReq = io.retryWorkReqIn,
+    retryWorkReqValid = io.retryWorkReqIn.valid
   )
-  /*
-  val isRetryWholeWorkReq = PsnUtil
-    .lte(io.qpAttr.retryStartPsn, retryWorkReq.psnStart, io.qpAttr.npsn)
-  // TODO: verify RNR will not partial retry
-  val retryFromBeginning =
-    (io.qpAttr.retryReason === RetryReason.SEQ_ERR) ? isRetryWholeWorkReq | True
-  // For partial read retry, compute the partial read DMA length
-  val psnDiff = PsnUtil.diff(io.qpAttr.retryStartPsn, retryWorkReq.psnStart)
-  val retryStartPsn = cloneOf(retryWorkReq.psnStart)
-  retryStartPsn := retryWorkReq.psnStart
-  val retryDmaReadStartAddr = cloneOf(retryWorkReq.pa)
-  retryDmaReadStartAddr := retryWorkReq.pa
-  val retryReadReqStartAddr = cloneOf(retryWorkReq.workReq.raddr)
-  retryReadReqStartAddr := retryWorkReq.workReq.raddr
-  val retryDmaReadLenBytes = cloneOf(retryWorkReq.workReq.lenBytes)
-  retryDmaReadLenBytes := retryWorkReq.workReq.lenBytes
-  when(retryWorkReqValid && !retryFromBeginning) {
-    assert(
-      assertion = PsnUtil
-        .lt(
-          io.qpAttr.retryStartPsn,
-          retryWorkReq.psnStart + retryWorkReq.pktNum,
-          io.qpAttr.npsn
-        ),
-      message =
-        L"${REPORT_TIME} time: io.qpAttr.retryStartPsn=${io.qpAttr.retryStartPsn} should < retryWorkReq.psnStart=${retryWorkReq.psnStart} + retryWorkReq.pktNum=${retryWorkReq.pktNum} = ${retryWorkReq.psnStart + retryWorkReq.pktNum} in PSN order",
-      severity = FAILURE
-    )
-    val retryDmaReadOffset =
-      (psnDiff << io.qpAttr.pmtu.asUInt).resize(RDMA_MAX_LEN_WIDTH)
 
-    // Support partial retry
-    retryStartPsn := io.qpAttr.retryStartPsn
-    // TODO: handle PA offset with scatter-gather
-    retryDmaReadStartAddr := retryWorkReq.pa + retryDmaReadOffset
-    retryReadReqStartAddr := retryWorkReq.workReq.raddr + retryDmaReadOffset
-    retryDmaReadLenBytes := retryWorkReq.workReq.lenBytes - retryDmaReadOffset
-//    val pktNum = computePktNum(retryWorkReq.workReq.lenBytes, io.qpAttr.pmtu)
-    val pktNum = retryWorkReq.pktNum
-    assert(
-      assertion = psnDiff < pktNum,
-      message =
-        L"${REPORT_TIME} time: psnDiff=${psnDiff} should < pktNum=${pktNum}, io.qpAttr.retryStartPsn=${io.qpAttr.retryStartPsn}, retryWorkReq.psnStart=${retryWorkReq.psnStart}, io.qpAttr.npsn=${io.qpAttr.npsn}, io.retryWorkReq.workReq.opcode=${io.retryWorkReq.workReq.opcode}",
-      severity = FAILURE
-    )
+  io.retryWorkReqOut <-/< io.retryWorkReqIn ~~ { payloadData =>
+    val result = cloneOf(io.retryWorkReqOut.payloadType)
+    result := payloadData
+
+    when(!isRetryWholeWorkReq) {
+      result.psnStart := retryStartPsn
+      result.pa := retryDmaReadStartAddr
+      result.pktNum := retryWorkReqPktNum
+      result.workReq.raddr := retryWorkReqRemoteStartAddr
+      result.workReq.laddr := retryWorkReqLocalStartAddr
+      result.workReq.lenBytes := retryDmaReadLenBytes
+    }
+    result
   }
-   */
-  io.txReadReqRetry <-/< threeStreams(readWorkReqIdx).translateWith {
-    val result = ReadReq().set(
-      dqpn = io.qpAttr.dqpn,
-      psn = retryStartPsn,
-      va = retryReadReqRemoteStartAddr,
-      rkey = retryWorkReq.workReq.rkey,
-      dlen = retryDmaReadLenBytes
+}
+
+//// TODO: retry does not support fence
+//class RetryWorkReqHandler extends Component {
+//  val io = new Bundle {
+//    val qpAttr = in(QpAttrData())
+//    val txQCtrl = in(TxQCtrl())
+//    val retryWorkReq = slave(Stream(CachedWorkReq()))
+//    val errNotifier = out(SqErrNotifier())
+////    val txReadReqRetry = master(Stream(ReadReq()))
+////    val txAtomicReqRetry = master(Stream(AtomicReq()))
+////    val dmaRead = master(DmaReadReqBus())
+//    val sendWriteRetryWorkReq = master(Stream(CachedWorkReq()))
+//    val readRetryWorkReq = master(Stream(CachedWorkReq()))
+//    val atomicRetryWorkReq = master(Stream(CachedWorkReq()))
+//  }
+//
+//  val retryWorkReqValid = io.retryWorkReq.valid
+//  val retryWorkReq = io.retryWorkReq.payload
+//  val isSendWorkReq = WorkReqOpCode.isSendReq(retryWorkReq.workReq.opcode)
+//  val isWriteWorkReq = WorkReqOpCode.isWriteReq(retryWorkReq.workReq.opcode)
+//  val isReadWorkReq = WorkReqOpCode.isReadReq(retryWorkReq.workReq.opcode)
+//  val isAtomicWorkReq = WorkReqOpCode.isAtomicReq(retryWorkReq.workReq.opcode)
+//
+//  // TODO: if retry count exceeds, should fire the retry WR or not?
+//  // SQ into ERR state if retry count exceeds qpAttr.maxRetryCnt
+//  io.errNotifier.setNoErr()
+//  when(io.retryWorkReq.valid) {
+//    when(io.retryWorkReq.rnrCnt > io.qpAttr.maxRetryCnt) {
+//      io.errNotifier.setRnrExc()
+//    } elsewhen (io.retryWorkReq.retryCnt > io.qpAttr.maxRetryCnt) {
+//      io.errNotifier.setRetryExc()
+//    }
+//  }
+//
+//  val (sendWriteDmaReadIdx, readWorkReqIdx, atomicWorkReqIdx) = (0, 1, 2)
+//  val threeStreams = StreamDeMuxByConditions(
+//    io.retryWorkReq.throwWhen(io.txQCtrl.wrongStateFlush),
+//    isSendWorkReq || isWriteWorkReq,
+//    isReadWorkReq,
+//    isAtomicWorkReq
+//  )
+//
+//  val (
+//    isRetryWholeWorkReq,
+//    retryStartPsn,
+//    retryDmaReadStartAddr,
+//    retryReadReqRemoteStartAddr,
+//    _,
+//    retryDmaReadLenBytes
+//  ) = PartialRetry.workReqRetry(
+//    io.qpAttr,
+//    retryWorkReq = retryWorkReq,
+//    retryWorkReqValid = retryWorkReqValid
+//  )
+///*
+//  io.dmaRead.req <-/< threeStreams(sendWriteDmaReadIdx).translateWith {
+//    val result = cloneOf(io.dmaRead.req.payloadType)
+//    result.set(
+//      initiator = DmaInitiator.SQ_DUP,
+//      sqpn = retryWorkReq.workReq.sqpn,
+//      psnStart = retryStartPsn,
+//      pa = retryDmaReadStartAddr,
+//      lenBytes = retryDmaReadLenBytes
+//    )
+//  }
+//  io.txReadReqRetry <-/< threeStreams(readWorkReqIdx).translateWith {
+//    val result = ReadReq().set(
+//      dqpn = io.qpAttr.dqpn,
+//      psn = retryStartPsn,
+//      va = retryReadReqRemoteStartAddr,
+//      rkey = retryWorkReq.workReq.rkey,
+//      dlen = retryDmaReadLenBytes
+//    )
+//    result
+//  }
+//
+//  io.txAtomicReqRetry <-/< threeStreams(atomicWorkReqIdx).translateWith {
+//    val isCompSwap =
+//      retryWorkReq.workReq.opcode === WorkReqOpCode.ATOMIC_CMP_AND_SWP
+//    val result = AtomicReq().set(
+//      isCompSwap,
+//      dqpn = io.qpAttr.dqpn,
+//      psn = retryWorkReq.psnStart,
+//      va = retryWorkReq.workReq.raddr,
+//      rkey = retryWorkReq.workReq.rkey,
+//      comp = retryWorkReq.workReq.comp,
+//      swap = retryWorkReq.workReq.swap
+//    )
+//    result
+//  }
+//*/
+//
+//  io.sendWriteRetryWorkReq <-/< threeStreams(sendWriteDmaReadIdx).translateWith {
+////    val result = cloneOf(io.dmaRead.req.payloadType)
+////    result.set(
+////      initiator = DmaInitiator.SQ_DUP,
+////      sqpn = retryWorkReq.workReq.sqpn,
+////      psnStart = retryStartPsn,
+////      pa = retryDmaReadStartAddr,
+////      lenBytes = retryDmaReadLenBytes
+////    )
+//    val result = cloneOf(io.sendWriteRetryWorkReq.payloadType)
+//    result := threeStreams(sendWriteDmaReadIdx).payload
+//    when(!isRetryWholeWorkReq) {
+//      result.psnStart := retryStartPsn
+//      result.pa := retryDmaReadStartAddr
+//      result.workReq.lenBytes := retryDmaReadLenBytes
+//    }
+//    result
+//  }
+//
+//  io.readRetryWorkReq <-/< threeStreams(readWorkReqIdx).translateWith {
+////    ReadReq().set(
+////      dqpn = io.qpAttr.dqpn,
+////      psn = retryStartPsn,
+////      va = retryReadReqRemoteStartAddr,
+////      rkey = retryWorkReq.workReq.rkey,
+////      dlen = retryDmaReadLenBytes
+////    )
+//val result = cloneOf(io.readRetryWorkReq.payloadType)
+//    result := threeStreams(readWorkReqIdx).payload
+//    when(!isRetryWholeWorkReq) {
+//      result.psnStart := retryStartPsn
+//      result.workReq.raddr := retryReadReqRemoteStartAddr
+//      result.workReq.lenBytes := retryDmaReadLenBytes
+//    }
+//    result
+//  }
+//
+//  io.atomicRetryWorkReq <-/< threeStreams(atomicWorkReqIdx)
+//}
+
+class SqReqGenerator(busWidth: BusWidth) extends Component {
+  val io = new Bundle {
+    val qpAttr = in(QpAttrData())
+    val txQCtrl = in(TxQCtrl())
+    val sendWriteNormalWorkReq = slave(Stream(CachedWorkReq()))
+    val readNormalWorkReq = slave(Stream(CachedWorkReq()))
+    val atomicNormalWorkReq = slave(Stream(CachedWorkReq()))
+    val dmaRead = master(DmaReadBus(busWidth))
+    val txSendReq = master(RdmaDataBus(busWidth))
+    val txWriteReq = master(RdmaDataBus(busWidth))
+    val txReadReq = master(Stream(ReadReq()))
+    val txAtomicReq = master(Stream(AtomicReq()))
+  }
+
+  val readAtomicGeneratorAndDmaReadInitiator =
+    new ReadAtomicGeneratorAndDmaReadInitiator
+  readAtomicGeneratorAndDmaReadInitiator.io.qpAttr := io.qpAttr
+  readAtomicGeneratorAndDmaReadInitiator.io.txQCtrl := io.txQCtrl
+  readAtomicGeneratorAndDmaReadInitiator.io.sendWriteWorkReq << io.sendWriteNormalWorkReq
+  readAtomicGeneratorAndDmaReadInitiator.io.readWorkReq << io.readNormalWorkReq
+  readAtomicGeneratorAndDmaReadInitiator.io.atomicWorkReq << io.atomicNormalWorkReq
+  io.dmaRead.req << readAtomicGeneratorAndDmaReadInitiator.io.dmaRead.req
+
+  val sqDmaReadRespHandler = new SqDmaReadRespHandler(busWidth)
+  sqDmaReadRespHandler.io.txQCtrl := io.txQCtrl
+  sqDmaReadRespHandler.io.dmaReadResp.resp << io.dmaRead.resp
+  sqDmaReadRespHandler.io.cachedWorkReq << readAtomicGeneratorAndDmaReadInitiator.io.outSendWriteWorkReq
+
+  val sendWriteReqSegment = new SendWriteReqSegment(busWidth)
+  sendWriteReqSegment.io.qpAttr := io.qpAttr
+  sendWriteReqSegment.io.txQCtrl := io.txQCtrl
+  sendWriteReqSegment.io.cachedWorkReqAndDmaReadResp << sqDmaReadRespHandler.io.cachedWorkReqAndDmaReadResp
+
+  val sendReqGenerator = new SendReqGenerator(busWidth)
+  sendReqGenerator.io.qpAttr := io.qpAttr
+  sendReqGenerator.io.txQCtrl := io.txQCtrl
+  sendReqGenerator.io.cachedWorkReqAndDmaReadResp << sendWriteReqSegment.io.sendCachedWorkReqAndDmaReadResp
+
+  val writeReqGenerator = new WriteReqGenerator(busWidth)
+  writeReqGenerator.io.qpAttr := io.qpAttr
+  writeReqGenerator.io.txQCtrl := io.txQCtrl
+  writeReqGenerator.io.cachedWorkReqAndDmaReadResp << sendWriteReqSegment.io.writeCachedWorkReqAndDmaReadResp
+
+  io.txSendReq << sendReqGenerator.io.txReq
+  io.txWriteReq << writeReqGenerator.io.txReq
+  io.txReadReq << readAtomicGeneratorAndDmaReadInitiator.io.txReadReq
+  io.txAtomicReq << readAtomicGeneratorAndDmaReadInitiator.io.txAtomicReq
+}
+
+class ReadAtomicGeneratorAndDmaReadInitiator extends Component {
+  val io = new Bundle {
+    val qpAttr = in(QpAttrData())
+    val txQCtrl = in(TxQCtrl())
+    val sendWriteWorkReq = slave(Stream(CachedWorkReq()))
+    val readWorkReq = slave(Stream(CachedWorkReq()))
+    val atomicWorkReq = slave(Stream(CachedWorkReq()))
+    val txReadReq = master(Stream(ReadReq()))
+    val txAtomicReq = master(Stream(AtomicReq()))
+    val dmaRead = master(DmaReadReqBus())
+    val outSendWriteWorkReq = master(Stream(CachedWorkReq()))
+  }
+
+  val (sendWriteWorkReq4Out, sendWriteWorkReq4Dma) = StreamFork2(
+    io.sendWriteWorkReq.throwWhen(
+      io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush
+    )
+  )
+  io.outSendWriteWorkReq <-/< sendWriteWorkReq4Out
+
+  io.dmaRead.req <-/< sendWriteWorkReq4Dma ~~ { payloadData =>
+    val result = cloneOf(io.dmaRead.req.payloadType)
+    result.set(
+      initiator = DmaInitiator.SQ_RD,
+      sqpn = payloadData.workReq.sqpn,
+      psnStart = payloadData.psnStart,
+      pa = payloadData.pa,
+      lenBytes = payloadData.workReq.lenBytes
     )
     result
   }
 
-  io.dmaRead.req <-/< threeStreams(sendWriteWorkReqIdx).translateWith {
-    val result = cloneOf(io.dmaRead.req.payloadType)
-    result.set(
-      initiator = DmaInitiator.SQ_DUP,
-      sqpn = retryWorkReq.workReq.sqpn,
-      psnStart = retryStartPsn,
-      pa = retryDmaReadStartAddr,
-      lenBytes = retryDmaReadLenBytes
-    )
+  io.txReadReq <-/< io.readWorkReq
+    .throwWhen(io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush) ~~ {
+    payloadData =>
+      val result = ReadReq().set(
+        dqpn = io.qpAttr.dqpn,
+        psn = payloadData.psnStart,
+        va = payloadData.workReq.raddr,
+        rkey = payloadData.workReq.rkey,
+        dlen = payloadData.workReq.lenBytes
+      )
+      result
+  }
+
+  io.txAtomicReq <-/< io.atomicWorkReq
+    .throwWhen(io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush) ~~ {
+    payloadData =>
+      val isCompSwap =
+        payloadData.workReq.opcode === WorkReqOpCode.ATOMIC_CMP_AND_SWP
+      val result = AtomicReq().set(
+        isCompSwap,
+        dqpn = io.qpAttr.dqpn,
+        psn = payloadData.psnStart,
+        va = payloadData.workReq.raddr,
+        rkey = payloadData.workReq.rkey,
+        comp = payloadData.workReq.comp,
+        swap = payloadData.workReq.swap
+      )
+      result
   }
 }
 
@@ -248,17 +423,19 @@ class SqDmaReadRespHandler(busWidth: BusWidth) extends Component {
   val handlerOutput = DmaReadRespHandler(
     io.cachedWorkReq,
     io.dmaReadResp,
-    io.txQCtrl.wrongStateFlush,
+    io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush,
     busWidth,
     isReqZeroDmaLen = (req: CachedWorkReq) => req.workReq.lenBytes === 0
   )
-  io.cachedWorkReqAndDmaReadResp <-/< handlerOutput.translateWith {
-    val result = cloneOf(io.cachedWorkReqAndDmaReadResp)
-    result.dmaReadResp := handlerOutput.dmaReadResp
-    result.cachedWorkReq := handlerOutput.req
-    result.last := handlerOutput.isLast
-    result
-  }
+  io.cachedWorkReqAndDmaReadResp <-/< handlerOutput
+    .throwWhen(io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush)
+    .translateWith {
+      val result = cloneOf(io.cachedWorkReqAndDmaReadResp)
+      result.dmaReadResp := handlerOutput.dmaReadResp
+      result.cachedWorkReq := handlerOutput.req
+      result.last := handlerOutput.isLast
+      result
+    }
 }
 
 class SendWriteReqSegment(busWidth: BusWidth) extends Component {
@@ -278,7 +455,7 @@ class SendWriteReqSegment(busWidth: BusWidth) extends Component {
 
   val segmentOut = DmaReadRespSegment(
     io.cachedWorkReqAndDmaReadResp,
-    io.txQCtrl.wrongStateFlush,
+    io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush,
     io.qpAttr.pmtu,
     busWidth,
     isReqZeroDmaLen = (reqAndDmaReadResp: CachedWorkReqAndDmaReadResp) =>
@@ -288,16 +465,6 @@ class SendWriteReqSegment(busWidth: BusWidth) extends Component {
   val isSendWorkReq = WorkReqOpCode.isSendReq(cachedWorkReq.workReq.opcode)
   val isWriteWorkReq = WorkReqOpCode.isWriteReq(cachedWorkReq.workReq.opcode)
 
-  val (sendWorkReqIdx, writeWorkReqIdx, otherWorkReqIdx) =
-    (0, 1, 2)
-  val txSel = UInt(2 bits)
-  when(isSendWorkReq) {
-    txSel := sendWorkReqIdx
-  } elsewhen (isWriteWorkReq) {
-    txSel := writeWorkReqIdx
-  } otherwise {
-    txSel := otherWorkReqIdx
-  }
   when(segmentOut.valid) {
     assert(
       assertion = isSendWorkReq || isWriteWorkReq,
@@ -307,26 +474,26 @@ class SendWriteReqSegment(busWidth: BusWidth) extends Component {
     )
   }
 
-  val threeStreams = StreamDemux(segmentOut, select = txSel, portCount = 3)
-  // Just discard non-send/write WR
-  StreamSink(NoData) << threeStreams(otherWorkReqIdx).translateWith(NoData)
+  val (sendWorkReqIdx, writeWorkReqIdx) = (0, 1)
+  val twoStreams =
+    StreamDeMuxByConditions(segmentOut, isSendWorkReq, isWriteWorkReq)
 
-  io.sendCachedWorkReqAndDmaReadResp <-/< threeStreams(sendWorkReqIdx)
-    .throwWhen(io.txQCtrl.wrongStateFlush)
+  io.sendCachedWorkReqAndDmaReadResp <-/< twoStreams(sendWorkReqIdx)
+    .throwWhen(io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush)
     .translateWith {
       val result = cloneOf(io.sendCachedWorkReqAndDmaReadResp.payloadType)
-      result.dmaReadResp := threeStreams(sendWorkReqIdx).dmaReadResp
-      result.cachedWorkReq := threeStreams(sendWorkReqIdx).cachedWorkReq
-      result.last := threeStreams(sendWorkReqIdx).isLast
+      result.dmaReadResp := twoStreams(sendWorkReqIdx).dmaReadResp
+      result.cachedWorkReq := twoStreams(sendWorkReqIdx).cachedWorkReq
+      result.last := twoStreams(sendWorkReqIdx).isLast
       result
     }
-  io.writeCachedWorkReqAndDmaReadResp <-/< threeStreams(writeWorkReqIdx)
-    .throwWhen(io.txQCtrl.wrongStateFlush)
+  io.writeCachedWorkReqAndDmaReadResp <-/< twoStreams(writeWorkReqIdx)
+    .throwWhen(io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush)
     .translateWith {
       val result = cloneOf(io.writeCachedWorkReqAndDmaReadResp.payloadType)
-      result.dmaReadResp := threeStreams(writeWorkReqIdx).dmaReadResp
-      result.cachedWorkReq := threeStreams(writeWorkReqIdx).cachedWorkReq
-      result.last := threeStreams(writeWorkReqIdx).isLast
+      result.dmaReadResp := twoStreams(writeWorkReqIdx).dmaReadResp
+      result.cachedWorkReq := twoStreams(writeWorkReqIdx).cachedWorkReq
+      result.last := twoStreams(writeWorkReqIdx).isLast
       result
     }
 }
@@ -343,7 +510,9 @@ abstract class SendWriteReqGenerator(busWidth: BusWidth) extends Component {
 
   val busWidthBytes = busWidth.id / BYTE_WIDTH
 
-  val input = io.cachedWorkReqAndDmaReadResp
+  val input = io.cachedWorkReqAndDmaReadResp.throwWhen(
+    io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush
+  )
   when(input.valid) {
     assert(
       assertion =
@@ -373,11 +542,13 @@ abstract class SendWriteReqGenerator(busWidth: BusWidth) extends Component {
   val combinerOutput = CombineHeaderAndDmaResponse(
     reqAndDmaReadRespSegment,
     io.qpAttr,
-    io.txQCtrl.wrongStateFlush,
+    io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush,
     busWidth,
     headerGenFunc
   )
-  io.txReq.pktFrag <-/< combinerOutput.pktFrag
+  io.txReq.pktFrag <-/< combinerOutput.pktFrag.throwWhen(
+    io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush
+  )
 }
 
 class SendReqGenerator(busWidth: BusWidth)

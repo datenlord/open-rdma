@@ -42,11 +42,12 @@ fi
 $MILL rocev2.test.testOnly rdma.SendReqGeneratorTest
 $MILL rocev2.test.testOnly rdma.WriteReqGeneratorTest
 $MILL rocev2.test.testOnly rdma.WorkReqValidatorTest
-$MILL rocev2.test.testOnly rdma.WorkReqCachePushAndReadAtomicHandlerTest
-$MILL rocev2.test.testOnly rdma.SqOutTest
+$MILL rocev2.test.testOnly rdma.WorkReqCacheAndOutPsnRangeHandlerTest
+$MILL rocev2.test.testOnly rdma.SqOutTest # Slow test
 
 # Retry Handler Test
-$MILL rocev2.test.testOnly rdma.RetryHandlerAndDmaReadInitTest
+$MILL rocev2.test.testOnly rdma.RetryHandlerTest
+$MILL rocev2.test.testOnly rdma.WorkReqCacheTest
 
 # Response Handler Test
 $MILL rocev2.test.testOnly rdma.CoalesceAndNormalAndRetryNakHandlerTest

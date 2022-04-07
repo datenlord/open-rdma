@@ -49,10 +49,11 @@ class DmaReadRespHandler[T <: Data](
   val isFirstDmaReadResp = io.dmaReadResp.resp.isFirst
   val isLastDmaReadResp = io.dmaReadResp.resp.isLast
 
-  val inputReqQueue = io.inputReq
-    .throwWhen(io.flush)
-    .queueLowLatency(DMA_READ_DELAY_CYCLE)
-  val isEmptyReadReq = isReqZeroDmaLen(inputReqQueue.payload)
+  val inputReqQueue =
+    StreamFifoLowLatency(io.inputReq.payloadType(), DMA_READ_DELAY_CYCLE)
+  inputReqQueue.io.push << io.inputReq.throwWhen(io.flush)
+  inputReqQueue.io.flush := io.flush
+  val isEmptyReadReq = isReqZeroDmaLen(inputReqQueue.io.pop.payload)
 
   val txSel = UInt(1 bits)
   val (emptyReadIdx, nonEmptyReadIdx) = (0, 1)
@@ -62,16 +63,19 @@ class DmaReadRespHandler[T <: Data](
     txSel := nonEmptyReadIdx
   }
   val twoStreams =
-    StreamDemux(select = txSel, input = inputReqQueue, portCount = 2)
+    StreamDemux(
+      select = txSel,
+      input = inputReqQueue.io.pop.throwWhen(io.flush),
+      portCount = 2
+    )
 
   // Join inputReq with DmaReadResp
   val joinStream = FragmentStreamJoinStream(
-    io.dmaReadResp.resp
-      .throwWhen(io.flush),
+    io.dmaReadResp.resp.throwWhen(io.flush),
     twoStreams(nonEmptyReadIdx)
   )
 
-  io.reqAndDmaReadResp << StreamMux(
+  val outputStream = StreamMux(
     select = txSel,
     inputs = Vec(
       twoStreams(emptyReadIdx) ~~ { payloadData =>
@@ -93,6 +97,8 @@ class DmaReadRespHandler[T <: Data](
       }
     )
   )
+  io.reqAndDmaReadResp << outputStream.throwWhen(io.flush)
+
   when(txSel === emptyReadIdx) {
     assert(
       assertion = !joinStream.valid,
@@ -140,9 +146,8 @@ class DmaReadRespSegment[T <: Data](
     val reqAndDmaReadRespOut = master(Stream(Fragment(fragType)))
   }
 
-  val pmtuMaxFragNum = pmtuPktLenBytes(io.pmtu) >> log2Up(
-    busWidth.id / BYTE_WIDTH
-  )
+  val pmtuMaxFragNum = pmtuPktLenBytes(io.pmtu) >>
+    log2Up(busWidth.id / BYTE_WIDTH)
   val isEmptyReadReq = isReqZeroDmaLen(io.reqAndDmaReadRespIn.fragment)
 
   val txSel = UInt(1 bits)
@@ -166,7 +171,7 @@ class DmaReadRespSegment[T <: Data](
     select = txSel,
     inputs = Vec(twoStreams(emptyReadIdx), segmentStream)
   )
-  io.reqAndDmaReadRespOut << output
+  io.reqAndDmaReadRespOut << output.throwWhen(io.flush)
 }
 
 object CombineHeaderAndDmaResponse {
@@ -1294,6 +1299,33 @@ class StreamVec[T <: Data](val strmVec: Vec[Stream[T]]) {
   //  }
 }
 
+object StreamCounterSource {
+  def apply(
+      startPulse: Bool,
+      startValue: UInt,
+      stopValue: UInt,
+      flush: Bool,
+      stateCount: Int
+  ): (Stream[UInt], Bool) = new Composite(startPulse, "StreamCounterSource") {
+    val cntWidth = log2Up(stateCount)
+    val stream = Stream(UInt(cntWidth bits))
+    val counter = Counter(stateCount = stateCount, inc = stream.fire)
+    val running = RegInit(False)
+    when(startPulse && !flush) {
+      running := True
+      counter.value := startValue
+    }
+    val done = stream.fire && counter.valueNext === stopValue
+    when(done || flush) {
+      running := False
+    }
+
+    stream.valid := running
+    stream.payload := counter.value
+    val result = (stream, done)
+  }.result
+}
+
 //========== Misc utilities ==========
 
 object setAllBits {
@@ -2038,7 +2070,8 @@ object PartialRetry {
         retryDmaReadStartAddr,
         retryWorkReqRemoteStartAddr,
         retryWorkReqLocalStartAddr,
-        retryDmaReadLenBytes
+        retryDmaReadLenBytes,
+        retryReqPktNum
       ) = retryHelper(
         qpAttr.pmtu,
         curPsn,
@@ -2058,6 +2091,7 @@ object PartialRetry {
         retryDmaReadStartAddr,
         retryWorkReqRemoteStartAddr,
         retryWorkReqLocalStartAddr,
+        retryReqPktNum,
         retryDmaReadLenBytes
       )
     }.result
@@ -2080,7 +2114,8 @@ object PartialRetry {
       retryDmaReadStartAddr,
       _, // retryReqRemoteStartAddr,
       retryReqLocalStartAddr,
-      retryDmaReadLenBytes
+      retryDmaReadLenBytes,
+      _ // retryReqPktNum
     ) = retryHelper(
       qpAttr.pmtu,
       curPsn,
@@ -2122,6 +2157,8 @@ object PartialRetry {
     val psnDiff = PsnUtil.diff(retryReqPsn, origReqPsnStart)
     val origReqPsnEndExclusive =
       origReqPsnStart + origReqPktNum // PSN module addition, overflow is fine
+    val retryReqPktNum = cloneOf(origReqPktNum)
+    retryReqPktNum := origReqPktNum - psnDiff
     val retryPhysicalAddr = cloneOf(origReqPhysicalAddr)
     retryPhysicalAddr := origReqPhysicalAddr
     val retryRemoteAddr = cloneOf(origReqRemoteAddr)
@@ -2158,6 +2195,9 @@ object PartialRetry {
           L"${REPORT_TIME} time: psnDiff=${psnDiff} should < origReqPktNum=${origReqPktNum}, retryReqPsn=${retryReqPsn}, origReqPsnStart=${origReqPsnStart}, curPsn=${curPsn}",
         severity = FAILURE
       )
+//      report(
+//        L"${REPORT_TIME} time: retryReqPsn=${retryReqPsn}, origReqPsnStart=${origReqPsnStart}, psnDiff=${psnDiff}, qpAttrPmtu=${qpAttrPmtu}, retryDmaReadOffset=${retryDmaReadOffset}, pktLen=${origReqLenBytes}, pa=${origReqPhysicalAddr}, rmtAddr=${origReqRemoteAddr}, retryReqLenBytes=${retryReqLenBytes}, retryPhysicalAddr=${retryPhysicalAddr}, retryRemoteAddr=${retryRemoteAddr}"
+//      )
     }
 
     val result = (
@@ -2165,81 +2205,10 @@ object PartialRetry {
       retryPhysicalAddr,
       retryRemoteAddr,
       retryLocalAddr,
-      retryReqLenBytes
+      retryReqLenBytes,
+      retryReqPktNum
     )
   }.result
-  /*
-  def workReqRetry(
-      qpAttr: QpAttrData,
-      retryWorkReq: CachedWorkReq,
-      retryWorkReqValid: Bool
-  ) =
-    new Composite(retryWorkReq, "PartialRetry_workReqRetry") {
-      val isRetryWholeWorkReq = PsnUtil
-        .lte(qpAttr.retryStartPsn, retryWorkReq.psnStart, qpAttr.npsn)
-      // TODO: verify RNR will not partial retry
-      val retryFromBeginning =
-        (qpAttr.retryReason === RetryReason.SEQ_ERR) ? isRetryWholeWorkReq | True
-      // For partial read retry, compute the partial read DMA length
-      val psnDiff = PsnUtil.diff(qpAttr.retryStartPsn, retryWorkReq.psnStart)
-      val retryStartPsn = cloneOf(retryWorkReq.psnStart)
-      retryStartPsn := retryWorkReq.psnStart
-      val retryDmaReadStartAddr = cloneOf(retryWorkReq.pa)
-      retryDmaReadStartAddr := retryWorkReq.pa
-      val retryWorkReqRemoteStartAddr = cloneOf(retryWorkReq.workReq.raddr)
-      retryWorkReqRemoteStartAddr := retryWorkReq.workReq.raddr
-      val retryWorkReqLocalStartAddr = cloneOf(retryWorkReq.workReq.laddr)
-      retryWorkReqLocalStartAddr := retryWorkReq.workReq.laddr
-      val retryDmaReadLenBytes = cloneOf(retryWorkReq.workReq.lenBytes)
-      retryDmaReadLenBytes := retryWorkReq.workReq.lenBytes
-      when(retryWorkReqValid && !retryFromBeginning) {
-        assert(
-          assertion = qpAttr.retryReason === RetryReason.SEQ_ERR,
-          message =
-            L"only NAK SEQ ERR can result in partial retry, but qpAttr.retryReason=${qpAttr.retryReason}",
-          severity = FAILURE
-        )
-        assert(
-          assertion = PsnUtil
-            .lt(
-              qpAttr.retryStartPsn,
-              retryWorkReq.psnStart + retryWorkReq.pktNum,
-              qpAttr.npsn
-            ),
-          message =
-            L"${REPORT_TIME} time: io.qpAttr.retryStartPsn=${qpAttr.retryStartPsn} should < retryWorkReq.psnStart=${retryWorkReq.psnStart} + retryWorkReq.pktNum=${retryWorkReq.pktNum} = ${retryWorkReq.psnStart + retryWorkReq.pktNum} in PSN order",
-          severity = FAILURE
-        )
-        val retryDmaReadOffset =
-          (psnDiff << qpAttr.pmtu.asUInt).resize(RDMA_MAX_LEN_WIDTH)
-
-        // Support partial retry
-        retryStartPsn := qpAttr.retryStartPsn
-        // TODO: handle PA offset with scatter-gather
-        retryDmaReadStartAddr := retryWorkReq.pa + retryDmaReadOffset
-        retryWorkReqRemoteStartAddr := retryWorkReq.workReq.raddr + retryDmaReadOffset
-        retryWorkReqLocalStartAddr := retryWorkReq.workReq.laddr + retryDmaReadOffset
-        retryDmaReadLenBytes := retryWorkReq.workReq.lenBytes - retryDmaReadOffset
-//        val pktNum = computePktNum(retryWorkReq.workReq.lenBytes, io.qpAttr.pmtu)
-        val pktNum = retryWorkReq.pktNum
-        assert(
-          assertion = psnDiff < pktNum,
-          message =
-            L"${REPORT_TIME} time: psnDiff=${psnDiff} should < pktNum=${pktNum}, qpAttr.retryStartPsn=${qpAttr.retryStartPsn}, retryWorkReq.psnStart=${retryWorkReq.psnStart}, qpAttr.npsn=${qpAttr.npsn}, retryWorkReq.workReq.opcode=${retryWorkReq.workReq.opcode}",
-          severity = FAILURE
-        )
-      }
-
-      val result = (
-        isRetryWholeWorkReq,
-        retryStartPsn,
-        retryDmaReadStartAddr,
-        retryWorkReqRemoteStartAddr,
-        retryWorkReqLocalStartAddr,
-        retryDmaReadLenBytes
-      )
-    }.result
-   */
 }
 
 //========== TupleBundle related utilities ==========
