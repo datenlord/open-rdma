@@ -58,6 +58,9 @@ object RdmaTypeReDef {
   type AtomicComp = BigInt
   type AtomicSwap = BigInt
   type AtomicOrig = BigInt
+
+  type RnrCnt = Int
+  type RetryCnt = Int
 }
 
 object PsnSim {
@@ -913,6 +916,18 @@ object OpCodeSim {
     result
   }
 
+  def randomReadAtomicOpCode(): OpCode.Value = {
+    val opCodes =
+      Seq(OpCode.RDMA_READ_REQUEST, OpCode.COMPARE_SWAP, OpCode.FETCH_ADD)
+    val randIdx = scala.util.Random.nextInt(opCodes.size)
+    val result = opCodes(randIdx)
+    require(
+      opCodes.contains(result),
+      f"${simTime()} time: AtomicOpCode should contain ${result}"
+    )
+    result
+  }
+
   implicit class OpCodeExt(val opcode: OpCode.Value) {
     def getPktHeaderLenBytes(): Int = {
       val bthWidth = widthOf(BTH())
@@ -1074,6 +1089,9 @@ object OpCodeSim {
 }
 
 object ReadAtomicRstCacheSim {
+  type ReadAtomicRstCacheResp =
+    CamQueryResp[ReadAtomicRstCacheReq, ReadAtomicRstCacheData]
+
   def alwaysStreamFireAndRespSuccess(
       readAtomicRstCacheQuery: ReadAtomicRstCacheQueryBus,
       queryOpCode: OpCode.Value,
@@ -1140,16 +1158,16 @@ object ReadAtomicRstCacheSim {
 
     val onReqFire =
       (reqData: ReadAtomicRstCacheReq, reqQueue: mutable.Queue[PSN]) => {
-        reqQueue.enqueue(reqData.psn.toInt)
+        reqQueue.enqueue(reqData.queryPsn.toInt)
         ()
       }
 
     val buildResp =
       (respData: ReadAtomicRstCacheResp, reqQueue: mutable.Queue[PSN]) => {
         val queryPsn = reqQueue.dequeue()
-        respData.rstCacheData.opcode #= queryOpCode.id
-        respData.rstCacheData.psnStart #= queryPsn // TODO: not support partial retry
-        respData.query.psn #= queryPsn
+        respData.respValue.opcode #= queryOpCode.id
+        respData.respValue.psnStart #= queryPsn // TODO: not support partial retry
+        respData.queryKey.queryPsn #= queryPsn
         respData.found #= alwaysSuccess
       }
 
@@ -1161,12 +1179,12 @@ object ReadAtomicRstCacheSim {
     ) => {
       respQueue.enqueue(
         (
-          respData.query.psn.toInt,
+          respData.queryKey.queryPsn.toInt,
           respData.found.toBoolean,
-          respData.rstCacheData.psnStart.toInt,
-          respData.rstCacheData.pa.toBigInt,
-          respData.rstCacheData.pktNum.toInt,
-          respData.rstCacheData.dlen.toLong
+          respData.respValue.psnStart.toInt,
+          respData.respValue.pa.toBigInt,
+          respData.respValue.pktNum.toInt,
+          respData.respValue.dlen.toLong
         )
       )
       ()

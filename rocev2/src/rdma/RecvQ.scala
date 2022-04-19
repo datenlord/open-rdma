@@ -461,7 +461,9 @@ class DupReqHandlerAndReadAtomicRstCacheQuery(
     (pktFragStream: Stream[Fragment[RqReqCheckStageOutput]]) =>
       new Composite(pktFragStream, "buildReadAtomicRstCacheQuery") {
         val readAtomicRstCacheReq = ReadAtomicRstCacheReq()
-        readAtomicRstCacheReq.psn := pktFragStream.pktFrag.bth.psn
+        readAtomicRstCacheReq.queryPsn := pktFragStream.pktFrag.bth.psn
+        readAtomicRstCacheReq.opcode := pktFragStream.pktFrag.bth.opcode
+        readAtomicRstCacheReq.epsn := io.qpAttr.epsn
       }.readAtomicRstCacheReq
 
   // Always expect response from ReadAtomicRstCache
@@ -495,7 +497,7 @@ class DupReqHandlerAndReadAtomicRstCacheQuery(
   )
 
   val readAtomicRstCacheRespValid = joinStream.valid
-  val readAtomicRstCacheRespData = joinStream._2.rstCacheData
+  val readAtomicRstCacheRespData = joinStream._2.respValue
   val readAtomicRstCacheRespFound = joinStream._2.found
   val readAtomicResultNotFound =
     readAtomicRstCacheRespValid && !readAtomicRstCacheRespFound
@@ -507,7 +509,7 @@ class DupReqHandlerAndReadAtomicRstCacheQuery(
     assert(
       assertion = readAtomicRstCacheRespFound,
       message =
-        L"${REPORT_TIME} time: duplicated read/atomic request with PSN=${joinStream._2.query.psn} not found, readAtomicRstCacheRespValid=${readAtomicRstCacheRespValid}, but readAtomicRstCacheRespFound=${readAtomicRstCacheRespFound}",
+        L"${REPORT_TIME} time: duplicated read/atomic request with PSN=${joinStream._2.queryKey.queryPsn} not found, readAtomicRstCacheRespValid=${readAtomicRstCacheRespValid}, but readAtomicRstCacheRespFound=${readAtomicRstCacheRespFound}",
       severity = ERROR
     )
 //    assert(
@@ -538,7 +540,7 @@ class DupReqHandlerAndReadAtomicRstCacheQuery(
     .translateWith {
       val result = cloneOf(io.dupReadReqAndRstCacheData.payloadType)
       result.pktFrag := forkJoinStream4Read._1.pktFrag
-      result.rstCacheData := forkJoinStream4Read._2.rstCacheData
+      result.rstCacheData := forkJoinStream4Read._2.respValue
       when(isReadReq) {
         result.rstCacheData.duplicate := True
       }

@@ -476,7 +476,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
         respStream = dut.io.workReqQuery.resp,
         dut.clockDomain
       ) {
-        val queryPsn = dut.io.workReqQuery.req.psn.toInt
+        val queryPsn = dut.io.workReqQuery.req.queryPsn.toInt
         workReqQueryReqQueue.enqueue(queryPsn)
 
 //        println(
@@ -484,8 +484,8 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
 //        )
       } {
         val psn = workReqQueryReqQueue.dequeue()
-        dut.io.workReqQuery.resp.query.psn #= psn
-        dut.io.workReqQuery.resp.cachedWorkReq.psnStart #= psn
+        dut.io.workReqQuery.resp.queryKey.queryPsn #= psn
+        dut.io.workReqQuery.resp.respValue.psnStart #= psn
         dut.io.workReqQuery.resp.found #= true
 
 //        println(f"${simTime()} time: dut.io.workReqQuery.resp PSN=${psn}%X")
@@ -493,9 +493,9 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
       onStreamFire(dut.io.workReqQuery.resp, dut.clockDomain) {
         workReqQueryRespQueue.enqueue(
           (
-            dut.io.workReqQuery.resp.query.psn.toInt,
-            dut.io.workReqQuery.resp.cachedWorkReq.workReq.laddr.toBigInt,
-            dut.io.workReqQuery.resp.cachedWorkReq.workReq.id.toBigInt
+            dut.io.workReqQuery.resp.queryKey.queryPsn.toInt,
+            dut.io.workReqQuery.resp.respValue.workReq.laddr.toBigInt,
+            dut.io.workReqQuery.resp.respValue.workReq.id.toBigInt
           )
         )
       }

@@ -1306,24 +1306,25 @@ object StreamCounterSource {
       stopValue: UInt,
       flush: Bool,
       stateCount: Int
-  ): (Stream[UInt], Bool) = new Composite(startPulse, "StreamCounterSource") {
-    val cntWidth = log2Up(stateCount)
-    val stream = Stream(UInt(cntWidth bits))
-    val counter = Counter(stateCount = stateCount, inc = stream.fire)
-    val running = RegInit(False)
-    when(startPulse && !flush) {
-      running := True
-      counter.value := startValue
-    }
-    val done = stream.fire && counter.valueNext === stopValue
-    when(done || flush) {
-      running := False
-    }
+  ): (Stream[UInt], Bool, Bool) =
+    new Composite(startPulse, "StreamCounterSource") {
+      val cntWidth = log2Up(stateCount)
+      val stream = Stream(UInt(cntWidth bits))
+      val counter = Counter(stateCount = stateCount, inc = stream.fire)
+      val running = RegInit(False)
+      when(startPulse && !flush) {
+        running := True
+        counter.valueNext := startValue
+      }
+      val done = stream.fire && counter.valueNext === stopValue
+      when(done || flush) {
+        running := False
+      }
 
-    stream.valid := running
-    stream.payload := counter.value
-    val result = (stream, done)
-  }.result
+      stream.valid := running
+      stream.payload := counter.value
+      val result = (stream, running, done)
+    }.result
 }
 
 //========== Misc utilities ==========
