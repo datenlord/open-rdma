@@ -230,15 +230,16 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
   io.workReqQuery.req << rxEveryFirstReadAtomicRespPktFragQueue
     .translateWith {
       val result = cloneOf(io.workReqQuery.req.payloadType)
-      result.psn := rxEveryFirstReadAtomicRespPktFragQueue.bth.psn
+      result.queryPsn := rxEveryFirstReadAtomicRespPktFragQueue.bth.psn
+      result.npsn := io.qpAttr.npsn
       result
     }
 
   val workReqIdReg = RegNextWhen(
-    io.workReqQuery.resp.cachedWorkReq.workReq.id,
+    io.workReqQuery.resp.respValue.workReq.id,
     cond = io.workReqQuery.resp.fire
   )
-  val cachedWorkReq = io.workReqQuery.resp.cachedWorkReq
+  val cachedWorkReq = io.workReqQuery.resp.respValue
   io.addrCacheRead.req <-/< io.workReqQuery.resp
     .throwWhen(io.txQCtrl.wrongStateFlush)
     //    .continueWhen(io.rx.pktFrag.fire && (isReadFirstOrOnlyResp || isAtomicResp))

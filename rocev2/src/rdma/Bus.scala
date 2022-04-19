@@ -1345,8 +1345,8 @@ case class CachedWorkReq() extends Bundle {
   val psnStart = UInt(PSN_WIDTH bits)
   val pktNum = UInt(PSN_WIDTH bits)
   val pa = UInt(MEM_ADDR_WIDTH bits)
-  val rnrCnt = UInt(RETRY_COUNT_WIDTH bits)
-  val retryCnt = UInt(RETRY_COUNT_WIDTH bits)
+//  val rnrCnt = UInt(RETRY_COUNT_WIDTH bits)
+//  val retryCnt = UInt(RETRY_COUNT_WIDTH bits)
 
   // Used for cache to set initial CachedWorkReq value
   def setInitVal(): this.type = {
@@ -1354,8 +1354,8 @@ case class CachedWorkReq() extends Bundle {
     psnStart := 0
     pktNum := 0
     pa := 0
-    rnrCnt := 0
-    retryCnt := 0
+//    rnrCnt := 0
+//    retryCnt := 0
     this
   }
 
@@ -1365,59 +1365,63 @@ case class CachedWorkReq() extends Bundle {
       val result = PsnUtil.withInRange(psn, psnStart, pktNum, curPsn)
     }.result
 
-  def incRnrOrRetryCnt(retryReason: SpinalEnumCraft[RetryReason.type]) =
-    new Composite(this) {
-      switch(retryReason) {
-        is(RetryReason.RNR) {
-          rnrCnt := rnrCnt + 1
-        }
-        is(
-          RetryReason.IMPLICIT_ACK,
-          RetryReason.SEQ_ERR,
-          RetryReason.RESP_TIMEOUT
-        ) {
-          retryCnt := retryCnt + 1
-        }
-        default {
-          report(
-            message =
-              L"${REPORT_TIME} time: input retryReason=${retryReason} should be valid reason",
-            severity = FAILURE
-          )
-        }
-      }
-    }
+//  def incRnrOrRetryCnt(retryReason: SpinalEnumCraft[RetryReason.type]): Unit =
+//    new Composite(this) {
+//      switch(retryReason) {
+//        is(RetryReason.RNR) {
+//          rnrCnt := rnrCnt + 1
+//        }
+//        is(
+//          RetryReason.IMPLICIT_ACK,
+//          RetryReason.SEQ_ERR,
+//          RetryReason.RESP_TIMEOUT
+//        ) {
+//          retryCnt := retryCnt + 1
+//        }
+//        default {
+//          report(
+//            message =
+//              L"${REPORT_TIME} time: input retryReason=${retryReason} should be valid reason",
+//            severity = FAILURE
+//          )
+//        }
+//      }
+//      val result = ()
+//    }.result
 }
 
 case class WorkReqCacheQueryReq() extends Bundle {
-  val psn = UInt(PSN_WIDTH bits)
+//  val workReqOpCode = WorkReqOpCode()
+  val queryPsn = UInt(PSN_WIDTH bits)
+  val npsn = UInt(PSN_WIDTH bits)
 }
 
-case class WorkReqCacheQueryReqBus() extends Bundle with IMasterSlave {
-  val req = Stream(WorkReqCacheQueryReq())
-
-  override def asMaster(): Unit = {
-    master(req)
-  }
-}
-
-case class WorkReqCacheResp() extends Bundle {
-  val cachedWorkReq = CachedWorkReq()
-  val query = WorkReqCacheQueryReq()
-  val found = Bool()
-}
-
-case class WorkReqCacheRespBus() extends Bundle with IMasterSlave {
-  val resp = Stream(WorkReqCacheResp())
-
-  override def asMaster(): Unit = {
-    master(resp)
-  }
-}
+//case class WorkReqCacheQueryReqBus() extends Bundle with IMasterSlave {
+//  val req = Stream(WorkReqCacheQueryReq())
+//
+//  override def asMaster(): Unit = {
+//    master(req)
+//  }
+//}
+//
+//case class WorkReqCacheResp() extends Bundle {
+//  val cachedWorkReq = CachedWorkReq()
+//  val query = WorkReqCacheQueryReq()
+//  val found = Bool()
+//}
+//
+//case class WorkReqCacheRespBus() extends Bundle with IMasterSlave {
+//  val resp = Stream(WorkReqCacheResp())
+//
+//  override def asMaster(): Unit = {
+//    master(resp)
+//  }
+//}
 
 case class WorkReqCacheQueryBus() extends Bundle with IMasterSlave {
   val req = Stream(WorkReqCacheQueryReq())
-  val resp = Stream(WorkReqCacheResp())
+//  val resp = Stream(WorkReqCacheResp())
+  val resp = Stream(CamQueryResp(WorkReqCacheQueryReq(), CachedWorkReq()))
 
   def >>(that: WorkReqCacheQueryBus): Unit = {
     this.req >> that.req
@@ -1445,8 +1449,7 @@ case class ReadAtomicRstCacheData() extends Bundle {
   val atomicRst = Bits(LONG_WIDTH bits)
   val duplicate = Bool()
 
-  // TODO: remote this
-  def setDefaultVal(): this.type = {
+  def setInitVal(): this.type = {
     psnStart := 0
     pktNum := 0
     opcode := 0
@@ -1463,46 +1466,52 @@ case class ReadAtomicRstCacheData() extends Bundle {
 }
 
 case class ReadAtomicRstCacheReq() extends Bundle {
-  val psn = UInt(PSN_WIDTH bits)
+  val queryPsn = UInt(PSN_WIDTH bits)
+  val opcode = Bits(OPCODE_WIDTH bits)
+  val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
+  val epsn = UInt(PSN_WIDTH bits)
 }
 
-case class ReadAtomicRstCacheResp() extends Bundle {
-  val rstCacheData = ReadAtomicRstCacheData()
-  val query = ReadAtomicRstCacheReq()
-  val found = Bool()
-}
+//case class ReadAtomicRstCacheResp() extends Bundle {
+//  val rstCacheData = ReadAtomicRstCacheData()
+//  val query = ReadAtomicRstCacheReq()
+//  val found = Bool()
+//}
 
-case class ReadAtomicRstCacheReqBus() extends Bundle with IMasterSlave {
-  val req = Stream(ReadAtomicRstCacheReq())
-
+//case class ReadAtomicRstCacheReqBus() extends Bundle with IMasterSlave {
+//  val req = Stream(ReadAtomicRstCacheReq())
+//
 //  def >>(that: ReadAtomicRstCacheReqBus): Unit = {
 //    this.req >> that.req
 //  }
 //
 //  def <<(that: ReadAtomicRstCacheReqBus): Unit = that >> this
+//
+//  override def asMaster(): Unit = {
+//    master(req)
+//  }
+//}
 
-  override def asMaster(): Unit = {
-    master(req)
-  }
-}
-
-case class ReadAtomicRstCacheRespBus() extends Bundle with IMasterSlave {
-  val resp = Stream(ReadAtomicRstCacheResp())
-
+//case class ReadAtomicRstCacheRespBus() extends Bundle with IMasterSlave {
+//  val resp = Stream(ReadAtomicRstCacheResp())
+//
 //  def >>(that: ReadAtomicRstCacheRespBus): Unit = {
 //    this.resp >> that.resp
 //  }
 //
 //  def <<(that: ReadAtomicRstCacheRespBus): Unit = that >> this
-
-  override def asMaster(): Unit = {
-    master(resp)
-  }
-}
+//
+//  override def asMaster(): Unit = {
+//    master(resp)
+//  }
+//}
 
 case class ReadAtomicRstCacheQueryBus() extends Bundle with IMasterSlave {
   val req = Stream(ReadAtomicRstCacheReq())
-  val resp = Stream(ReadAtomicRstCacheResp())
+//  val resp = Stream(ReadAtomicRstCacheResp())
+  val resp = Stream(
+    CamQueryResp(ReadAtomicRstCacheReq(), ReadAtomicRstCacheData())
+  )
 
   def >>(that: ReadAtomicRstCacheQueryBus): Unit = {
     this.req >> that.req

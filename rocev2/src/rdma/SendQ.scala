@@ -177,8 +177,8 @@ class NormalAndRetryWorkReqHandler(busWidth: BusWidth) extends Component {
     val errNotifier = out(SqErrNotifier())
     val retryClear = out(SqRetryClear())
     val workReq = slave(Stream(WorkReq()))
-    val retryScanCtrlBus = master(RetryScanCtrlBus())
-    val retryWorkReq = slave(Stream(CachedWorkReq()))
+    val retryScanCtrlBus = master(RamScanCtrlBus())
+    val retryWorkReq = slave(Stream(RamScanOut(CachedWorkReq())))
     val addrCacheRead = master(QpAddrCacheAgentReadBus())
 //    val sqOutPsnRangeFifoPush = master(Stream(ReqPsnRange()))
     val workReqCachePush = master(Stream(CachedWorkReq()))
@@ -311,10 +311,10 @@ class WorkReqValidator extends Component {
         result.workReq := workReq
         result.psnStart := io.qpAttr.npsn
         result.pktNum := numReqPkt.resize(PSN_WIDTH)
-        result.pa
-          .assignDontCare() // PA will be updated after QpAddrCacheAgent query
-        result.rnrCnt := 0 // New WR has no RNR
-        result.retryCnt := 0 // New WR has no retry
+        // PA will be updated after QpAddrCacheAgent query
+        result.pa.assignDontCare()
+//        result.rnrCnt := 0 // New WR has no RNR
+//        result.retryCnt := 0 // New WR has no retry
         result
       }
       .queueLowLatency(ADDR_CACHE_QUERY_DELAY_CYCLE)

@@ -70,8 +70,8 @@ class RetryHandler extends Component {
 //    val workReqCacheScanBus = master(
 //      CamFifoScanBus(CachedWorkReq(), PENDING_REQ_NUM)
 //    )
-    val retryScanCtrlBus = master(RetryScanCtrlBus())
-    val retryWorkReqIn = slave(Stream(CachedWorkReq()))
+    val retryScanCtrlBus = master(RamScanCtrlBus())
+    val retryWorkReqIn = slave(Stream(RamScanOut(CachedWorkReq())))
     val retryWorkReqOut = master(Stream(CachedWorkReq()))
     val errNotifier = out(SqErrNotifier())
     val retryWorkReqDone = out(Bool())
@@ -145,13 +145,13 @@ class RetryHandler extends Component {
     retryDmaReadLenBytes
   ) = PartialRetry.workReqRetry(
     io.qpAttr,
-    retryWorkReq = io.retryWorkReqIn,
+    retryWorkReq = io.retryWorkReqIn.scanOutData,
     retryWorkReqValid = io.retryWorkReqIn.valid
   )
 
   io.retryWorkReqOut <-/< io.retryWorkReqIn ~~ { payloadData =>
     val result = cloneOf(io.retryWorkReqOut.payloadType)
-    result := payloadData
+    result := payloadData.scanOutData
 
     when(!isRetryWholeWorkReq) {
       result.psnStart := retryStartPsn
