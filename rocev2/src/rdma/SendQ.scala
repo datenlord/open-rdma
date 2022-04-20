@@ -41,7 +41,7 @@ class SendQ(busWidth: BusWidth) extends Component {
   io.addrCacheRead4Req << normalAndRetryWorkReqHandler.io.addrCacheRead
   io.psnInc := normalAndRetryWorkReqHandler.io.psnInc
   io.dma.reqOut << normalAndRetryWorkReqHandler.io.dmaRead
-  io.notifier.workReqHasFence := normalAndRetryWorkReqHandler.io.workReqHasFence
+//  io.notifier.workReqHasFence := normalAndRetryWorkReqHandler.io.workReqHasFence
   io.notifier.retryClear := normalAndRetryWorkReqHandler.io.retryClear
   workReqCache.io.retryScanCtrlBus << normalAndRetryWorkReqHandler.io.retryScanCtrlBus
   // TODO: remove
@@ -182,7 +182,7 @@ class NormalAndRetryWorkReqHandler(busWidth: BusWidth) extends Component {
     val addrCacheRead = master(QpAddrCacheAgentReadBus())
 //    val sqOutPsnRangeFifoPush = master(Stream(ReqPsnRange()))
     val workReqCachePush = master(Stream(CachedWorkReq()))
-    val workReqHasFence = out(Bool())
+//    val workReqHasFence = out(Bool())
     val dmaRead = master(DmaReadBus(busWidth))
     val workCompErr = master(Stream(WorkComp()))
     val tx = master(RdmaDataBus(busWidth))
@@ -210,7 +210,7 @@ class NormalAndRetryWorkReqHandler(busWidth: BusWidth) extends Component {
     workReqFenceHandler.io.txQCtrl := io.txQCtrl
     workReqFenceHandler.io.workReqCacheEmpty := io.workReqCacheEmpty
     workReqFenceHandler.io.normalWorkReq << workReqValidator.io.workReqToCache
-    io.workReqHasFence := workReqFenceHandler.io.workReqHasFence
+//    io.workReqHasFence := workReqFenceHandler.io.workReqHasFence
   }
 
   val retryHandler = new RetryHandler
@@ -287,7 +287,10 @@ class WorkReqValidator extends Component {
     val workReq = io.workReq.payload
 
     val (workReq4Queue, workReq4AddrCacheQuery) = StreamFork2(
-      io.workReq.haltWhen(io.txQCtrl.fenceOrRetry)
+      io.workReq
+        // Cannot throw WR here, since it needs to generate error WC when flush
+//        .throwWhen(io.txQCtrl.wrongStateFlush)
+        .haltWhen(io.txQCtrl.retry)
     )
 //    val forkStream = StreamFork(
 //      // Should generate WC for the flushed WR
@@ -367,9 +370,10 @@ class WorkReqValidator extends Component {
       joinCond = !io.txQCtrl.wrongStateFlush
     )
 
+    val normalCond = !io.txQCtrl.wrongStateFlush && checkPass
     val (errorStream, normalStream) = StreamDeMuxByOneCondition(
-      joinStream,
-      checkPass && !io.txQCtrl.wrongStateFlush
+      input = joinStream,
+      condition = normalCond
     )
 
     val workCompErrStatus = WorkCompStatus()
@@ -431,7 +435,7 @@ class WorkReqFenceHandler extends Component {
     val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
     val normalWorkReq = slave(Stream(CachedWorkReq()))
-    val workReqHasFence = out(Bool())
+//    val workReqHasFence = out(Bool())
     val workReqCacheEmpty = in(Bool())
     val workReqOut = master(Stream(CachedWorkReq()))
 //    val sendWriteWorkReqOut = master(Stream(CachedWorkReq()))
@@ -448,7 +452,7 @@ class WorkReqFenceHandler extends Component {
 
   val fenceWaitCond = cachedWorkReq.workReq.fence && !io.workReqCacheEmpty
   // FENCE state trigger condition
-  io.workReqHasFence := cachedWorkReqValid && fenceWaitCond
+//  io.workReqHasFence := cachedWorkReqValid && fenceWaitCond
 //  val (workReq4CachePush, workReq4Output) = StreamFork2(
 //    io.normalWorkReq
 //      .throwWhen(io.txQCtrl.wrongStateFlush)

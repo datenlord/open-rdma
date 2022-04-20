@@ -281,7 +281,7 @@ case class SqNotifier() extends Bundle {
   val err = SqErrNotifier()
   val retry = SqRetryNotifier()
   val retryClear = SqRetryClear()
-  val workReqHasFence = Bool()
+//  val workReqHasFence = Bool()
   val workReqCacheEmpty = Bool()
   val coalesceAckDone = Bool()
 
@@ -311,10 +311,10 @@ case class TxQCtrl() extends Bundle {
   val retry = Bool()
   val retryFlush = Bool()
   val retryStartPulse = Bool()
-  val fencePulse = Bool()
-  val fence = Bool()
+//  val fencePulse = Bool()
+//  val fence = Bool()
   val wrongStateFlush = Bool()
-  val fenceOrRetry = Bool()
+//  val fenceOrRetry = Bool()
 //  val psnBeforeFence = UInt(PSN_WIDTH bits)
 }
 

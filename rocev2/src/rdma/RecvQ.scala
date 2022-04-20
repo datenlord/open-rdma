@@ -461,8 +461,10 @@ class DupReqHandlerAndReadAtomicRstCacheQuery(
     (pktFragStream: Stream[Fragment[RqReqCheckStageOutput]]) =>
       new Composite(pktFragStream, "buildReadAtomicRstCacheQuery") {
         val readAtomicRstCacheReq = ReadAtomicRstCacheReq()
+        val reth = pktFragStream.pktFrag.extractReth()
         readAtomicRstCacheReq.queryPsn := pktFragStream.pktFrag.bth.psn
         readAtomicRstCacheReq.opcode := pktFragStream.pktFrag.bth.opcode
+        readAtomicRstCacheReq.rkey := reth.rkey
         readAtomicRstCacheReq.epsn := io.qpAttr.epsn
       }.readAtomicRstCacheReq
 
