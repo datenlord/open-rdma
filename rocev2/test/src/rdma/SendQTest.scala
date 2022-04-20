@@ -34,11 +34,11 @@ class WorkReqValidatorTest extends AnyFunSuite {
   def testFunc(
       normalOrErrorCase: Boolean,
       addrCacheQueryErrOrFlushErr: Boolean
-  ) = simCfg.doSim { dut =>
+  ) = simCfg.doSim(978490405) { dut =>
     dut.clockDomain.forkStimulus(10)
 
     dut.io.qpAttr.pmtu #= pmtuLen.id
-    dut.io.txQCtrl.fenceOrRetry #= false
+    dut.io.txQCtrl.retry #= false
     dut.io.txQCtrl.wrongStateFlush #= !normalOrErrorCase && !addrCacheQueryErrOrFlushErr
 
     val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
@@ -170,7 +170,7 @@ class WorkReqValidatorTest extends AnyFunSuite {
         outputPktNumQueue,
         MATCH_CNT
       )
-    } else {
+    } else { // Error case
       val _ = if (addrCacheQueryErrOrFlushErr) { // addrCacheRespQueue
         // AddrCache query response error
         AddrCacheSim.alwaysStreamFireAndRespFailure(

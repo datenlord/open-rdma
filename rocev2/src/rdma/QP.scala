@@ -237,22 +237,22 @@ class QpCtrl extends Component {
     }
   }
 
-  val fenceRetryFsm = sqRetryStateFsm()
-  def fenceStateFsm() = new StateMachine {
-    val FENCE: State = new State with EntryPoint {
-      whenIsActive {
-        when(io.sqNotifier.workReqCacheEmpty) {
-          exit()
-        }
-      }
-    }
-
-    val FENCE_RETRY: State = new StateFsm(fenceRetryFsm) {
-      whenCompleted {
-        goto(FENCE)
-      }
-    }
-  }
+//  val fenceRetryFsm = sqRetryStateFsm()
+//  def fenceStateFsm() = new StateMachine {
+//    val FENCE: State = new State with EntryPoint {
+//      whenIsActive {
+//        when(io.sqNotifier.workReqCacheEmpty) {
+//          exit()
+//        }
+//      }
+//    }
+//
+//    val FENCE_RETRY: State = new StateFsm(fenceRetryFsm) {
+//      whenCompleted {
+//        goto(FENCE)
+//      }
+//    }
+//  }
 
   // TODO: does SQD need to handle retry?
   // Currently no new WR or retry handled in SQD
@@ -371,7 +371,7 @@ class QpCtrl extends Component {
   }
 
   val sqRetryFsm = sqRetryStateFsm()
-  val fenceFsm = fenceStateFsm()
+//  val fenceFsm = fenceStateFsm()
   def sqInternalFsm() = new StateMachine {
     val isSqWorking = mainFsm.isActive(mainFsm.RTS)
 
@@ -387,8 +387,8 @@ class QpCtrl extends Component {
       whenIsActive {
         when(io.sqNotifier.retry.pulse) {
           goto(RETRY)
-        } elsewhen (io.sqNotifier.workReqHasFence && !io.sqNotifier.workReqCacheEmpty) {
-          goto(FENCE)
+//        } elsewhen (io.sqNotifier.workReqHasFence && !io.sqNotifier.workReqCacheEmpty) {
+//          goto(FENCE)
         } elsewhen (!isSqWorking) {
           goto(WAITING)
         }
@@ -411,21 +411,21 @@ class QpCtrl extends Component {
       }
     }
 
-    val FENCE: State = new StateFsm(fenceFsm) {
-      whenIsActive {
-        when(!isSqWorking) {
-          fenceFsm.exitFsm()
-          goto(WAITING)
-        }
-      }
-      whenCompleted {
-        when(!isSqWorking) {
-          goto(WAITING)
-        } otherwise {
-          goto(NORMAL)
-        }
-      }
-    }
+//    val FENCE: State = new StateFsm(fenceFsm) {
+//      whenIsActive {
+//        when(!isSqWorking) {
+//          fenceFsm.exitFsm()
+//          goto(WAITING)
+//        }
+//      }
+//      whenCompleted {
+//        when(!isSqWorking) {
+//          goto(WAITING)
+//        } otherwise {
+//          goto(NORMAL)
+//        }
+//      }
+//    }
   }
 
   val sqFsm = sqInternalFsm()
@@ -535,14 +535,14 @@ class QpCtrl extends Component {
     }
   }*/
 
-  val fsmInRetryState = sqFsm.isActive(sqFsm.RETRY) ||
-    fenceFsm.isActive(fenceFsm.FENCE_RETRY)
-  val fsmEnteringRetryState = sqFsm.isEntering(sqFsm.RETRY) ||
-    fenceFsm.isEntering(fenceFsm.FENCE_RETRY)
+  val fsmInRetryState = sqFsm.isActive(sqFsm.RETRY)
+//    fenceFsm.isActive(fenceFsm.FENCE_RETRY)
+  val fsmEnteringRetryState = sqFsm.isEntering(sqFsm.RETRY)
+//    fenceFsm.isEntering(fenceFsm.FENCE_RETRY)
   // retryFlushState is a sub-state when fsmInRetryState
   val retryFlushState =
-    sqRetryFsm.isActive(sqRetryFsm.RETRY_FLUSH) ||
-      fenceRetryFsm.isActive(fenceRetryFsm.RETRY_FLUSH)
+    sqRetryFsm.isActive(sqRetryFsm.RETRY_FLUSH)
+//      fenceRetryFsm.isActive(fenceRetryFsm.RETRY_FLUSH)
 
   // Flush RQ if state error or RNR sent in next cycle
   val isQpStateWrong = mainFsm.isActive(mainFsm.ERR) ||
@@ -551,10 +551,10 @@ class QpCtrl extends Component {
   io.txQCtrl.retry := fsmInRetryState
   io.txQCtrl.retryStartPulse := fsmEnteringRetryState
   io.txQCtrl.retryFlush := retryFlushState
-  io.txQCtrl.fencePulse := False // TODO: currently no use, remote it?
-  io.txQCtrl.fence := mainFsm.isActive(mainFsm.SQD) ||
-    sqFsm.isActive(sqFsm.FENCE)
-  io.txQCtrl.fenceOrRetry := io.txQCtrl.fence || io.txQCtrl.retry
+//  io.txQCtrl.fencePulse := False // TODO: currently no use, remote it?
+//  io.txQCtrl.fence := mainFsm.isActive(mainFsm.SQD) ||
+//    sqFsm.isActive(sqFsm.FENCE)
+//  io.txQCtrl.fenceOrRetry := io.txQCtrl.fence || io.txQCtrl.retry
   io.txQCtrl.wrongStateFlush := isQpStateWrong
 
   // RQ flush

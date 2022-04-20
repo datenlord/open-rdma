@@ -173,7 +173,6 @@ class WorkReqCacheTest extends AnyFunSuite {
   val simCfg = SimConfig.allOptimisation.withWave
     .compile(new WorkReqCache(depth))
 
-  // TODO: check retry counter increased
   def testRetryScan(retryReason: SpinalEnumElement[RetryReason.type]): Unit =
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
@@ -241,7 +240,12 @@ class WorkReqCacheTest extends AnyFunSuite {
         while (true) {
           // Push to WorkReqCache until full
           dut.io.push.valid #= true
-          waitUntil(dut.io.full.toBoolean)
+          // Assign valid WR opcode
+          while (!dut.io.full.toBoolean) {
+            dut.io.push.workReq.opcode #=
+              WorkReqSim.randomSendWriteReadAtomicOpCode()
+            dut.clockDomain.waitSampling()
+          }
           dut.io.push.valid #= false
           dut.clockDomain.waitSampling()
 
