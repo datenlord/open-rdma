@@ -537,11 +537,10 @@ class QpCtrl extends Component {
 
   val fsmInRetryState = sqFsm.isActive(sqFsm.RETRY)
 //    fenceFsm.isActive(fenceFsm.FENCE_RETRY)
-  val fsmEnteringRetryState = sqFsm.isEntering(sqFsm.RETRY)
+//  val fsmEnteringRetryState = sqFsm.isEntering(sqFsm.RETRY) ||
 //    fenceFsm.isEntering(fenceFsm.FENCE_RETRY)
   // retryFlushState is a sub-state when fsmInRetryState
-  val retryFlushState =
-    sqRetryFsm.isActive(sqRetryFsm.RETRY_FLUSH)
+  val retryFlushState = sqRetryFsm.isActive(sqRetryFsm.RETRY_FLUSH)
 //      fenceRetryFsm.isActive(fenceRetryFsm.RETRY_FLUSH)
 
   // Flush RQ if state error or RNR sent in next cycle
@@ -549,7 +548,7 @@ class QpCtrl extends Component {
     mainFsm.isActive(mainFsm.RESET) || mainFsm.isActive(mainFsm.INIT)
   io.txQCtrl.errorFlush := errFsm.isActive(errFsm.ERR_FLUSH)
   io.txQCtrl.retry := fsmInRetryState
-  io.txQCtrl.retryStartPulse := fsmEnteringRetryState
+  io.txQCtrl.retryStartPulse := io.sqNotifier.retry.pulse // fsmEnteringRetryState
   io.txQCtrl.retryFlush := retryFlushState
 //  io.txQCtrl.fencePulse := False // TODO: currently no use, remote it?
 //  io.txQCtrl.fence := mainFsm.isActive(mainFsm.SQD) ||

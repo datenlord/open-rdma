@@ -23,7 +23,7 @@ mkdir -p ./rtl
 
 if [ "$TEST_ONLY" = "false" ]; then
   # Run build and simulation
-#  $MILL rocev2.runMain rdma.RoCEv2
+  $MILL rocev2.runMain rdma.RoCEv2
 
   # Check format and lint
   if [ "$CI_ENV" = "true" ]; then
