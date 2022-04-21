@@ -280,13 +280,15 @@ object StreamSource {
   def apply(): Event = {
     val result = Event
     result.valid := True
-    result
+    result.combStage()
   }
 }
 
 object StreamSink {
-  def apply[T <: Data](payloadType: HardType[T]): Stream[T] =
+  def apply[T <: Data](payloadType: HardType[T]): Stream[T] = {
+    // No need to add combStage() here, since StreamSink has no consumer
     Stream(payloadType).freeRun()
+  }
 }
 
 // Zip two streams and fire by conditions.
@@ -312,7 +314,7 @@ object StreamZipByCondition {
     streamZipByCondition.io.leftFireCond := leftFireCond
     streamZipByCondition.io.rightFireCond := rightFireCond
     streamZipByCondition.io.bothFireCond := bothFireCond
-    streamZipByCondition.io.zipOutputStream
+    streamZipByCondition.io.zipOutputStream.combStage()
   }
 }
 
@@ -407,7 +409,7 @@ object StreamDropHeader {
     val result = new StreamDropHeader(cloneOf(inputStream.fragmentType))
     result.io.inputStream << inputStream
     result.io.headerFragNum := headerFragNum
-    result.io.outputStream
+    result.io.outputStream.combStage()
   }
 }
 
@@ -447,7 +449,7 @@ object StreamSegment {
     val result = new StreamSegment(cloneOf(inputStream.fragmentType))
     result.io.inputStream << inputStream
     result.io.segmentFragNum := segmentFragNum
-    result.io.outputStream
+    result.io.outputStream.combStage()
   }
 }
 
@@ -513,7 +515,7 @@ object StreamAddHeader {
       new StreamAddHeader(inputHeader.headerType, busWidth)
     result.io.inputStream << inputStream
     result.io.inputHeader << inputHeader
-    result.io.outputStream
+    result.io.outputStream.combStage()
   }
 }
 
@@ -711,7 +713,7 @@ object StreamRemoveHeader {
     val result = new StreamRemoveHeader(busWidth)
     result.io.inputStream << inputStream
     result.io.headerLenBytes := headerLenBytes
-    result.io.outputStream
+    result.io.outputStream.combStage()
   }
 }
 
@@ -811,13 +813,12 @@ object StreamConditionalJoin {
       inputA: Stream[T1],
       inputB: Stream[T2],
       joinCond: Bool
-  ): Stream[TupleBundle2[T1, T2]] =
-    new Composite(inputA, "StreamConditionalJoin") {
-      val emptyStream =
-        StreamSource().translateWith(inputB.payloadType().assignDontCare())
-      val streamToJoin = StreamMux(joinCond.asUInt, Vec(emptyStream, inputB))
-      val result = StreamJoin(inputA, streamToJoin)
-    }.result
+  ): Stream[TupleBundle2[T1, T2]] = {
+    val emptyStream =
+      StreamSource().translateWith(inputB.payloadType().assignDontCare())
+    val streamToJoin = StreamMux(joinCond.asUInt, Vec(emptyStream, inputB))
+    StreamJoin(inputA, streamToJoin).combStage()
+  }
 }
 
 /** Join a stream A of fragments with a stream B,
@@ -832,7 +833,7 @@ object FragmentStreamJoinStream {
       inputFragmentStream,
       inputStream,
       joinCond = True
-    )
+    ).combStage()
   }
 }
 
@@ -854,7 +855,7 @@ object FragmentStreamConditionalJoinStream {
     join.io.inputFragmentStream << inputFragmentStream
     join.io.inputStream << inputStream
     join.io.joinCond := joinCond
-    join.io.outputJoinStream
+    join.io.outputJoinStream.combStage()
   }
 }
 
@@ -923,7 +924,7 @@ object StreamConditionalFork2 {
   ): (Stream[T], Stream[T]) = {
     val forkStreams =
       StreamConditionalFork(inputStream, forkCond, portCount = 1)
-    (forkStreams(0), forkStreams(1))
+    (forkStreams(0).combStage(), forkStreams(1).combStage())
   }
 }
 
@@ -961,34 +962,32 @@ object FragmentStreamForkQueryJoinResp {
       queryCond: Stream[Fragment[Tin]] => Bool,
       expectResp: Stream[Fragment[Tin]] => Bool,
       joinRespCond: Stream[Fragment[Tin]] => Bool
-  ): Stream[Fragment[TupleBundle2[Tin, Tresp]]] =
-    new Composite(inputStream, "FragmentStreamForkQueryJoinResp") {
-      val (input4QueryStream, originalInputStream) =
-        StreamConditionalFork2(inputStream, forkCond = queryCond(inputStream))
-      val originalInputQueue =
-        originalInputStream.queueLowLatency(waitQueueDepth)
-      queryStream <-/< input4QueryStream
-        .takeWhen(expectResp(input4QueryStream))
-        .translateWith(buildQuery(input4QueryStream))
+  ): Stream[Fragment[TupleBundle2[Tin, Tresp]]] = {
+    val (input4QueryStream, originalInputStream) =
+      StreamConditionalFork2(inputStream, forkCond = queryCond(inputStream))
+    val originalInputQueue =
+      originalInputStream.queueLowLatency(waitQueueDepth)
+    queryStream <-/< input4QueryStream
+      .takeWhen(expectResp(input4QueryStream))
+      .translateWith(buildQuery(input4QueryStream))
 
-      // When not expect query response, join with StreamSource()
-      val stream4Join = StreamMux(
-        select = expectResp(originalInputQueue).asUInt,
-        inputs = Vec(
-          StreamSource().translateWith(
-            cloneOf(respStream.payloadType).assignDontCare()
-          ),
-          respStream
-        )
+    // When not expect query response, join with StreamSource()
+    val stream4Join = StreamMux(
+      select = expectResp(originalInputQueue).asUInt,
+      inputs = Vec(
+        StreamSource().translateWith(
+          cloneOf(respStream.payloadType).assignDontCare()
+        ),
+        respStream
       )
-      val joinStream =
-        FragmentStreamConditionalJoinStream(
-          originalInputQueue,
-          stream4Join,
-          joinCond = joinRespCond(originalInputQueue)
-        )
+    )
 
-    }.joinStream
+    FragmentStreamConditionalJoinStream(
+      originalInputQueue,
+      stream4Join,
+      joinCond = joinRespCond(originalInputQueue)
+    ).combStage()
+  }
 }
 
 /** Build an arbiter tree to arbitrate on many inputs.
@@ -1018,7 +1017,7 @@ object StreamArbiterTree {
     ) {
       arbiterTreeInput << originalInput
     }
-    arbiterTree.io.output
+    arbiterTree.io.output.combStage()
   }
 }
 
@@ -1112,7 +1111,7 @@ class StreamOneHotDeMux[T <: Data](dataType: HardType[T], portCount: Int)
 object StreamOneHotMux {
   def apply[T <: Data](select: Bits, inputs: Seq[Stream[T]]): Stream[T] = {
     val vec = Vec(inputs)
-    StreamOneHotMux(select, vec)
+    StreamOneHotMux(select, vec).combStage()
   }
 
   def apply[T <: Data](select: Bits, inputs: Vec[Stream[T]]): Stream[T] = {
@@ -1127,7 +1126,7 @@ object StreamOneHotMux {
     for (idx <- 0 until widthOf(select)) {
       streamOneHotMux.io.inputs(idx) << inputs(idx)
     }
-    streamOneHotMux.io.output
+    streamOneHotMux.io.output.combStage()
   }
 }
 
@@ -1188,7 +1187,7 @@ object StreamDeMuxByOneCondition {
   ): (Stream[T], Stream[T]) = {
     val (condFalseIdx, condTrueIdx) = (0, 1)
     val outputs = StreamDemux(input, select = condition.asUInt, portCount = 2)
-    (outputs(condFalseIdx), outputs(condTrueIdx))
+    (outputs(condFalseIdx).combStage(), outputs(condTrueIdx).combStage())
   }
 }
 
@@ -1306,25 +1305,24 @@ object StreamCounterSource {
       stopValue: UInt,
       flush: Bool,
       stateCount: Int
-  ): (Stream[UInt], Bool, Bool) =
-    new Composite(startPulse, "StreamCounterSource") {
-      val cntWidth = log2Up(stateCount)
-      val stream = Stream(UInt(cntWidth bits))
-      val counter = Counter(stateCount = stateCount, inc = stream.fire)
-      val running = RegInit(False)
-      when(startPulse && !flush) {
-        running := True
-        counter.valueNext := startValue
-      }
-      val done = stream.fire && counter.valueNext === stopValue
-      when(done || flush) {
-        running := False
-      }
+  ): (Stream[UInt], Bool, Bool) = {
+    val cntWidth = log2Up(stateCount)
+    val stream = Stream(UInt(cntWidth bits))
+    val counter = Counter(stateCount = stateCount, inc = stream.fire)
+    val running = RegInit(False)
+    when(startPulse && !flush) {
+      running := True
+      counter.valueNext := startValue
+    }
+    val done = stream.fire && counter.valueNext === stopValue
+    when(done || flush) {
+      running := False
+    }
 
-      stream.valid := running
-      stream.payload := counter.value
-      val result = (stream, running, done)
-    }.result
+    stream.valid := running
+    stream.payload := counter.value
+    (stream.combStage(), running, done)
+  }
 }
 
 //========== Misc utilities ==========

@@ -331,7 +331,7 @@ class WorkReqValidator extends Component {
         addrCacheReadReq.key := workReq.lkey // Local read does not need key
         addrCacheReadReq.pdId := io.qpAttr.pdId
         addrCacheReadReq.setKeyTypeRemoteOrLocal(isRemoteKey = False)
-        addrCacheReadReq.accessType := AccessType.LOCAL_READ
+        addrCacheReadReq.accessType.set(AccessPermission.LOCAL_READ)
         addrCacheReadReq.va := workReq.laddr
         addrCacheReadReq.dataLenBytes := workReq.lenBytes
         addrCacheReadReq

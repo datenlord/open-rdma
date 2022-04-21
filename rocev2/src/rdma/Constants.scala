@@ -86,8 +86,8 @@ object ConstantSettings {
 
   val MAX_COALESCE_ACK_NUM = 8
 
-  val MAX_PD = 32
-  val MAX_MR_PER_PD = 32
+  val MAX_PD = 8
+  val MAX_MR_PER_PD = 8
   // require(MAX_PD <= (1 << PD_ID_WIDTH))
 
   // Test related settings
@@ -116,9 +116,13 @@ object ConstantSettings {
 
   val QP_ATTR_MASK_WIDTH = 32
 
-//  val ACCESS_TYPE_WIDTH = 20
+  val ACCESS_PERMISSION_WIDTH = 21
+  require(
+    widthOf(AccessPermission()) == ACCESS_PERMISSION_WIDTH,
+    f"widthOf(AccessPermission())=${widthOf(AccessPermission())} should == ACCESS_PERMISSION_WIDTH=${ACCESS_PERMISSION_WIDTH}"
+  )
 
-//  val PKT_SEQ_TYPE_WIDTH = 3
+  //  val PKT_SEQ_TYPE_WIDTH = 3
 
   val MAX_HEADER_LEN_WIDTH = log2Up(widthOf(BTH()) + widthOf(AtomicEth()))
 
@@ -1263,7 +1267,7 @@ object WorkCompStatus extends SpinalEnum(binarySequential) {
 //  val TM_RNDV_INCOMPLETE = Value(23)
 //}
 
-object AccessType extends SpinalEnum {
+object AccessPermission extends SpinalEnum {
   val LOCAL_READ, LOCAL_WRITE, REMOTE_WRITE, REMOTE_READ, REMOTE_ATOMIC,
       MW_BIND, ZERO_BASED, ON_DEMAND, HUGETLB, RELAXED_ORDERING = newElement()
 

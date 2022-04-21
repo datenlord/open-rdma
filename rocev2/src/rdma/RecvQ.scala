@@ -719,21 +719,23 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
         val accessKey = inputHeader.lrkey
         val va = inputHeader.va
 
-        val accessType = AccessType() // Bits(ACCESS_TYPE_WIDTH bits)
+        val accessType = AccessType()
         val pdId = io.qpAttr.pdId
         val remoteOrLocalKey = True // True: remote, False: local
         val dataLenBytes = inputHeader.dlen
         // Only send
         when(OpCode.isSendReqPkt(inputPktFrag.bth.opcode)) {
-          accessType := AccessType.LOCAL_WRITE
+          accessType.set(AccessPermission.LOCAL_WRITE)
         } elsewhen (OpCode.isWriteReqPkt(inputPktFrag.bth.opcode)) {
-          accessType := AccessType.REMOTE_WRITE
+          accessType.set(AccessPermission.REMOTE_WRITE)
         } elsewhen (OpCode.isReadReqPkt(inputPktFrag.bth.opcode)) {
-          accessType := AccessType.REMOTE_READ
+          accessType.set(AccessPermission.REMOTE_READ)
         } elsewhen (OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode)) {
-          accessType := AccessType.REMOTE_ATOMIC
+          accessType.set(AccessPermission.REMOTE_ATOMIC)
         } otherwise {
-          accessType := AccessType.LOCAL_READ // AccessType LOCAL_READ is not defined in spec. 1.4
+          accessType.set(
+            AccessPermission.LOCAL_READ
+          ) // AccessType LOCAL_READ is not defined in spec. 1.4
           when(inputValid) {
             report(
               message =
