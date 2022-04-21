@@ -2,7 +2,7 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-import ConstantSettings._
+//import ConstantSettings._
 import RdmaConstants._
 import StreamVec._
 
@@ -919,17 +919,6 @@ class WorkReqCache(depth: Int) extends Component {
         PsnUtil.lt(k.queryPsn, v.psnStart + v.pktNum, k.npsn),
     depth = depth,
     portCount = 1
-//    scanRespOnFireModifyFunc = Some(
-//      (retryReason: SpinalEnumCraft[RetryReason.type], v: CachedWorkReq) =>
-//      new Composite(v, "WorkReqCache_scanRespOnFireModifyFunc") {
-//        val result = v.incRnrOrRetryCnt(retryReason)
-//          val result = cloneOf(v)
-//          result := v
-//          // TODO: which retry counter to increase after the very first retry WR
-//          result.incRnrOrRetryCnt(retryReason)
-//          result
-//      }.result
-//    )
   )
   cam.io.ram := fifo.io.ram
 
@@ -968,31 +957,45 @@ class WorkReqCache(depth: Int) extends Component {
   }
 }
 
-class PdInternalAddrCache(depth: Int) extends Component {
+// TODO: check MR size and permission
+//
+// pp. 264, spec 1.4
+// A responder that supports RDMA and / or ATOMIC Operations shall verify
+// the R_Key, the associated access rights, and the specified virtual address.
+// The responder must also perform bounds checking (i.e. verify that
+// the length of the data being referenced does not cross the associated
+// memory start and end addresses). Any violation must result in the packet
+// being discarded and for reliable services, the generation of a NAK.
+class PdAddrCache(depth: Int) extends Component {
   val io = new Bundle {
     val addrCreateOrDelete = slave(PdAddrDataCreateOrDeleteBus())
     val query = slave(PdAddrCacheReadBus())
     val full = out(Bool())
   }
 
-  val addrCacheMem = Mem(CachedValue(AddrData()), depth).init(List.fill(depth) {
-    val result = CachedValue(AddrData())
-    result.valid := False
-    result.data.init()
-    result
-  })
+  // TODO: add initial values to Mem
+  val addrCacheMem = Vec(
+    RegInit {
+      val result = CachedValue(AddrData())
+      result.valid := False
+      result.data.init()
+      result
+    },
+    depth
+  )
 
   val addrCreateOrDelete = new Area {
     val isAddrDataCreation =
       io.addrCreateOrDelete.req.createOrDelete === CRUD.CREATE
     val ramAvailable = Vec((0 until depth).map(idx => {
-      val v = addrCacheMem.readAsync(
-        address = U(idx, log2Up(depth) bits),
-        // The read will get the new value (provided by the write)
-        readUnderWrite = writeFirst
-      )
+//      val v = addrCacheMem.readAsync(
+//        address = U(idx, log2Up(depth) bits),
+//        // The read will get the new value (provided by the write)
+//        readUnderWrite = writeFirst
+//      )
+      val v = addrCacheMem(idx)
       v.valid
-    }))
+    })).asBits
     val foundRamAvailable = ramAvailable.orR
     io.full := !foundRamAvailable
     val addrDataCreateIdxOH = OHMasking.first(ramAvailable)
@@ -1001,14 +1004,15 @@ class PdInternalAddrCache(depth: Int) extends Component {
       io.addrCreateOrDelete.req.createOrDelete === CRUD.DELETE
     val addrDataDeleteIdxOH = Vec((0 until depth).map(idx => {
       val deleteReq = io.addrCreateOrDelete.req
-      val v = addrCacheMem.readAsync(
-        address = U(idx, log2Up(depth) bits),
-        // The read will get the new value (provided by the write)
-        readUnderWrite = writeFirst
-      )
+//      val v = addrCacheMem.readAsync(
+//        address = U(idx, log2Up(depth) bits),
+//        // The read will get the new value (provided by the write)
+//        readUnderWrite = writeFirst
+//      )
+      val v = addrCacheMem(idx)
       deleteReq.addrData.lkey === v.data.lkey &&
       deleteReq.addrData.rkey === v.data.rkey && v.valid
-    }))
+    })).asBits
     val foundAddrDataDelete = addrDataDeleteIdxOH.orR
 
     val addrDataSelIdx = OHToUInt(
@@ -1029,13 +1033,56 @@ class PdInternalAddrCache(depth: Int) extends Component {
   }
 
   val search = new Area {
-    val (queryReq4Queue, queryReq4Cache) = StreamFork2(io.query.req)
-    val reqQueue = StreamFifoLowLatency(
-      dataType = io.query.req.payloadType(),
-      depth = ADDR_CACHE_QUERY_DELAY_CYCLE
+    val cam = new Cam(
+      PdAddrCacheReadReq(),
+      CachedValue(AddrData()),
+      queryFunc = (k: PdAddrCacheReadReq, v: CachedValue[AddrData]) =>
+        v.valid &&
+          ((k.key === v.data.lkey && !k.remoteOrLocalKey) ||
+            (k.key === v.data.rkey && k.remoteOrLocalKey)),
+      depth = depth,
+      portCount = 1
     )
-    reqQueue.io.push << queryReq4Queue
+    cam.io.ram := Vec((0 until depth).map(idx => addrCacheMem(idx)))
+//    cam.io.ram := Vec((0 until depth).map(idx => addrCacheMem.readAsync(idx, readUnderWrite = writeFirst)))
 
+//    val (queryReq4Queue, queryReq4Cache) = StreamFork2(io.query.req)
+//    val reqQueue = StreamFifoLowLatency(
+//      dataType = io.query.req.payloadType(),
+//      depth = ADDR_CACHE_QUERY_DELAY_CYCLE
+//    )
+//    reqQueue.io.push << queryReq4Queue
+
+    val queryPortVec = Vec(io.query.req)
+    val respPortVec = Vec(io.query.resp)
+    for ((queryPort, portIdx) <- queryPortVec.zipWithIndex) {
+      cam.io.queryBusVec(portIdx).req << queryPort
+      respPortVec(portIdx) <-/< cam.io.queryBusVec(portIdx).resp ~~ {
+        payloadData =>
+          val originalReq = payloadData.queryKey
+          val cacheResp = payloadData.respValue.data
+          val reqSizeValid = cacheResp.va <= originalReq.va &&
+            (originalReq.va + originalReq.dataLenBytes <= cacheResp.va + cacheResp.dataLenBytes)
+          val pa = UInt(MEM_ADDR_WIDTH bits)
+          when(reqSizeValid) {
+            pa := cacheResp.pa + originalReq.va - cacheResp.va
+          } otherwise {
+            pa := 0 // Invalid PhysicalAddr
+          }
+          val accessValid = cacheResp.accessType.permit(originalReq.accessType)
+
+          val result = cloneOf(io.query.resp.payloadType)
+          result.initiator := originalReq.initiator
+          result.sqpn := originalReq.sqpn
+          result.psn := originalReq.psn
+          result.pa := pa
+          result.accessValid := accessValid
+          result.sizeValid := reqSizeValid
+          result.keyValid := payloadData.found
+          result
+      }
+    }
+    /*
     val idxOH = Vec((0 until depth).map(idx => {
       val queryReq = queryReq4Cache
       val v = addrCacheMem.readAsync(
@@ -1043,8 +1090,9 @@ class PdInternalAddrCache(depth: Int) extends Component {
         // The read will get the new value (provided by the write)
         readUnderWrite = writeFirst
       )
+      v.valid &&
       ((queryReq.key === v.data.lkey && !queryReq.remoteOrLocalKey) ||
-        (queryReq.key === v.data.rkey && queryReq.remoteOrLocalKey)) && v.valid
+        (queryReq.key === v.data.rkey && queryReq.remoteOrLocalKey))
     }))
     val found = idxOH.asBits.andR
     val idxBinary = OHToUInt(idxOH)
@@ -1059,18 +1107,16 @@ class PdInternalAddrCache(depth: Int) extends Component {
 
     val joinStream = StreamJoin(reqQueue.io.pop, queryResultStream)
     val (originalReq, cacheResp) = (joinStream._1, joinStream._2.value.data)
-    val reqAddrWithBoundary =
-      cacheResp.va <= originalReq.va && originalReq.va <= cacheResp.va + cacheResp.dataLenBytes
-    val reqDataSizeValid =
-      originalReq.va + originalReq.dataLenBytes <= cacheResp.va + cacheResp.dataLenBytes
+    val reqSizeValid = cacheResp.va <= originalReq.va &&
+      (originalReq.va + originalReq.dataLenBytes <= cacheResp.va + cacheResp.dataLenBytes)
     val pa = UInt(MEM_ADDR_WIDTH bits)
-    when(reqAddrWithBoundary) {
+    when(reqSizeValid) {
       pa := cacheResp.pa + originalReq.va - cacheResp.va
     } otherwise {
       pa := 0 // Invalid
     }
-    val accessValid =
-      (originalReq.accessType.asBits | cacheResp.accessType.asBits).orR
+    val accessValid = cacheResp.accessType.permit(originalReq.accessType)
+
     io.query.resp << joinStream
       .translateWith {
         val result = cloneOf(io.query.resp.payloadType)
@@ -1079,10 +1125,11 @@ class PdInternalAddrCache(depth: Int) extends Component {
         result.psn := originalReq.psn
         result.pa := pa
         result.accessValid := accessValid
-        result.sizeValid := reqAddrWithBoundary && reqDataSizeValid
+        result.sizeValid := reqSizeValid
         result.keyValid := joinStream._2.linked._2 // Found
         result
       }
+     */
   }
 }
 
@@ -1165,14 +1212,4 @@ class QpAddrCacheAgent extends Component {
     select = txSel,
     portCount = 3
   )
-
-  // TODO: check MR size and permission
-  //
-  // pp. 264, spec 1.4
-  // A responder that supports RDMA and / or ATOMIC Operations shall verify
-  // the R_Key, the associated access rights, and the specified virtual address.
-  // The responder must also perform bounds checking (i.e. verify that
-  // the length of the data being referenced does not cross the associated
-  // memory start and end addresses). Any violation must result in the packet
-  // being discarded and for reliable services, the generation of a NAK.
 }

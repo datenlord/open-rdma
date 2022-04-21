@@ -250,7 +250,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
       addrCacheReadReq.key := cachedWorkReq.workReq.lkey
       addrCacheReadReq.pdId := io.qpAttr.pdId
       addrCacheReadReq.setKeyTypeRemoteOrLocal(isRemoteKey = False)
-      addrCacheReadReq.accessType := AccessType.LOCAL_WRITE
+      addrCacheReadReq.accessType.set(AccessPermission.LOCAL_WRITE)
       addrCacheReadReq.va := cachedWorkReq.workReq.laddr
       addrCacheReadReq.dataLenBytes := cachedWorkReq.workReq.lenBytes
       addrCacheReadReq

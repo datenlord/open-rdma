@@ -138,7 +138,7 @@ class AllAddrCache(numMaxPDs: Int, numMaxMRsPerPD: Int) extends Component {
 
   val pdIdxVec = (0 until numMaxPDs)
   val pdAddrCacheVec = pdIdxVec.map(_ => {
-    val pdAddrCache = new PdInternalAddrCache(numMaxMRsPerPD)
+    val pdAddrCache = new PdAddrCache(numMaxMRsPerPD)
     pdAddrCache
   })
 

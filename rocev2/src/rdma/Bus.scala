@@ -1797,6 +1797,24 @@ case class QpCreateOrModifyBus() extends Bundle with IMasterSlave {
   }
 }
 
+case class AccessType() extends Bundle {
+  val accessType = Bits(ACCESS_PERMISSION_WIDTH bits)
+
+  def init(): this.type = {
+    accessType := AccessPermission.LOCAL_READ.asBits
+    this
+  }
+
+  def set(permissions: SpinalEnumCraft[AccessPermission.type]*): Unit = {
+    accessType := permissions.map(_.asBits).reduceBalancedTree(_ | _)
+  }
+
+  // Check whether this AccessType contains all that AccessType permissions
+  def permit(that: AccessType): Bool = {
+    (this.accessType | that.accessType) === this.accessType
+  }
+}
+
 case class PdAddrCacheReadReq() extends Bundle {
   val initiator = AddrQueryInitiator()
   val sqpn = UInt(QPN_WIDTH bits)
@@ -1804,7 +1822,7 @@ case class PdAddrCacheReadReq() extends Bundle {
   val key = Bits(LRKEY_IMM_DATA_WIDTH bits)
   val pdId = Bits(PD_ID_WIDTH bits)
   val remoteOrLocalKey = Bool() // True: remote, False: local
-  val accessType = AccessType() // Bits(ACCESS_TYPE_WIDTH bits)
+  val accessType = AccessType()
   val va = UInt(MEM_ADDR_WIDTH bits)
   val dataLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
 
@@ -1922,18 +1940,18 @@ case class AddrCacheDataCreateOrDeleteBus() extends Bundle with IMasterSlave {
 case class AddrData() extends Bundle {
   val lkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
   val rkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
-  val accessType = AccessType() // Bits(ACCESS_TYPE_WIDTH bits)
+  val accessType = AccessType()
   val va = UInt(MEM_ADDR_WIDTH bits)
   val pa = UInt(MEM_ADDR_WIDTH bits)
   val dataLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
 
   def init(): this.type = {
-    lkey := 0
-    rkey := 0
-    accessType := AccessType.LOCAL_READ // Default AccessType
-    va := 0
-    pa := 0
-    dataLenBytes := 0
+    this.lkey := 0
+    this.rkey := 0
+    this.accessType.init() // Default AccessType
+    this.va := 0
+    this.pa := 0
+    this.dataLenBytes := 0
     this
   }
 }
@@ -1945,7 +1963,7 @@ case class QpAddrCacheAgentReadReq() extends Bundle {
   val pdId = Bits(PD_ID_WIDTH bits)
   // TODO: consider remove remoteOrLocalKey
   private val remoteOrLocalKey = Bool() // True: remote, False: local
-  val accessType = AccessType() // Bits(ACCESS_TYPE_WIDTH bits)
+  val accessType = AccessType()
   val va = UInt(MEM_ADDR_WIDTH bits)
   val dataLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
 
@@ -1961,7 +1979,7 @@ case class QpAddrCacheAgentReadReq() extends Bundle {
     key := 0
     pdId := 0
     remoteOrLocalKey := True
-    accessType := AccessType.LOCAL_READ // Default AccessType
+    accessType.init() // Default AccessType
     va := 0
     dataLenBytes := 0
     this
