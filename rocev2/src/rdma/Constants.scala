@@ -78,7 +78,8 @@ object ConstantSettings {
   require(PENDING_REQ_NUM > MAX_PENDING_READ_ATOMIC_REQ_NUM)
   require((2 << MAX_WR_NUM_WIDTH) >= PENDING_REQ_NUM)
 
-  val WORK_REQ_CACHE_QUERY_DELAY_CYCLE = 4
+//  val WORK_REQ_CACHE_QUERY_DELAY_CYCLE = 4
+  val COALESCE_HANDLE_CYCLE = 4
   val ADDR_CACHE_QUERY_DELAY_CYCLE = 8
   val READ_ATOMIC_RESULT_CACHE_QUERY_DELAY_CYCLE = 2
   val DMA_WRITE_DELAY_CYCLE = 128
@@ -984,7 +985,7 @@ object NakCode extends Enumeration {
     }.result
 }
 
-object WorkReqSendFlags extends SpinalEnum {
+object WorkReqSendFlagEnum extends SpinalEnum {
   val FENCE, SIGNALED, SOLICITED, INLINE, IP_CSUM = newElement()
 
   defaultEncoding = SpinalEnumEncoding("opt")(

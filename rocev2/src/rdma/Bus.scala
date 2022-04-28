@@ -163,6 +163,8 @@ case class SqErrNotifier() extends Bundle {
     pulse
   }
 
+  /** Merge two SqErrNotifier, left one has higher priority
+    */
   def ||(that: SqErrNotifier): SqErrNotifier = {
     assert(
       assertion = !(this.hasFatalErr() && that.hasFatalErr()),
@@ -1239,6 +1241,20 @@ case class RqDmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
   }
 }
 
+case class LenCheckElements(busWidth: BusWidth) extends Bundle {
+  val opcode = Bits(OPCODE_WIDTH bits)
+  val psn = UInt(PSN_WIDTH bits)
+  val psnStart = UInt(PSN_WIDTH bits)
+  val padCnt = UInt(PAD_COUNT_WIDTH bits)
+  val lenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
+  val mty = Bits(busWidth.id / BYTE_WIDTH bits)
+}
+
+case class LenCheckResult() extends Bundle {
+  val totalLenOutput = UInt(RDMA_MAX_LEN_WIDTH bits)
+  val isPktLenCheckErr = Bool()
+}
+
 case class ScatterGather() extends Bundle {
   val va = UInt(MEM_ADDR_WIDTH bits)
   val pa = UInt(MEM_ADDR_WIDTH bits)
@@ -1274,6 +1290,24 @@ case class ScatterGatherList() extends Bundle {
   }
 }
 
+case class WorkReqSendFlags() extends Bundle {
+  val flagBits = Bits(WR_FLAG_WIDTH bits)
+
+  def set(flags: SpinalEnumCraft[WorkReqSendFlagEnum.type]*): Unit = {
+    flagBits := flags.map(_.asBits).reduceBalancedTree(_ | _)
+  }
+
+  def init(): Unit = {
+    flagBits := 0 // No flags
+  }
+
+  def fence = (flagBits & WorkReqSendFlagEnum.FENCE.asBits).orR
+  def signaled = (flagBits & WorkReqSendFlagEnum.SIGNALED.asBits).orR
+  def solicited = (flagBits & WorkReqSendFlagEnum.SOLICITED.asBits).orR
+  def inline = (flagBits & WorkReqSendFlagEnum.INLINE.asBits).orR
+  def ipChkSum = (flagBits & WorkReqSendFlagEnum.IP_CSUM.asBits).orR
+}
+
 case class WorkReq() extends Bundle {
   val id = Bits(WR_ID_WIDTH bits)
   val opcode = WorkReqOpCode()
@@ -1282,7 +1316,7 @@ case class WorkReq() extends Bundle {
 //  val solicited = Bool()
   val sqpn = UInt(QPN_WIDTH bits)
   val ackreq = Bool()
-  val flags = Bits(WR_FLAG_WIDTH bits)
+  val flags = WorkReqSendFlags() // Bits(WR_FLAG_WIDTH bits)
 //  val fence = Bool()
   val swap = Bits(LONG_WIDTH bits)
   val comp = Bits(LONG_WIDTH bits)
@@ -1293,11 +1327,11 @@ case class WorkReq() extends Bundle {
   val lenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
   val lkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
 
-  def fence = (flags & WorkReqSendFlags.FENCE.asBits).orR
-  def signaled = (flags & WorkReqSendFlags.SIGNALED.asBits).orR
-  def solicited = (flags & WorkReqSendFlags.SOLICITED.asBits).orR
-  def inline = (flags & WorkReqSendFlags.INLINE.asBits).orR
-  def ipChkSum = (flags & WorkReqSendFlags.IP_CSUM.asBits).orR
+//  def fence = (flags & WorkReqSendFlags.FENCE.asBits).orR
+//  def signaled = (flags & WorkReqSendFlags.SIGNALED.asBits).orR
+//  def solicited = (flags & WorkReqSendFlags.SOLICITED.asBits).orR
+//  def inline = (flags & WorkReqSendFlags.INLINE.asBits).orR
+//  def ipChkSum = (flags & WorkReqSendFlags.IP_CSUM.asBits).orR
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
@@ -1308,7 +1342,7 @@ case class WorkReq() extends Bundle {
 //    solicited := False
     sqpn := 0
     ackreq := False
-    flags := 0
+    flags.init()
 //    fence := False
     swap := 0
     comp := 0
@@ -1581,8 +1615,28 @@ case class CachedWorkReqAndDmaReadResp(busWidth: BusWidth) extends Bundle {
 //  val workReqCacheResp = WorkReqCacheResp()
 }
 
+case class ResponseWithAeth(busWidth: BusWidth) extends Bundle {
+  val pktFrag = RdmaDataPkt(busWidth)
+  val aeth = AETH()
+  val workCompStatus = WorkCompStatus()
+}
+
+case class CachedWorkReqAndRespWithAeth(busWidth: BusWidth) extends Bundle {
+  val cachedWorkReq = CachedWorkReq()
+  val respValid = Bool() // False: implicit ACK, True: explicit ACK
+  val pktFrag = RdmaDataPkt(busWidth)
+  val aeth = AETH()
+  val workCompStatus = WorkCompStatus()
+}
+
+case class CachedWorkReqAndAck() extends Bundle {
+  val cachedWorkReq = CachedWorkReq()
+  val ackValid = Bool() // False: implicit ACK, True: explicit ACK
+  val ack = Acknowledge()
+  val workCompStatus = WorkCompStatus()
+}
+
 case class WorkCompAndAck() extends Bundle {
-//  val workCompValid = Bool()
   val workComp = WorkComp()
   val ackValid = Bool()
   val ack = Acknowledge()

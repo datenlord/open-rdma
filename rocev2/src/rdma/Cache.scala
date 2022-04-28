@@ -2,7 +2,7 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-//import ConstantSettings._
+import ConstantSettings._
 import RdmaConstants._
 import StreamVec._
 
@@ -879,7 +879,7 @@ class WorkReqCache(depth: Int) extends Component {
     val retryScanCtrlBus = slave(RamScanCtrlBus())
     val retryWorkReq = master(Stream(RamScanOut(CachedWorkReq())))
 //    val queryPort4SqReqDmaRead = slave(WorkReqCacheQueryBus())
-    val queryPort4SqRespDmaWrite = slave(WorkReqCacheQueryBus())
+//    val queryPort4SqRespDmaWrite = slave(WorkReqCacheQueryBus())
 //    val queryPort4DupReqDmaRead = slave(WorkReqCacheQueryBus())
   }
 
@@ -936,25 +936,16 @@ class WorkReqCache(depth: Int) extends Component {
 //      severity = FAILURE
 //    )
 //  }
-  val queryPortVec = Vec(
-//    io.queryPort4SqReqDmaRead,
-    io.queryPort4SqRespDmaWrite
-//    io.queryPort4DupReqDmaRead
-  )
-  for ((queryPort, portIdx) <- queryPortVec.zipWithIndex) {
-    cam.io.queryBusVec(portIdx).req << queryPort.req
-    queryPort.resp << cam.io.queryBusVec(portIdx).resp
-//    queryPort.resp << cache.io
-//      .queryBusVec(portIdx)
-//      .resp
-//      .translateWith {
-//        val result = cloneOf(queryPort.resp.payloadType)
-//        result.cachedWorkReq := cache.io.queryBusVec(portIdx).resp.respValue
-//        result.query := cache.io.queryBusVec(portIdx).resp.queryKey
-//        result.found := cache.io.queryBusVec(portIdx).resp.found
-//        result
-//      }
-  }
+
+//  val queryPortVec = Vec(
+////    io.queryPort4SqReqDmaRead,
+//    io.queryPort4SqRespDmaWrite
+////    io.queryPort4DupReqDmaRead
+//  )
+//  for ((queryPort, portIdx) <- queryPortVec.zipWithIndex) {
+//    cam.io.queryBusVec(portIdx).req << queryPort.req
+//    queryPort.resp << cam.io.queryBusVec(portIdx).resp
+//  }
 }
 
 // TODO: check MR size and permission
@@ -1053,7 +1044,8 @@ class PdAddrCache(depth: Int) extends Component {
 //    )
 //    reqQueue.io.push << queryReq4Queue
 
-    val queryPortVec = Vec(io.query.req)
+    val reqQueue = io.query.req.queueLowLatency(ADDR_CACHE_QUERY_DELAY_CYCLE)
+    val queryPortVec = Vec(reqQueue)
     val respPortVec = Vec(io.query.resp)
     for ((queryPort, portIdx) <- queryPortVec.zipWithIndex) {
       cam.io.queryBusVec(portIdx).req << queryPort

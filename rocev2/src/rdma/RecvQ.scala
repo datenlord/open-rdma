@@ -18,7 +18,7 @@ import ConstantSettings._
 // logging of the error) shall also be generated in the PSN order in which it
 // was received.
 
-// INCONSISTENT: atomic might not access memory in PSN order w.r.t. send and write
+// FIXME: atomic might not access memory in PSN order w.r.t. send and write
 
 // There is no alignment requirement for the source or
 // destination buffers of an RDMA READ message.
@@ -90,7 +90,7 @@ class RecvQ(busWidth: BusWidth) extends Component {
     reqAddrValidator.io.rx << reqDmaInfoExtractor.io.tx
     io.addrCacheRead << reqAddrValidator.io.addrCacheRead
 
-    val pktLenCheck = new PktLenCheck(busWidth)
+    val pktLenCheck = new ReqPktLenCheck(busWidth)
     pktLenCheck.io.qpAttr := io.qpAttr
     pktLenCheck.io.rxQCtrl := io.rxQCtrl
     pktLenCheck.io.rx << reqAddrValidator.io.tx
@@ -499,8 +499,8 @@ class DupReqHandlerAndReadAtomicRstCacheQuery(
   )
 
   val readAtomicRstCacheRespValid = joinStream.valid
-  val readAtomicRstCacheRespData = joinStream._2.respValue
-  val readAtomicRstCacheRespFound = joinStream._2.found
+  val readAtomicRstCacheRespData = joinStream._3.respValue
+  val readAtomicRstCacheRespFound = joinStream._3.found
   val readAtomicResultNotFound =
     readAtomicRstCacheRespValid && !readAtomicRstCacheRespFound
 
@@ -511,7 +511,7 @@ class DupReqHandlerAndReadAtomicRstCacheQuery(
     assert(
       assertion = readAtomicRstCacheRespFound,
       message =
-        L"${REPORT_TIME} time: duplicated read/atomic request with PSN=${joinStream._2.queryKey.queryPsn} not found, readAtomicRstCacheRespValid=${readAtomicRstCacheRespValid}, but readAtomicRstCacheRespFound=${readAtomicRstCacheRespFound}",
+        L"${REPORT_TIME} time: duplicated read/atomic request with PSN=${joinStream._3.queryKey.queryPsn} not found, readAtomicRstCacheRespValid=${readAtomicRstCacheRespValid}, but readAtomicRstCacheRespFound=${readAtomicRstCacheRespFound}",
       severity = ERROR
     )
 //    assert(
@@ -542,7 +542,7 @@ class DupReqHandlerAndReadAtomicRstCacheQuery(
     .translateWith {
       val result = cloneOf(io.dupReadReqAndRstCacheData.payloadType)
       result.pktFrag := forkJoinStream4Read._1.pktFrag
-      result.rstCacheData := forkJoinStream4Read._2.respValue
+      result.rstCacheData := forkJoinStream4Read._3.respValue
       when(isReadReq) {
         result.rstCacheData.duplicate := True
       }
@@ -678,7 +678,7 @@ class ReqDmaInfoExtractor(busWidth: BusWidth) extends Component {
       result.nakAeth := txNormal.nakAeth
       result.reqTotalLenValid := False
       result.reqTotalLenBytes
-        .assignDontCare() // This field will be updated in PktLenCheck
+        .assignDontCare() // This field will be updated in ReqPktLenCheck
       result.rxBufValid := txNormal.rxBufValid
       result.rxBuf := rxBuf
       result.dmaInfo := dmaInfo
@@ -760,7 +760,7 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
   val expectAddrCacheResp =
     (pktFragStream: Stream[Fragment[RqReqWithRxBufAndDmaInfo]]) =>
       new Composite(pktFragStream, "ReqAddrValidator_expectAddrCacheResp") {
-        val result = pktFragStream.valid && !pktFragStream.hasNak
+        val result = !pktFragStream.hasNak // && pktFragStream.valid
       }.result
 
   // Only send out AddrCache query when the input data is the first fragment of
@@ -784,6 +784,19 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
           OpCode.isLastOrOnlyReqPkt(pktFragStream.pktFrag.bth.opcode)
       }.result
 
+  val (joinStream, bufLenErr, keyErr, accessErr, addrCheckErr) =
+    AddrCacheQueryAndRespHandler(
+      io.rx.reqWithRxBufAndDmaInfo.throwWhen(io.rxQCtrl.stateErrFlush),
+      io.addrCacheRead,
+      inputAsRdmaDataPktFrag =
+        (reqWithRxBufAndDmaInfo: RqReqWithRxBufAndDmaInfo) =>
+          reqWithRxBufAndDmaInfo.pktFrag,
+      buildAddrCacheQuery = buildAddrCacheQuery,
+      addrCacheQueryCond = addrCacheQueryCond,
+      expectAddrCacheResp = expectAddrCacheResp,
+      addrCacheQueryRespJoinCond = addrCacheQueryRespJoinCond
+    )
+  /*
   val joinStream = FragmentStreamForkQueryJoinResp(
     io.rx.reqWithRxBufAndDmaInfo.throwWhen(io.rxQCtrl.stateErrFlush),
     io.addrCacheRead.req,
@@ -799,7 +812,7 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
   val inputPktFrag = joinStream._1.pktFrag
   val inputHasNak = joinStream._1.hasNak
 
-  val addrCacheQueryResp = joinStream._2
+  val addrCacheQueryResp = joinStream._3
   val sizeValid = addrCacheQueryResp.sizeValid
   val keyValid = addrCacheQueryResp.keyValid
   val accessValid = addrCacheQueryResp.accessValid
@@ -818,9 +831,9 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
   val bufLenErr = inputValid && !inputHasNak && !sizeValid
   val keyErr = inputValid && !inputHasNak && !keyValid
   val accessErr = inputValid && !inputHasNak && !accessValid
-  val checkPass =
-    inputValid && !inputHasNak && !keyErr && !bufLenErr && !accessErr
-
+  val addrCheckErr =
+    inputValid && !inputHasNak && (keyErr || bufLenErr || accessErr)
+   */
   val nakInvOrRmtAccAeth = AETH().setDefaultVal()
   when(bufLenErr) {
     nakInvOrRmtAccAeth.set(AckType.NAK_INV)
@@ -828,10 +841,11 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
     nakInvOrRmtAccAeth.set(AckType.NAK_RMT_ACC)
   }
 
-  val outputHasNak = !checkPass || inputHasNak
+  val inputHasNak = joinStream._1.hasNak
+  val outputHasNak = addrCheckErr || inputHasNak
   val outputNakAeth = cloneOf(joinStream._1.nakAeth)
   outputNakAeth := joinStream._1.nakAeth
-  when(!checkPass && !inputHasNak) {
+  when(addrCheckErr && !inputHasNak) {
     // TODO: if rdmaAck is retry NAK, should it be replaced by this NAK_INV or NAK_RMT_ACC?
     outputNakAeth := nakInvOrRmtAccAeth
   }
@@ -846,10 +860,10 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
       result.nakAeth := outputNakAeth
       result.reqTotalLenValid := False
       result.reqTotalLenBytes
-        .assignDontCare() // This field will be updated in PktLenCheck
+        .assignDontCare() // This field will be updated in ReqPktLenCheck
       result.rxBufValid := joinStream._1.rxBufValid
       result.rxBuf := joinStream._1.rxBuf
-      result.dmaInfo.pa := joinStream._2.pa
+      result.dmaInfo.pa := joinStream._3.pa
       result.dmaInfo.lrkey := joinStream._1.dmaInfo.lrkey
       result.dmaInfo.va := joinStream._1.dmaInfo.va
       result.dmaInfo.dlen := joinStream._1.dmaInfo.dlen
@@ -859,7 +873,7 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
 }
 
 // TODO: verify ICRC has been stripped off
-class PktLenCheck(busWidth: BusWidth) extends Component {
+class ReqPktLenCheck(busWidth: BusWidth) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -946,7 +960,7 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
     reqTotalLenBytesReg + curPktFragLenBytesLastPktAdjust
 
   val isReqTotalLenCheckErr = False
-  val isPktLenCheckErr = False
+  val isReqPktLenCheckErr = False
   val reqTotalLenValid = False
   val reqTotalLenBytes = U(0, RDMA_MAX_LEN_WIDTH bits)
   when(inputFire && (isSendReq || isWriteReq)) {
@@ -978,11 +992,11 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
         } elsewhen (OpCode.isFirstReqPkt(inputPktFrag.bth.opcode)) {
           reqTotalLenBytesReg := curReqTotalLenBytes
 
-          isPktLenCheckErr :=
+          isReqPktLenCheckErr :=
             curPktLenBytes =/= pmtuPktLenBytes(io.qpAttr.pmtu) ||
               padCntAdjust =/= 0
           assert(
-            assertion = !isPktLenCheckErr,
+            assertion = !isReqPktLenCheckErr,
             message =
               L"${REPORT_TIME} time: first request packet length check failed, opcode=${inputPktFrag.bth.opcode}, PSN=${inputPktFrag.bth.psn}, curPktLenBytes=${curPktLenBytes}, padCnt=${padCntAdjust}",
             severity = NOTE
@@ -990,14 +1004,20 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
         } elsewhen (OpCode.isMidReqPkt(inputPktFrag.bth.opcode)) {
           reqTotalLenBytesReg := curReqTotalLenBytes
 
-          isPktLenCheckErr :=
+          isReqPktLenCheckErr :=
             curPktLenBytes =/= pmtuPktLenBytes(io.qpAttr.pmtu) ||
               padCntAdjust =/= 0
           assert(
-            assertion = !isPktLenCheckErr,
+            assertion = !isReqPktLenCheckErr,
             message =
               L"${REPORT_TIME} time: middle request packet length check failed, opcode=${inputPktFrag.bth.opcode}, PSN=${inputPktFrag.bth.psn}, curPktLenBytes=${curPktLenBytes}, padCnt=${padCntAdjust}",
             severity = NOTE
+          )
+        } otherwise {
+          report(
+            message =
+              L"${REPORT_TIME} time: illegal opcode=${inputPktFrag.bth.opcode} when isFirstFrag=${isFirstFrag} and isLastFrag=${isLastFrag}",
+            severity = FAILURE
           )
         }
       }
@@ -1019,7 +1039,13 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
             severity = FAILURE // TODO: change to NOTE
           )
 
-          isPktLenCheckErr := True
+          isReqPktLenCheckErr := True
+        } otherwise {
+          report(
+            message =
+              L"${REPORT_TIME} time: illegal opcode=${inputPktFrag.bth.opcode} when isFirstFrag=${isFirstFrag} and isLastFrag=${isLastFrag}",
+            severity = FAILURE
+          )
         }
       }
       is(False ## False) { // !isFirstFrag && !isLastFrag // Middle fragment
@@ -1042,7 +1068,7 @@ class PktLenCheck(busWidth: BusWidth) extends Component {
     )
   }
 
-  val hasLenCheckErr = isReqTotalLenCheckErr || isPktLenCheckErr
+  val hasLenCheckErr = isReqTotalLenCheckErr || isReqPktLenCheckErr
   val nakInvAeth = AETH().set(AckType.NAK_INV)
   val nakAeth = cloneOf(io.rx.reqWithRxBufAndDmaInfo.nakAeth)
   val outputHasNak = inputHasNak || hasLenCheckErr

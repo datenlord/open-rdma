@@ -85,7 +85,7 @@ class WorkReqValidatorTest extends AnyFunSuite {
       dut.io.workReq.opcode #= workReqOpCode
       dut.io.workReq.lenBytes #= pktLen
       val noFlags = 0
-      dut.io.workReq.flags #= noFlags
+      dut.io.workReq.flags.flagBits #= noFlags
 
 //      input4SqOutPsnRangeQueue.enqueue(
 //        (
@@ -313,7 +313,7 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
       val pktNum = MiscUtils.computePktNum(workReqLen, pmtuLen)
       inputWorkReqStream.pktNum #= pktNum
       val noFlags = 0
-      inputWorkReqStream.workReq.flags #= noFlags
+      inputWorkReqStream.workReq.flags.flagBits #= noFlags
     }
     onStreamFire(inputWorkReqStream, dut.clockDomain) {
       val workReqOpCode = inputWorkReqStream.workReq.opcode.toEnum
