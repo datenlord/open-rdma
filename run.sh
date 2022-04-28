@@ -38,6 +38,10 @@ fi
 #$MILL rocev2.test.testOnly rdma.SetSuite
 # mill test is not compatible with SpinalHDL, use testOnly instead
 
+# Cache Test
+$MILL rocev2.test.testOnly rdma.ReadAtomicRstCacheTest
+$MILL rocev2.test.testOnly rdma.WorkReqCacheTest
+
 # SQ Test
 $MILL rocev2.test.testOnly rdma.SendReqGeneratorTest
 $MILL rocev2.test.testOnly rdma.WriteReqGeneratorTest
@@ -47,10 +51,10 @@ $MILL rocev2.test.testOnly rdma.SqOutTest # Slow test
 
 # Retry Handler Test
 $MILL rocev2.test.testOnly rdma.RetryHandlerTest
-$MILL rocev2.test.testOnly rdma.WorkReqCacheTest
 
 # Response Handler Test
 $MILL rocev2.test.testOnly rdma.CoalesceAndNormalAndRetryNakHandlerTest
+$MILL rocev2.test.testOnly rdma.ReadRespLenCheckTest
 $MILL rocev2.test.testOnly rdma.ReadAtomicRespVerifierAndFatalNakNotifierTest
 $MILL rocev2.test.testOnly rdma.ReadAtomicRespDmaReqInitiatorTest
 
@@ -61,7 +65,7 @@ $MILL rocev2.test.testOnly rdma.DupReqHandlerAndReadAtomicRstCacheQueryTest
 $MILL rocev2.test.testOnly rdma.DupReadDmaReqBuilderTest
 $MILL rocev2.test.testOnly rdma.ReqDmaInfoExtractorTest
 $MILL rocev2.test.testOnly rdma.ReqAddrValidatorTest
-$MILL rocev2.test.testOnly rdma.PktLenCheckTest
+$MILL rocev2.test.testOnly rdma.ReqPktLenCheckTest
 $MILL rocev2.test.testOnly rdma.ReqSplitterAndNakGenTest
 $MILL rocev2.test.testOnly rdma.RqSendWriteDmaReqInitiatorTest
 $MILL rocev2.test.testOnly rdma.RqReadAtomicDmaReqBuilderTest

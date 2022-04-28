@@ -65,7 +65,7 @@ class SendQ(busWidth: BusWidth) extends Component {
   respHandler.io.qpAttr := io.qpAttr
   respHandler.io.txQCtrl := io.txQCtrl
   respHandler.io.rx << io.rxResp
-  workReqCache.io.queryPort4SqRespDmaWrite << respHandler.io.workReqQuery
+//  workReqCache.io.queryPort4SqRespDmaWrite << respHandler.io.workReqQuery
   respHandler.io.cachedWorkReqPop << workReqCache.io.pop
   io.notifier.retry := respHandler.io.retryNotifier
   io.addrCacheRead4Resp << respHandler.io.addrCacheRead
@@ -97,74 +97,6 @@ class SendQ(busWidth: BusWidth) extends Component {
 
   io.tx << normalAndRetryWorkReqHandler.io.tx
 }
-
-//class ReqSender(busWidth: BusWidth) extends Component {
-//  val io = new Bundle {
-//    val qpAttr = in(QpAttrData())
-//    val txQCtrl = in(TxQCtrl())
-//    val workReqCacheEmpty = in(Bool())
-//    val npsnInc = out(NPsnInc())
-//    val errNotifier = out(SqErrNotifier())
-//    val workReq = slave(Stream(WorkReq()))
-//    val addrCacheRead = master(QpAddrCacheAgentReadBus())
-//    val sqOutPsnRangeFifoPush = master(Stream(ReqPsnRange()))
-//    val workReqCachePush = master(Stream(CachedWorkReq()))
-//    val workReqHasFence = out(Bool())
-//    val dmaRead = master(DmaReadBus(busWidth))
-//    val workCompErr = master(Stream(WorkComp()))
-//    val txSendReq = master(RdmaDataBus(busWidth))
-//    val txWriteReq = master(RdmaDataBus(busWidth))
-//    val txReadReq = master(Stream(ReadReq()))
-//    val txAtomicReq = master(Stream(AtomicReq()))
-//  }
-//
-//  val workReqValidator = new WorkReqValidator
-//  workReqValidator.io.qpAttr := io.qpAttr
-//  workReqValidator.io.txQCtrl := io.txQCtrl
-//  workReqValidator.io.workReq << io.workReq
-//  io.addrCacheRead << workReqValidator.io.addrCacheRead
-//  io.workCompErr << workReqValidator.io.workCompErr
-//  io.sqOutPsnRangeFifoPush << workReqValidator.io.sqOutPsnRangeFifoPush
-//  io.npsnInc := workReqValidator.io.npsnInc
-//  io.errNotifier := workReqValidator.io.errNotifier
-//
-//  val workReqCacheHandler =
-//    new WorkReqFenceHandler
-//  workReqCacheHandler.io.qpAttr := io.qpAttr
-//  workReqCacheHandler.io.txQCtrl := io.txQCtrl
-//  workReqCacheHandler.io.workReqCacheEmpty := io.workReqCacheEmpty
-//  workReqCacheHandler.io.workReqToCache << workReqValidator.io.workReqToCache
-//  io.workReqCachePush << workReqCacheHandler.io.workReqCachePush
-//  io.workReqHasFence := workReqCacheHandler.io.workReqHasFence
-////  io.psnInc := workReqCacheHandler.io.psnInc
-//  io.dmaRead.req << workReqCacheHandler.io.dmaRead.req
-//
-//  val sqDmaReadRespHandler = new SqDmaReadRespHandler(busWidth)
-//  sqDmaReadRespHandler.io.txQCtrl := io.txQCtrl
-//  sqDmaReadRespHandler.io.dmaReadResp.resp << io.dmaRead.resp
-//  sqDmaReadRespHandler.io.cachedWorkReq << workReqCacheHandler.io.cachedWorkReqOut
-////  io.workReqQueryPort4SqDmaReadResp << sqDmaReadRespHandler.io.workReqQuery
-//
-//  val sendWriteReqSegment = new SendWriteReqSegment(busWidth)
-//  sendWriteReqSegment.io.qpAttr := io.qpAttr
-//  sendWriteReqSegment.io.txQCtrl := io.txQCtrl
-//  sendWriteReqSegment.io.cachedWorkReqAndDmaReadResp << sqDmaReadRespHandler.io.cachedWorkReqAndDmaReadResp
-//
-//  val sendReqGenerator = new SendReqGenerator(busWidth)
-//  sendReqGenerator.io.qpAttr := io.qpAttr
-//  sendReqGenerator.io.txQCtrl := io.txQCtrl
-//  sendReqGenerator.io.cachedWorkReqAndDmaReadResp << sendWriteReqSegment.io.sendCachedWorkReqAndDmaReadResp
-//
-//  val writeReqGenerator = new WriteReqGenerator(busWidth)
-//  writeReqGenerator.io.qpAttr := io.qpAttr
-//  writeReqGenerator.io.txQCtrl := io.txQCtrl
-//  writeReqGenerator.io.cachedWorkReqAndDmaReadResp << sendWriteReqSegment.io.writeCachedWorkReqAndDmaReadResp
-//
-//  io.txSendReq << sendReqGenerator.io.txReq
-//  io.txWriteReq << writeReqGenerator.io.txReq
-//  io.txAtomicReq << workReqCacheHandler.io.txAtomicReq
-//  io.txReadReq << workReqCacheHandler.io.txReadReq
-//}
 
 class NormalAndRetryWorkReqHandler(busWidth: BusWidth) extends Component {
   val io = new Bundle {
@@ -450,7 +382,7 @@ class WorkReqFenceHandler extends Component {
   val isReadWorkReq = WorkReqOpCode.isReadReq(cachedWorkReq.workReq.opcode)
   val isAtomicWorkReq = WorkReqOpCode.isAtomicReq(cachedWorkReq.workReq.opcode)
 
-  val fenceWaitCond = cachedWorkReq.workReq.fence && !io.workReqCacheEmpty
+  val fenceWaitCond = cachedWorkReq.workReq.flags.fence && !io.workReqCacheEmpty
   // FENCE state trigger condition
 //  io.workReqHasFence := cachedWorkReqValid && fenceWaitCond
 //  val (workReq4CachePush, workReq4Output) = StreamFork2(

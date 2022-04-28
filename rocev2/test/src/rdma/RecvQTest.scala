@@ -788,10 +788,10 @@ class ReqAddrValidatorTest extends AnyFunSuite {
               f"${simTime()} time: hasNakIn=${hasNakIn} should equal hasNakOut=${hasNakOut} when addrCacheQuerySuccess=${addrCacheQuerySuccess} or inputHasNak=${inputHasNak}"
           } else {
             hasNakIn shouldBe false withClue
-              f"${simTime()} time: hasNakIn=${hasNakIn} should equal hasNakOut=${hasNakOut} when addrCacheQuerySuccess=${addrCacheQuerySuccess} and inputHasNak=${inputHasNak}"
+              f"${simTime()} time: hasNakIn=${hasNakIn} should be false when addrCacheQuerySuccess=${addrCacheQuerySuccess} and inputHasNak=${inputHasNak}"
 
             hasNakOut shouldBe true withClue
-              f"${simTime()} time: hasNakIn=${hasNakIn} should equal hasNakOut=${hasNakOut} when addrCacheQuerySuccess=${addrCacheQuerySuccess} and inputHasNak=${inputHasNak}"
+              f"${simTime()} time: hasNakOut=${hasNakIn} should be true when addrCacheQuerySuccess=${addrCacheQuerySuccess} and inputHasNak=${inputHasNak}"
           }
           if (!inputHasNak) {
             if (opCodeOut.isFirstOrOnlyReqPkt() && fragLastOut) {
@@ -834,13 +834,13 @@ class ReqAddrValidatorTest extends AnyFunSuite {
   }
 }
 
-class PktLenCheckTest extends AnyFunSuite {
+class ReqPktLenCheckTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
   val pmtuLen = PMTU.U256
   val maxFragNum = 137
 
   val simCfg = SimConfig.allOptimisation.withWave
-    .compile(new PktLenCheck(busWidth))
+    .compile(new ReqPktLenCheck(busWidth))
 
   def testFunc(inputHasNak: Boolean, hasLenCheckErr: Boolean): Unit =
     simCfg.doSim { dut =>

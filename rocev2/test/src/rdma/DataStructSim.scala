@@ -5,7 +5,7 @@ import spinal.core.sim._
 import spinal.lib._
 
 import ConstantSettings._
-import OpCodeSim._
+//import OpCodeSim._
 //import PsnSim._
 import RdmaConstants._
 import RdmaTypeReDef._
@@ -38,6 +38,7 @@ object RdmaTypeReDef {
   type QPN = Int
   type PktFragData = BigInt
   type WorkReqId = BigInt
+  type WorkReqFlags = Int
   type WorkReqValid = Boolean
   type WidthBytes = Int
 
@@ -548,6 +549,17 @@ object AckTypeSim {
   val fatalNakType =
     Seq(AckType.NAK_INV, AckType.NAK_RMT_ACC, AckType.NAK_RMT_OP)
 
+  def toWorkCompStatus(
+      ackType: SpinalEnumElement[AckType.type]
+  ): SpinalEnumElement[WorkCompStatus.type] = {
+    ackType match {
+      case AckType.NAK_INV     => WorkCompStatus.REM_INV_REQ_ERR
+      case AckType.NAK_RMT_ACC => WorkCompStatus.REM_ACCESS_ERR
+      case AckType.NAK_RMT_OP  => WorkCompStatus.REM_OP_ERR
+      case _                   => WorkCompStatus.SUCCESS
+    }
+  }
+
   def randomRetryNak(): SpinalEnumElement[AckType.type] = {
     val nakTypes = retryNakTypes
     val randIdx = scala.util.Random.nextInt(nakTypes.size)
@@ -928,6 +940,18 @@ object OpCodeSim {
     result
   }
 
+  def randomNonReadRespOpCode(): OpCode.Value = {
+    val opCodes =
+      Seq(OpCode.ACKNOWLEDGE, OpCode.ATOMIC_ACKNOWLEDGE)
+    val randIdx = scala.util.Random.nextInt(opCodes.size)
+    val result = opCodes(randIdx)
+    require(
+      opCodes.contains(result),
+      f"${simTime()} time: non-read response opcode should contain ${result}"
+    )
+    result
+  }
+
   implicit class OpCodeExt(val opcode: OpCode.Value) {
     def getPktHeaderLenBytes(): Int = {
       val bthWidth = widthOf(BTH())
@@ -1056,6 +1080,22 @@ object OpCodeSim {
         case OpCode.RDMA_READ_RESPONSE_FIRST |
             OpCode.RDMA_READ_RESPONSE_MIDDLE | OpCode.RDMA_READ_RESPONSE_LAST |
             OpCode.RDMA_READ_RESPONSE_ONLY =>
+          true
+        case _ => false
+      }
+    }
+
+    def isFirstOrOnlyReadRespPkt(): Boolean = {
+      opcode match {
+        case OpCode.RDMA_READ_RESPONSE_FIRST | OpCode.RDMA_READ_RESPONSE_ONLY =>
+          true
+        case _ => false
+      }
+    }
+
+    def isLastOrOnlyReadRespPkt(): Boolean = {
+      opcode match {
+        case OpCode.RDMA_READ_RESPONSE_LAST | OpCode.RDMA_READ_RESPONSE_ONLY =>
           true
         case _ => false
       }
@@ -1575,11 +1615,14 @@ object CamFifoSim {
 }*/
 
 object RdmaDataPktSim {
+  import OpCodeSim._
+
   private def pktFragStreamMasterDriverHelper[T <: Data](
       stream: Stream[Fragment[T]],
-      getRdmaPktData: T => RdmaDataPkt,
+      getRdmaPktDataFunc: T => RdmaDataPkt,
       clockDomain: ClockDomain,
-      alwaysValid: Boolean
+      alwaysValid: Boolean,
+      isReadRespGen: Boolean
   )(
       outerLoopBody: => (
           PsnStart,
@@ -1623,7 +1666,12 @@ object RdmaDataPktSim {
 
         // Inner loop
         for (pktIdx <- 0 until pktNum) {
-          val opcode = WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx, pktNum)
+          val opcode = if (isReadRespGen) {
+            WorkReqSim.assignReadRespOpCode(pktIdx, pktNum)
+          } else {
+            WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx, pktNum)
+          }
+
           val headerLenBytes = opcode.getPktHeaderLenBytes()
           val psn = psnStart + pktIdx
           val pktFragNum = computePktFragNum(
@@ -1648,7 +1696,7 @@ object RdmaDataPktSim {
             )
 
 //            println(
-//              f"${simTime()} time: opcode=${opcode}, pktIdx=${pktIdx}%X, pktNum=${pktNum}%X, fragIdx=${fragIdx}%X, pktFragNum=${pktFragNum}%X, fragLast=${fragLast}, mty=${mty}%X, PSN=${psn}%X, headerLenBytes=${headerLenBytes}%X, payloadLenBytes=${payloadLenBytes}%X, lastOrOnlyPktTotalLenBytes=${lastOrOnlyPktTotalLenBytes}%X, padCnt=${padCnt}%X"
+//              f"${simTime()} time: opcode=${opcode}, pktIdx=${pktIdx}%X, pktNum=${pktNum}%X, fragIdx=${fragIdx}%X, pktFragNum=${pktFragNum}%X, fragLast=${fragLast}, mty=${mty}%X, PSN=${psn}%X, headerLenBytes=${headerLenBytes}%X, payloadLenBytes=${payloadLenBytes}%X"
 //            )
             do {
               if (alwaysValid) {
@@ -1665,7 +1713,7 @@ object RdmaDataPktSim {
 
             stream.last #= fragLast // Set last must after set payload, since last is part of the payload
             setRdmaDataFrag(
-              getRdmaPktData(stream.fragment),
+              getRdmaPktDataFunc(stream.fragment),
               psn,
               opcode,
               fragIdx,
@@ -1706,7 +1754,7 @@ object RdmaDataPktSim {
 
   def pktFragStreamMasterDriver[T <: Data](
       stream: Stream[Fragment[T]],
-      getRdmaPktData: T => RdmaDataPkt,
+      getRdmaPktDataFunc: T => RdmaDataPkt,
       clockDomain: ClockDomain
   )(
       outerLoopBody: => (
@@ -1734,14 +1782,15 @@ object RdmaDataPktSim {
   ): Unit =
     pktFragStreamMasterDriverHelper(
       stream,
-      getRdmaPktData,
+      getRdmaPktDataFunc,
       clockDomain,
-      alwaysValid = false
+      alwaysValid = false,
+      isReadRespGen = false
     )(outerLoopBody)(innerLoopFunc)
 
   def pktFragStreamMasterDriverAlwaysValid[T <: Data](
       stream: Stream[Fragment[T]],
-      getRdmaPktData: T => RdmaDataPkt,
+      getRdmaPktDataFunc: T => RdmaDataPkt,
       clockDomain: ClockDomain
   )(
       outerLoopBody: => (
@@ -1769,108 +1818,231 @@ object RdmaDataPktSim {
   ): Unit =
     pktFragStreamMasterDriverHelper(
       stream,
-      getRdmaPktData,
+      getRdmaPktDataFunc,
       clockDomain,
-      alwaysValid = true
+      alwaysValid = true,
+      isReadRespGen = false
     )(outerLoopBody)(innerLoopFunc)
 
-//    fork {
-//      stream.valid #= false
-////      sleep(0)
-//      clockDomain.waitSampling()
-//
-//      // Outer loop
-//      while (true) {
-//        val (
-//          psnStart,
-//          _, // payloadFragNum,
-//          pktNum,
-//          pmtuLen,
-//          busWidth,
-//          payloadLenBytes,
-//          workReqOpCode
-//        ) =
-//          outerLoopBody
-//
-//        // Inner loop
-//        for (pktIdx <- 0 until pktNum) {
-//          val opcode = WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx, pktNum)
-//          val headerLenBytes = opcode.getPktHeaderLenBytes()
-//          val psn = psnStart + pktIdx
-//          val pktFragNum = computePktFragNum(
-//            pmtuLen,
-//            busWidth,
-//            opcode,
-//            payloadLenBytes,
-//            pktIdx,
-//            pktNum
-//          )
-//
-//          for (fragIdx <- 0 until pktFragNum) {
-//            val fragLast = fragIdx == pktFragNum - 1
-//            val mty = computeMty(
-//              pmtuLen,
-//              busWidth,
-//              opcode,
-//              fragLast,
-//              pktIdx,
-//              pktNum,
-//              payloadLenBytes
-//            )
-//
-////            println(
-////              f"${simTime()} time: opcode=${opcode}, pktIdx=${pktIdx}%X, pktNum=${pktNum}%X, fragIdx=${fragIdx}%X, pktFragNum=${pktFragNum}%X, fragLast=${fragLast}, mty=${mty}%X, PSN=${psn}%X, headerLenBytes=${headerLenBytes}%X, payloadLenBytes=${payloadLenBytes}%X, lastOrOnlyPktTotalLenBytes=${lastOrOnlyPktTotalLenBytes}%X, padCnt=${padCnt}%X"
-////            )
-//            do {
-//              stream.valid.randomize()
-////              stream.valid #= true
-//              stream.payload.randomize()
-//              sleep(0)
-//              if (!stream.valid.toBoolean) {
-//                clockDomain.waitSampling()
-//              }
-//            } while(!stream.valid.toBoolean)
-//
-//            stream.last #= fragLast // Set last must after set payload, since last is part of the payload
-//            setRdmaDataFrag(
-//              getRdmaPktData(stream.fragment),
-//              psn,
-//              opcode,
-//              fragIdx,
-//              fragLast,
-//              pktIdx,
-//              pktNum,
-//              payloadLenBytes,
-//              mty,
-//              pmtuLen,
-//              busWidth
-//            )
-//
-//            innerLoopFunc(
-//              psn,
-//              psnStart,
-//              fragLast,
-//              fragIdx,
-//              pktFragNum,
-//              pktIdx,
-//              pktNum,
-//              payloadLenBytes,
-//              headerLenBytes,
-//              opcode
-//            )
-////            if (pktIdx == pktNum - 1 && fragIdx == pktFragNum - 1) {
-////              require(
-////                pktIdx == pktNum - 1,
-////                f"${simTime()} time: this fragment with fragIdx=${fragIdx}%X is the last one, pktIdx=${pktIdx}%X should equal pktNum=${pktNum}%X-1"
-////              )
-////            }
-//            clockDomain.waitSamplingWhere(
-//              stream.valid.toBoolean && stream.ready.toBoolean
-//            )
-//          }
-//        }
-//      }
-//    }
+  def readRespPktFragStreamMasterDriver2[T <: Data](
+      clockDomain: ClockDomain,
+      stream: Stream[Fragment[T]],
+      getRdmaPktDataFunc: T => RdmaDataPkt,
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      maxFragNum: Int
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          PktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit = {
+    val outerLoopBody = {
+      val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
+        SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
+
+      val payloadFragNum = totalFragNumItr.next()
+      val pktNum = pktNumItr.next()
+      val psnStart = psnStartItr.next()
+      val payloadLenBytes = totalLenItr.next()
+
+//      println(
+//        f"${simTime()} time: pktNum=${pktNum}%X, totalFragNum=${totalFragNum}%X, psnStart=${psnStart}%X, totalLenBytes=${totalLenBytes}%X"
+//      )
+      val workReqOpCode = WorkReqOpCode.RDMA_READ
+      (
+        psnStart,
+        payloadFragNum,
+        pktNum,
+        pmtuLen,
+        busWidth,
+        payloadLenBytes.toLong,
+        workReqOpCode
+      )
+    }
+    pktFragStreamMasterDriverHelper(
+      stream,
+      getRdmaPktDataFunc,
+      clockDomain,
+      alwaysValid = false,
+      isReadRespGen = true
+    )(outerLoopBody)(innerLoopFunc)
+  }
+
+  def readRespPktFragStreamMasterDriverAlwaysValid2[T <: Data](
+      clockDomain: ClockDomain,
+      stream: Stream[Fragment[T]],
+      getRdmaPktDataFunc: T => RdmaDataPkt,
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      maxFragNum: Int
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          PktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit = {
+    val outerLoopBody = {
+      val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
+        SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
+
+      val payloadFragNum = totalFragNumItr.next()
+      val pktNum = pktNumItr.next()
+      val psnStart = psnStartItr.next()
+      val payloadLenBytes = totalLenItr.next()
+
+      //      println(
+      //        f"${simTime()} time: pktNum=${pktNum}%X, totalFragNum=${totalFragNum}%X, psnStart=${psnStart}%X, totalLenBytes=${totalLenBytes}%X"
+      //      )
+      val workReqOpCode = WorkReqOpCode.RDMA_READ
+      (
+        psnStart,
+        payloadFragNum,
+        pktNum,
+        pmtuLen,
+        busWidth,
+        payloadLenBytes.toLong,
+        workReqOpCode
+      )
+    }
+    pktFragStreamMasterDriverHelper(
+      stream,
+      getRdmaPktDataFunc,
+      clockDomain,
+      alwaysValid = true,
+      isReadRespGen = true
+    )(outerLoopBody)(innerLoopFunc)
+  }
+
+  def readRespPktFragStreamMasterDriver[T <: Data](
+      stream: Stream[Fragment[T]],
+      getRdmaPktDataFunc: T => RdmaDataPkt,
+      clockDomain: ClockDomain
+  )(
+      outerLoopBody: => (
+          PsnStart,
+          FragNum,
+          PktNum,
+          PMTU.Value,
+          BusWidth.Value,
+          PktLen
+      )
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          PktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit = {
+    val outerLoopBodyExt = {
+      val (
+        psnStart,
+        payloadFragNum,
+        pktNum,
+        pmtuLen,
+        busWidth,
+        payloadLenBytes
+      ) =
+        outerLoopBody
+      val workReqOpCode = WorkReqOpCode.RDMA_READ
+      (
+        psnStart,
+        payloadFragNum,
+        pktNum,
+        pmtuLen,
+        busWidth,
+        payloadLenBytes,
+        workReqOpCode
+      )
+    }
+    pktFragStreamMasterDriverHelper(
+      stream,
+      getRdmaPktDataFunc,
+      clockDomain,
+      alwaysValid = false,
+      isReadRespGen = true
+    )(outerLoopBodyExt)(innerLoopFunc)
+  }
+
+  def readRespPktFragStreamMasterDriverAlwaysValid[T <: Data](
+      stream: Stream[Fragment[T]],
+      getRdmaPktDataFunc: T => RdmaDataPkt,
+      clockDomain: ClockDomain
+  )(
+      outerLoopBody: => (
+          PsnStart,
+          FragNum,
+          PktNum,
+          PMTU.Value,
+          BusWidth.Value,
+          PktLen
+      )
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          PktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit = {
+    val outerLoopBodyExt = {
+      val (
+        psnStart,
+        payloadFragNum,
+        pktNum,
+        pmtuLen,
+        busWidth,
+        payloadLenBytes
+      ) =
+        outerLoopBody
+      val workReqOpCode = WorkReqOpCode.RDMA_READ
+      (
+        psnStart,
+        payloadFragNum,
+        pktNum,
+        pmtuLen,
+        busWidth,
+        payloadLenBytes,
+        workReqOpCode
+      )
+    }
+    pktFragStreamMasterDriverHelper(
+      stream,
+      getRdmaPktDataFunc,
+      clockDomain,
+      alwaysValid = true,
+      isReadRespGen = true
+    )(outerLoopBodyExt)(innerLoopFunc)
+  }
 
   def buildPktMetaDataHelper(
       pmtuLen: PMTU.Value,
