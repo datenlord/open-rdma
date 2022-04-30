@@ -63,7 +63,7 @@ $MILL rocev2.test.testOnly rdma.ReqCommCheckTest
 $MILL rocev2.test.testOnly rdma.ReqRnrCheckTest
 $MILL rocev2.test.testOnly rdma.DupReqHandlerAndReadAtomicRstCacheQueryTest
 $MILL rocev2.test.testOnly rdma.DupReadDmaReqBuilderTest
-$MILL rocev2.test.testOnly rdma.ReqDmaInfoExtractorTest
+$MILL rocev2.test.testOnly rdma.ReqAddrInfoExtractorTest
 $MILL rocev2.test.testOnly rdma.ReqAddrValidatorTest
 $MILL rocev2.test.testOnly rdma.ReqPktLenCheckTest
 $MILL rocev2.test.testOnly rdma.ReqSplitterAndNakGenTest

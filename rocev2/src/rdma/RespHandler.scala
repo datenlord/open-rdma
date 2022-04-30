@@ -557,7 +557,7 @@ class ReadRespLenCheck(busWidth: BusWidth) extends Component {
       val lenCheckElements = LenCheckElements(busWidth)
       lenCheckElements.opcode := io.cachedWorkReqAndRespWithAethIn.pktFrag.bth.opcode
       lenCheckElements.psn := io.cachedWorkReqAndRespWithAethIn.pktFrag.bth.psn
-      lenCheckElements.psnStart := io.cachedWorkReqAndRespWithAethIn.cachedWorkReq.psnStart
+//      lenCheckElements.psnStart := io.cachedWorkReqAndRespWithAethIn.cachedWorkReq.psnStart
       lenCheckElements.padCnt := io.cachedWorkReqAndRespWithAethIn.pktFrag.bth.padCnt
       lenCheckElements.lenBytes := io.cachedWorkReqAndRespWithAethIn.cachedWorkReq.workReq.lenBytes
       lenCheckElements.mty := io.cachedWorkReqAndRespWithAethIn.pktFrag.mty
@@ -584,16 +584,16 @@ class ReadRespLenCheck(busWidth: BusWidth) extends Component {
     isMidPkt = isReadMidRespPkt,
     isLastPkt = isReadLastRespPkt,
     isOnlyPkt = isReadOnlyRespPkt,
-    firstPktLenAdjustFunc = (_: Bits) => {
+    firstPktHeaderLenFunc = (_: Bits) => {
       bthLenBytes + aethLenBytes
     },
-    midPktLenAdjustFunc = (_: Bits) => {
+    midPktHeaderLenFunc = (_: Bits) => {
       bthLenBytes
     },
-    lastPktLenAdjustFunc = (_: Bits) => {
+    lastPktHeaderLenFunc = (_: Bits) => {
       bthLenBytes + aethLenBytes
     },
-    onlyPktLenAdjustFunc = (_: Bits) => {
+    onlyPktHeaderLenFunc = (_: Bits) => {
       bthLenBytes + aethLenBytes
     }
   )
@@ -614,7 +614,7 @@ class ReadRespLenCheck(busWidth: BusWidth) extends Component {
   )
   // Read first response might not start from WR PsnStart, due to retry
   val readRespFirstPktPsn = readRespLenCheckWithFirstPktPsnFlow._2
-  val workReqPsnStart = readRespLenCheckWithFirstPktPsnFlow._1.psnStart
+  val workReqPsnStart = io.cachedWorkReqAndRespWithAethIn.cachedWorkReq.psnStart
   val workReqOrigTotalLenBytes =
     readRespLenCheckWithFirstPktPsnFlow._1.lenBytes
   val psnDiff = PsnUtil.diff(readRespFirstPktPsn, workReqPsnStart)

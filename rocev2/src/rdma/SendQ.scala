@@ -247,6 +247,7 @@ class WorkReqValidator extends Component {
         result.psnStart := io.qpAttr.npsn
         result.pktNum := numReqPkt.resize(PSN_WIDTH)
         // PA will be updated after QpAddrCacheAgent query
+        // TODO: remove this
         result.pa.assignDontCare()
 //        result.rnrCnt := 0 // New WR has no RNR
 //        result.retryCnt := 0 // New WR has no retry
