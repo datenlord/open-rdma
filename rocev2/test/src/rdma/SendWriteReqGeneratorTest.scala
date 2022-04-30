@@ -18,7 +18,7 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
   def workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
 
   test("zero DMA length send/write request test") {
-    simCfg.doSim(1915529676) { dut =>
+    simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
       val inputPsnQueue = mutable.Queue[PSN]()
@@ -63,7 +63,7 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
   }
 
   test("non-zero DMA length send/write request test") {
-    simCfg.doSim(858333439) { dut =>
+    simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
       val inputDataQueue =

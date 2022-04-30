@@ -34,7 +34,7 @@ class WorkReqValidatorTest extends AnyFunSuite {
   def testFunc(
       normalOrErrorCase: Boolean,
       addrCacheQueryErrOrFlushErr: Boolean
-  ) = simCfg.doSim(978490405) { dut =>
+  ) = simCfg.doSim { dut =>
     dut.clockDomain.forkStimulus(10)
 
     dut.io.qpAttr.pmtu #= pmtuLen.id

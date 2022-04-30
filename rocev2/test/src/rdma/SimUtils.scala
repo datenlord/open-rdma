@@ -463,6 +463,9 @@ object StreamSimUtil {
       clockDomain: ClockDomain,
       alwaysValid: Boolean
   ): mutable.Queue[RespData] = {
+    reqStream.ready #= true
+    respStream.valid #= false
+
     val reqQueue = mutable.Queue[ReqData]()
     val respQueue = mutable.Queue[RespData]()
 

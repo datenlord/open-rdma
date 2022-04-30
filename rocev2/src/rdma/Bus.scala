@@ -208,7 +208,7 @@ case class RqNakNotifier() extends Bundle {
       report(
         message =
           L"${REPORT_TIME} time: illegal AETH to set NakNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}",
-        severity = WARNING
+        severity = ERROR
       )
       this.assignDontCare() // setInvReq()
     }
@@ -1244,7 +1244,7 @@ case class RqDmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
 case class LenCheckElements(busWidth: BusWidth) extends Bundle {
   val opcode = Bits(OPCODE_WIDTH bits)
   val psn = UInt(PSN_WIDTH bits)
-  val psnStart = UInt(PSN_WIDTH bits)
+//  val psnStart = UInt(PSN_WIDTH bits)
   val padCnt = UInt(PAD_COUNT_WIDTH bits)
   val lenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
   val mty = Bits(busWidth.id / BYTE_WIDTH bits)
@@ -1749,11 +1749,11 @@ case class WorkComp() extends Bundle {
     } elsewhen (OpCode.isWriteWithImmReqPkt(reqOpCode)) {
       opcode := WorkCompOpCode.RECV_RDMA_WITH_IMM
     } otherwise {
-//      report(
-//        message =
-//          L"${REPORT_TIME} time: unmatched WC opcode at RQ side for request opcode=${reqOpCode}",
-//        severity = WARNING
-//      )
+      report(
+        message =
+          L"${REPORT_TIME} time: unmatched WC opcode at RQ side for request opcode=${reqOpCode}",
+        severity = ERROR
+      )
       opcode.assignDontCare()
     }
     this
@@ -2264,21 +2264,6 @@ case class SqReadAtomicRespWithDmaInfoBus(busWidth: BusWidth)
   override def asMaster(): Unit = master(respWithDmaInfo)
 }
 
-case class DmaInfo() extends Bundle {
-  val va = UInt(MEM_ADDR_WIDTH bits)
-  val pa = UInt(MEM_ADDR_WIDTH bits)
-  val lrkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
-  val dlen = UInt(RDMA_MAX_LEN_WIDTH bits)
-
-  def init(): this.type = {
-    va := 0
-    pa := 0
-    lrkey := 0
-    dlen := 0
-    this
-  }
-}
-
 case class RqReqCheckRst() extends Bundle {
   val isPsnCheckPass = Bool()
   val isDupReq = Bool()
@@ -2340,21 +2325,75 @@ case class RqReqCommCheckRstBus(busWidth: BusWidth)
   override def asMaster(): Unit = master(checkRst)
 }
 
+case class VirtualAddrInfo() extends Bundle {
+  val va = UInt(MEM_ADDR_WIDTH bits)
+  //  val pa = UInt(MEM_ADDR_WIDTH bits)
+  val lrkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
+  val dlen = UInt(RDMA_MAX_LEN_WIDTH bits)
+
+  def init(): this.type = {
+    va := 0
+    //    pa := 0
+    lrkey := 0
+    dlen := 0
+    this
+  }
+}
+
+case class RqReqWithRxBufAndVirtualAddrInfo(busWidth: BusWidth) extends Bundle {
+  val pktFrag = RdmaDataPkt(busWidth)
+  val preOpCode = Bits(OPCODE_WIDTH bits)
+  val hasNak = Bool()
+  val nakAeth = AETH()
+  // RxWorkReq is only valid at the first or only fragment for send,
+  // or valid at the last or only fragment for write imm
+  val rxBufValid = Bool()
+  val rxBuf = RxWorkReq()
+  // VirtualAddrInfo is always valid for send/write/read/atomic requests
+  val virtualAddrInfo = VirtualAddrInfo()
+}
+
+case class RqReqWithRxBufAndVirtualAddrInfoBus(busWidth: BusWidth)
+    extends Bundle
+    with IMasterSlave {
+  val reqWithRxBufAndVirtualAddrInfo = Stream(
+    Fragment(RqReqWithRxBufAndVirtualAddrInfo(busWidth))
+  )
+
+  def >>(that: RqReqWithRxBufAndVirtualAddrInfoBus): Unit = {
+    this.reqWithRxBufAndVirtualAddrInfo >> that.reqWithRxBufAndVirtualAddrInfo
+  }
+
+  def <<(that: RqReqWithRxBufAndVirtualAddrInfoBus): Unit = that >> this
+
+  override def asMaster(): Unit = master(reqWithRxBufAndVirtualAddrInfo)
+}
+
+case class DmaInfo() extends Bundle {
+  //  val va = UInt(MEM_ADDR_WIDTH bits)
+  val pa = UInt(MEM_ADDR_WIDTH bits)
+  //  val lrkey = Bits(LRKEY_IMM_DATA_WIDTH bits)
+  val dlen = UInt(RDMA_MAX_LEN_WIDTH bits)
+
+  def init(): this.type = {
+    //    va := 0
+    pa := 0
+    //    lrkey := 0
+    dlen := 0
+    this
+  }
+}
+
 case class RqReqWithRxBufAndDmaInfo(busWidth: BusWidth) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
   val nakAeth = AETH()
-  // reqTotalLenValid is only for the last fragment of send/write request packet
-  val reqTotalLenValid = Bool()
-  val reqTotalLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
   // RxWorkReq is only valid at the first or only fragment for send,
   // or valid at the last or only fragment for write imm
   val rxBufValid = Bool()
   val rxBuf = RxWorkReq()
-  // DmaInfo is only valid at the first or only fragment
-  // TODO: remove this, DMA info should be always valid
-//  val dmaHeaderValid = Bool()
+  // DmaInfo is always valid for send/write/read/atomic requests
   val dmaInfo = DmaInfo()
 }
 
@@ -2372,6 +2411,39 @@ case class RqReqWithRxBufAndDmaInfoBus(busWidth: BusWidth)
   def <<(that: RqReqWithRxBufAndDmaInfoBus): Unit = that >> this
 
   override def asMaster(): Unit = master(reqWithRxBufAndDmaInfo)
+}
+
+case class RqReqWithRxBufAndDmaInfoWithLenCheck(busWidth: BusWidth)
+    extends Bundle {
+  val pktFrag = RdmaDataPkt(busWidth)
+  val preOpCode = Bits(OPCODE_WIDTH bits)
+  val hasNak = Bool()
+  val nakAeth = AETH()
+  // reqTotalLenValid is only for the last fragment of send/write request packet
+  val reqTotalLenValid = Bool()
+  val reqTotalLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
+  // RxWorkReq is only valid at the first or only fragment for send,
+  // or valid at the last or only fragment for write imm
+  val rxBufValid = Bool()
+  val rxBuf = RxWorkReq()
+  // DmaInfo is always valid for send/write/read/atomic requests
+  val dmaInfo = DmaInfo()
+}
+
+case class RqReqWithRxBufAndDmaInfoWithLenCheckBus(busWidth: BusWidth)
+    extends Bundle
+    with IMasterSlave {
+  val reqWithRxBufAndDmaInfoWithLenCheck = Stream(
+    Fragment(RqReqWithRxBufAndDmaInfoWithLenCheck(busWidth))
+  )
+
+  def >>(that: RqReqWithRxBufAndDmaInfoWithLenCheckBus): Unit = {
+    this.reqWithRxBufAndDmaInfoWithLenCheck >> that.reqWithRxBufAndDmaInfoWithLenCheck
+  }
+
+  def <<(that: RqReqWithRxBufAndDmaInfoWithLenCheckBus): Unit = that >> this
+
+  override def asMaster(): Unit = master(reqWithRxBufAndDmaInfoWithLenCheck)
 }
 
 case class RqDupReadReqAndRstCacheData(busWidth: BusWidth) extends Bundle {

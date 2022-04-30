@@ -127,7 +127,7 @@ case class AETH() extends RdmaHeader {
         report(
           message =
             L"${REPORT_TIME} time: illegal AETH to WC state, code=${code}, value=${value}",
-          severity = WARNING
+          severity = ERROR
         )
         workCompStatus.assignDontCare()
       }

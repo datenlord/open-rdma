@@ -465,33 +465,38 @@ class ReadRespLenCheckTest extends AnyFunSuite {
       val outputQueue = mutable
         .Queue[(WorkReqId, PktLen, SpinalEnumElement[WorkCompStatus.type])]()
 
-      val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
-        SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
+//      val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
+//        SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
 
       RdmaDataPktSim.readRespPktFragStreamMasterDriver(
+        dut.clockDomain,
         dut.io.cachedWorkReqAndRespWithAethIn,
         getRdmaPktDataFunc =
           (cachedWorkReqAndRespWithAethIn: CachedWorkReqAndRespWithAeth) =>
             cachedWorkReqAndRespWithAethIn.pktFrag,
-        dut.clockDomain
-      ) {
-        val totalFragNum = totalFragNumItr.next()
-        val pktNum = pktNumItr.next()
-        val psnStart = psnStartItr.next()
-        val totalLenBytes = totalLenItr.next()
-
-        println(
-          f"${simTime()} time: pktNum=${pktNum}%X, totalFragNum=${totalFragNum}%X, psnStart=${psnStart}%X, totalLenBytes=${totalLenBytes}%X"
-        )
-        (
-          psnStart,
-          totalFragNum,
-          pktNum,
-          pmtuLen,
-          busWidth,
-          totalLenBytes.toLong
-        )
-      } {
+        pmtuLen = pmtuLen,
+        busWidth = busWidth,
+        maxFragNum = maxFragNum
+      )
+//      {
+//        val totalFragNum = totalFragNumItr.next()
+//        val pktNum = pktNumItr.next()
+//        val psnStart = psnStartItr.next()
+//        val totalLenBytes = totalLenItr.next()
+//
+//        println(
+//          f"${simTime()} time: pktNum=${pktNum}%X, totalFragNum=${totalFragNum}%X, psnStart=${psnStart}%X, totalLenBytes=${totalLenBytes}%X"
+//        )
+//        (
+//          psnStart,
+//          totalFragNum,
+//          pktNum,
+//          pmtuLen,
+//          busWidth,
+//          totalLenBytes.toLong
+//        )
+//      }
+      {
         (
             _, // psn,
             psnStart,
@@ -577,6 +582,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
   val maxFragNum = 37
 
   val simCfg = SimConfig.allOptimisation.withWave
+    .withConfig(SpinalConfig(anonymSignalPrefix = "tmp"))
     .compile(new ReadAtomicRespVerifierAndFatalNakNotifier(busWidth))
 
   test("ReadAtomicRespVerifierAndFatalNakNotifier normal read response case") {
@@ -590,7 +596,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
   }
 
   def testReadRespFunc(addrCacheQuerySuccess: Boolean): Unit =
-    simCfg.doSim(1905820794) { dut =>
+    simCfg.doSim(284326294) { dut =>
       dut.clockDomain.forkStimulus(10)
 
       dut.io.txQCtrl.wrongStateFlush #= false
@@ -619,7 +625,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
       val outputReadResp4DmaQueue =
         mutable.Queue[(PSN, PhysicalAddr, WorkReqId, PktFragData, FragLast)]()
 
-      RdmaDataPktSim.readRespPktFragStreamMasterDriverAlwaysValid2(
+      RdmaDataPktSim.readRespPktFragStreamMasterDriverAlwaysValid(
         dut.clockDomain,
         dut.io.cachedWorkReqAndRespWithAeth,
         getRdmaPktDataFunc =
@@ -777,7 +783,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
         )
       } else {
         dut.io.errNotifier.pulse.toBoolean shouldBe dut.io.addrCacheRead.resp.valid.toBoolean withClue
-          f"${simTime()} time, dut.io.errNotifier.pulse=${dut.io.errNotifier.pulse.toBoolean} should == dut.io.addrCacheRead.resp.valid=${dut.io.addrCacheRead.resp.valid.toBoolean}, when ${addrCacheQuerySuccess}"
+          f"${simTime()} time, dut.io.errNotifier.pulse=${dut.io.errNotifier.pulse.toBoolean} should == dut.io.addrCacheRead.resp.valid=${dut.io.addrCacheRead.resp.valid.toBoolean}, when addrCacheQuerySuccess=${addrCacheQuerySuccess}"
 
         MiscUtils.checkConditionAlways(dut.clockDomain)(
           !dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.valid.toBoolean

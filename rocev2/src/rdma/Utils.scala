@@ -591,10 +591,11 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
     }
   }
 
-  val cachedJoinStream = RegNextWhen(joinStream.payload, cond = joinStream.fire)
-  val rstCacheData = cachedJoinStream._1.data
-  val cachedMty = cachedJoinStream._1.mty
-  val cachedHeader = cachedJoinStream._2.header
+  val cachedJoinStreamReg =
+    RegNextWhen(joinStream.payload, cond = joinStream.fire)
+  val rstCacheData = cachedJoinStreamReg._1.data
+  val cachedMty = cachedJoinStreamReg._1.mty
+  val cachedHeader = cachedJoinStreamReg._2.header
 
   // If inputWidth is 32 bits, headerMty is 4'b0011,
   // If the inputMty of the last fragment is 4'b1100, then after the last input fragment,
@@ -2307,6 +2308,91 @@ object PartialRetry {
   }.result
 }
 
+object OpCodeHeaderLen {
+  def apply(opcode: Bits): UInt =
+    new Composite(opcode, "OpCodeHeaderLen") {
+      val bthLenBytes = widthOf(BTH()) / BYTE_WIDTH
+      val rethLenBytes = widthOf(RETH()) / BYTE_WIDTH
+      val immDtLenBytes = widthOf(ImmDt()) / BYTE_WIDTH
+      val iethLenBytes = widthOf(IETH()) / BYTE_WIDTH
+      val atomicEthLenBytes = widthOf(AtomicEth()) / BYTE_WIDTH
+      val aethLenBytes = widthOf(AETH()) / BYTE_WIDTH
+      val atomicAckEthLenBytes = widthOf(AtomicAckEth()) / BYTE_WIDTH
+
+      val result = UInt(MAX_HEADER_LEN_WIDTH bits)
+      switch(opcode) {
+        is(
+          OpCode.SEND_FIRST.id,
+          OpCode.SEND_MIDDLE.id,
+          OpCode.SEND_LAST.id,
+          OpCode.SEND_ONLY.id
+        ) {
+          result := bthLenBytes
+        }
+        is(
+          OpCode.SEND_LAST_WITH_IMMEDIATE.id,
+          OpCode.SEND_ONLY_WITH_IMMEDIATE.id
+        ) {
+          result := bthLenBytes + immDtLenBytes
+        }
+        is(
+          OpCode.SEND_LAST_WITH_INVALIDATE.id,
+          OpCode.SEND_ONLY_WITH_INVALIDATE.id
+        ) {
+          result := bthLenBytes + iethLenBytes
+        }
+        is(
+          OpCode.RDMA_WRITE_FIRST.id,
+          OpCode.RDMA_WRITE_ONLY.id
+        ) {
+          result := bthLenBytes + rethLenBytes
+        }
+        is(
+          OpCode.RDMA_WRITE_MIDDLE.id,
+          OpCode.RDMA_WRITE_LAST.id
+        ) {
+          result := bthLenBytes
+        }
+        is(OpCode.RDMA_WRITE_LAST_WITH_IMMEDIATE.id) {
+          result := bthLenBytes + immDtLenBytes
+        }
+        is(OpCode.RDMA_WRITE_ONLY_WITH_IMMEDIATE.id) {
+          result := bthLenBytes + rethLenBytes + immDtLenBytes
+        }
+        is(OpCode.RDMA_READ_REQUEST.id) {
+          result := bthLenBytes + rethLenBytes
+        }
+        is(OpCode.COMPARE_SWAP.id, OpCode.FETCH_ADD.id) {
+          result := bthLenBytes + atomicEthLenBytes
+        }
+        is(OpCode.ACKNOWLEDGE.id) {
+          result := bthLenBytes
+        }
+        is(
+          OpCode.RDMA_READ_RESPONSE_FIRST.id,
+          OpCode.RDMA_READ_RESPONSE_LAST.id,
+          OpCode.RDMA_READ_RESPONSE_ONLY.id
+        ) {
+          result := bthLenBytes + aethLenBytes
+        }
+        is(OpCode.RDMA_READ_RESPONSE_MIDDLE.id) {
+          result := bthLenBytes
+        }
+        is(OpCode.ATOMIC_ACKNOWLEDGE.id) {
+          result := bthLenBytes + aethLenBytes + atomicAckEthLenBytes
+        }
+
+        default {
+          report(
+            message =
+              L"${REPORT_TIME} time: illegal opcode=${opcode}, must be send/write/read/atomic request or response",
+            severity = ERROR
+          )
+          result := bthLenBytes
+        }
+      }
+    }.result
+}
 object ReqRespTotalLenCalculator {
   def apply(
       flush: Bool,
@@ -2316,10 +2402,10 @@ object ReqRespTotalLenCalculator {
       isMidPkt: Bool,
       isLastPkt: Bool,
       isOnlyPkt: Bool,
-      firstPktLenAdjustFunc: Bits => UInt,
-      midPktLenAdjustFunc: Bits => UInt,
-      lastPktLenAdjustFunc: Bits => UInt,
-      onlyPktLenAdjustFunc: Bits => UInt
+      firstPktHeaderLenFunc: Bits => UInt,
+      midPktHeaderLenFunc: Bits => UInt,
+      lastPktHeaderLenFunc: Bits => UInt,
+      onlyPktHeaderLenFunc: Bits => UInt
   ) = new Composite(pktFireFlow, "ReqTotalLenCalculator") {
     val fire = pktFireFlow.valid
     val opcode = pktFireFlow.opcode
@@ -2338,9 +2424,9 @@ object ReqRespTotalLenCalculator {
         severity = FAILURE
       )
 
-      report(
-        L"${REPORT_TIME} time: opcode=${pktFireFlow.opcode}, PSN=${pktFireFlow.psn}, mty=${pktFireFlow.mty}, padCnt=${pktFireFlow.padCnt}"
-      )
+//      report(
+//        L"${REPORT_TIME} time: opcode=${pktFireFlow.opcode}, PSN=${pktFireFlow.psn}, mty=${pktFireFlow.mty}, padCnt=${pktFireFlow.padCnt}"
+//      )
     }
 
     val firstPkt = U(0, width bits)
@@ -2356,10 +2442,10 @@ object ReqRespTotalLenCalculator {
       default -> illegalPkt
     )
 
-    val firstPktLenAdjust = firstPktLenAdjustFunc(opcode)
-    val midPktLenAdjust = midPktLenAdjustFunc(opcode)
-    val lastPktLenAdjust = lastPktLenAdjustFunc(opcode)
-    val onlyPktLenAdjust = onlyPktLenAdjustFunc(opcode)
+    val firstPktLenAdjust = firstPktHeaderLenFunc(opcode)
+    val midPktLenAdjust = midPktHeaderLenFunc(opcode)
+    val lastPktLenAdjust = lastPktHeaderLenFunc(opcode)
+    val onlyPktLenAdjust = onlyPktHeaderLenFunc(opcode)
 
     val pktLenBytesReg = RegInit(U(0, RDMA_MAX_LEN_WIDTH bits))
     val totalLenBytesReg = RegInit(U(0, RDMA_MAX_LEN_WIDTH bits))

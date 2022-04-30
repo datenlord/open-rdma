@@ -1059,7 +1059,7 @@ class PdAddrCache(depth: Int) extends Component {
           when(reqSizeValid) {
             pa := cacheResp.pa + originalReq.va - cacheResp.va
           } otherwise {
-            pa := 0 // Invalid PhysicalAddr
+            pa.assignDontCare() // Invalid PhysicalAddr
           }
           val accessValid = cacheResp.accessType.permit(originalReq.accessType)
 
