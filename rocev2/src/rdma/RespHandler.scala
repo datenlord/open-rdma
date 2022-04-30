@@ -567,35 +567,35 @@ class ReadRespLenCheck(busWidth: BusWidth) extends Component {
       result.last := io.cachedWorkReqAndRespWithAethIn.last
       result
     }
-  val isReadFirstRespPkt = OpCode.isFirstReadRespPkt(opcode)
-  val isReadMidRespPkt = OpCode.isMidReadRespPkt(opcode)
-  val isReadLastRespPkt = OpCode.isLastReadRespPkt(opcode)
-  val isReadOnlyRespPkt = OpCode.isOnlyReadRespPkt(opcode)
-
-  val bthLenBytes = widthOf(BTH()) / BYTE_WIDTH
-  val aethLenBytes = widthOf(AETH()) / BYTE_WIDTH
+//  val isReadFirstRespPkt = OpCode.isFirstReadRespPkt(opcode)
+//  val isReadMidRespPkt = OpCode.isMidReadRespPkt(opcode)
+//  val isReadLastRespPkt = OpCode.isLastReadRespPkt(opcode)
+//  val isReadOnlyRespPkt = OpCode.isOnlyReadRespPkt(opcode)
+//
+//  val bthLenBytes = widthOf(BTH()) / BYTE_WIDTH
+//  val aethLenBytes = widthOf(AETH()) / BYTE_WIDTH
   val pmtuLenBytes = pmtuPktLenBytes(io.qpAttr.pmtu)
 
   val totalLenFlow = ReqRespTotalLenCalculator(
     flush = io.txQCtrl.wrongStateFlush,
     pktFireFlow = readRespLenCheckFlow,
-    pmtuLenBytes = pmtuLenBytes,
-    isFirstPkt = isReadFirstRespPkt,
-    isMidPkt = isReadMidRespPkt,
-    isLastPkt = isReadLastRespPkt,
-    isOnlyPkt = isReadOnlyRespPkt,
-    firstPktHeaderLenFunc = (_: Bits) => {
-      bthLenBytes + aethLenBytes
-    },
-    midPktHeaderLenFunc = (_: Bits) => {
-      bthLenBytes
-    },
-    lastPktHeaderLenFunc = (_: Bits) => {
-      bthLenBytes + aethLenBytes
-    },
-    onlyPktHeaderLenFunc = (_: Bits) => {
-      bthLenBytes + aethLenBytes
-    }
+    pmtuLenBytes = pmtuLenBytes
+//    isFirstPkt = isReadFirstRespPkt,
+//    isMidPkt = isReadMidRespPkt,
+//    isLastPkt = isReadLastRespPkt,
+//    isOnlyPkt = isReadOnlyRespPkt,
+//    firstPktHeaderLenFunc = (_: Bits) => {
+//      bthLenBytes + aethLenBytes
+//    },
+//    midPktHeaderLenFunc = (_: Bits) => {
+//      bthLenBytes
+//    },
+//    lastPktHeaderLenFunc = (_: Bits) => {
+//      bthLenBytes + aethLenBytes
+//    },
+//    onlyPktHeaderLenFunc = (_: Bits) => {
+//      bthLenBytes + aethLenBytes
+//    }
   )
 
   val readRespLenCheckWithFirstPktPsnFlow = FlowExtractCompany(
@@ -768,6 +768,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
   io.errNotifier.setNoErr()
   when(!io.txQCtrl.wrongStateFlush && addrCheckErr) {
     io.errNotifier.setLocalErr()
+//    report(L"${REPORT_TIME} time:  addrCheckErr=${addrCheckErr}, io.txQCtrl.wrongStateFlush=${io.txQCtrl.wrongStateFlush}, io.errNotifier.pulse=${io.errNotifier.pulse}")
   }
 
   io.cachedWorkReqAndAck <-/< outStreamWithAck ~~ { payloadData =>

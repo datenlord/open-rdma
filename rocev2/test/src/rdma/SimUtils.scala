@@ -391,6 +391,7 @@ object StreamSimUtil {
         )
         respStream.valid #= false
       } else {
+        respStream.valid #= false
         clockDomain.waitSampling()
       }
     }
@@ -425,6 +426,7 @@ object StreamSimUtil {
         )
         respStream.valid #= false
       } else {
+        respStream.valid #= false
         clockDomain.waitSampling()
       }
     }
@@ -463,9 +465,6 @@ object StreamSimUtil {
       clockDomain: ClockDomain,
       alwaysValid: Boolean
   ): mutable.Queue[RespData] = {
-    reqStream.ready #= true
-    respStream.valid #= false
-
     val reqQueue = mutable.Queue[ReqData]()
     val respQueue = mutable.Queue[RespData]()
 
@@ -683,7 +682,15 @@ object MiscUtils {
 //        println(f"${simTime()} time: always condition=${cond} not satisfied")
 //      }
       cond shouldBe true withClue f"${simTime()} time: always condition=${cond} not satisfied"
+    }
+  }
 
+  def checkConditionAlwaysHold(
+      clockDomain: ClockDomain
+  )(cond: => Boolean, clue: => Any) = fork {
+    while (true) {
+      clockDomain.waitSampling()
+      cond shouldBe true withClue clue
     }
   }
 

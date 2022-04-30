@@ -700,7 +700,7 @@ class SqOutTest extends AnyFunSuite {
         outPsnRangeQueue,
         inputOutPsnQueue
       )
-//      if (normalOrDupReq) {
+
       // io.outPsnRangeFifoPush must always be valid when output normal responses
       streamMasterDriverAlwaysValid(
         dut.io.outPsnRangeFifoPush,
@@ -713,7 +713,7 @@ class SqOutTest extends AnyFunSuite {
         dut.io.outPsnRangeFifoPush.isRetryWorkReq #= false
         dut.io.qpAttr.npsn #= psnEnd
       }
-//      }
+
       fork {
         while (true) {
           waitUntil(

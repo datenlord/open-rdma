@@ -1742,7 +1742,7 @@ object RdmaDataPktSim {
       isReadRespGen = true
     )(outerLoopBody)(innerLoopFunc)
   }
-/*
+  /*
   private def readRespPktFragStreamMasterDriver[T <: Data](
       stream: Stream[Fragment[T]],
       getRdmaPktDataFunc: T => RdmaDataPkt,
@@ -1856,7 +1856,7 @@ object RdmaDataPktSim {
       isReadRespGen = true
     )(outerLoopBodyExt)(innerLoopFunc)
   }
-*/
+   */
   def buildPktMetaDataHelper(
       pmtuLen: PMTU.Value,
       busWidth: BusWidth.Value,

@@ -34,9 +34,10 @@ class SqDmaReadRespHandlerTest extends AnyFunSuite {
       }
 
       // Check DUT output
-      MiscUtils.checkConditionAlways(dut.clockDomain) {
-        !dut.io.dmaReadResp.resp.ready.toBoolean
-      }
+      MiscUtils.checkConditionAlwaysHold(dut.clockDomain)(
+        !dut.io.dmaReadResp.resp.ready.toBoolean,
+        f"${simTime()} time: dut.io.dmaReadResp.resp.ready=${dut.io.dmaReadResp.resp.ready.toBoolean} should be false for zero length read response"
+      )
       streamSlaveRandomizer(dut.io.cachedWorkReqAndDmaReadResp, dut.clockDomain)
       onStreamFire(dut.io.cachedWorkReqAndDmaReadResp, dut.clockDomain) {
 //        println(
