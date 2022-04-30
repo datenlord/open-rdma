@@ -68,9 +68,9 @@ class ReadAtomicRstCacheTest extends AnyFunSuite {
       val rmtKey = dut.io.push.rkey.toLong
       inputQueryQueue.enqueue((opcode, curPsn, rmtKey, nextPsn))
 
-      //      println(
-      //        f"${simTime()} time: push WR PSN=${curPsn}%X, ePSN=${nextPsn}%X, opcode=${opcode}, rmtKey=${rmtKey}%X, pktNum=${pktNum}%X"
-      //      )
+//      println(
+//        f"${simTime()} time: push WR PSN=${curPsn}%X, ePSN=${nextPsn}%X, opcode=${opcode}, rmtKey=${rmtKey}%X, pktNum=${pktNum}%X"
+//      )
     }
     onStreamFire(dut.io.push, dut.clockDomain) {
       inputWorkReqQueue.enqueue(
@@ -100,9 +100,9 @@ class ReadAtomicRstCacheTest extends AnyFunSuite {
         dut.io.queryPort4DupReq.req.rkey #= rmtKey
         dut.io.queryPort4DupReq.req.epsn #= nextPsn
 
-        //        println(
-        //          f"${simTime()} time: CAM query request with queryPsn=${queryPsn}%X, ePSN=${nextPsn}%X, opcode=${opcode}"
-        //        )
+//        println(
+//          f"${simTime()} time: CAM query request with queryPsn=${queryPsn}%X, ePSN=${nextPsn}%X, opcode=${opcode}"
+//        )
 
         dut.clockDomain.waitSampling()
         waitUntil(
@@ -135,9 +135,9 @@ class ReadAtomicRstCacheTest extends AnyFunSuite {
 
       found shouldBe true withClue f"${simTime()} time: CAM query response with queryPsn=${queryPsn}%X, ePSN=${nextPsn}%X, opcode=${opcode}, rmtKey=${rmtKey}%X, found=${found}"
 
-      //      println(
-      //        f"${simTime()} time: CAM query response with queryPsn=${queryPsn}%X, ePSN=${nextPsn}%X, opcode=${opcode}, rmtKey=${rmtKey}%X, found=${found}"
-      //      )
+//      println(
+//        f"${simTime()} time: CAM query response with queryPsn=${queryPsn}%X, ePSN=${nextPsn}%X, opcode=${opcode}, rmtKey=${rmtKey}%X, found=${found}"
+//      )
 
       outputQueryQueue.enqueue(
         (

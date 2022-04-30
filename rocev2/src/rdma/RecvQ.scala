@@ -921,23 +921,23 @@ class ReqPktLenCheck(busWidth: BusWidth) extends Component {
   val reqTotalLenFlow = ReqRespTotalLenCalculator(
     flush = io.rxQCtrl.stateErrFlush,
     pktFireFlow = reqTotalLenCheckFlow,
-    pmtuLenBytes = pmtuLenBytes,
-    isFirstPkt = OpCode.isFirstReqPkt(inputPktFrag.bth.opcode),
-    isMidPkt = OpCode.isMidReqPkt(inputPktFrag.bth.opcode),
-    isLastPkt = OpCode.isLastReqPkt(inputPktFrag.bth.opcode),
-    isOnlyPkt = OpCode.isOnlyReqPkt(inputPktFrag.bth.opcode),
-    firstPktHeaderLenFunc = (opcode: Bits) => {
-      OpCodeHeaderLen(opcode)
-    },
-    midPktHeaderLenFunc = (opcode: Bits) => {
-      OpCodeHeaderLen(opcode)
-    },
-    lastPktHeaderLenFunc = (opcode: Bits) => {
-      OpCodeHeaderLen(opcode)
-    },
-    onlyPktHeaderLenFunc = (opcode: Bits) => {
-      OpCodeHeaderLen(opcode)
-    }
+    pmtuLenBytes = pmtuLenBytes
+//    isFirstPkt = OpCode.isFirstReqPkt(inputPktFrag.bth.opcode),
+//    isMidPkt = OpCode.isMidReqPkt(inputPktFrag.bth.opcode),
+//    isLastPkt = OpCode.isLastReqPkt(inputPktFrag.bth.opcode),
+//    isOnlyPkt = OpCode.isOnlyReqPkt(inputPktFrag.bth.opcode),
+//    firstPktHeaderLenFunc = (opcode: Bits) => {
+//      OpCodeHeaderLen(opcode)
+//    },
+//    midPktHeaderLenFunc = (opcode: Bits) => {
+//      OpCodeHeaderLen(opcode)
+//    },
+//    lastPktHeaderLenFunc = (opcode: Bits) => {
+//      OpCodeHeaderLen(opcode)
+//    },
+//    onlyPktHeaderLenFunc = (opcode: Bits) => {
+//      OpCodeHeaderLen(opcode)
+//    }
   )
 
   val reqTotalLenValid = reqTotalLenFlow.valid

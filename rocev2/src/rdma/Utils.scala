@@ -2308,7 +2308,7 @@ object PartialRetry {
   }.result
 }
 
-object OpCodeHeaderLen {
+object reqRespOpCodeHeaderLen {
   def apply(opcode: Bits): UInt =
     new Composite(opcode, "OpCodeHeaderLen") {
       val bthLenBytes = widthOf(BTH()) / BYTE_WIDTH
@@ -2381,18 +2381,231 @@ object OpCodeHeaderLen {
         is(OpCode.ATOMIC_ACKNOWLEDGE.id) {
           result := bthLenBytes + aethLenBytes + atomicAckEthLenBytes
         }
-
         default {
           report(
             message =
               L"${REPORT_TIME} time: illegal opcode=${opcode}, must be send/write/read/atomic request or response",
             severity = ERROR
           )
-          result := bthLenBytes
+          result := 0
         }
       }
     }.result
 }
+
+object ReqRespTotalLenCalculator {
+  def apply(
+      flush: Bool,
+      pktFireFlow: Flow[Fragment[LenCheckElements]],
+      pmtuLenBytes: UInt
+  ) = new Composite(pktFireFlow, "ReqTotalLenCalculator") {
+    val fire = pktFireFlow.valid
+    val opcode = pktFireFlow.opcode
+    val padCnt = pktFireFlow.padCnt
+    val mty = pktFireFlow.mty
+    val isFirstFrag = pktFireFlow.isFirst
+    val isLastFrag = pktFireFlow.isLast
+
+    val isFirstPkt =
+      OpCode.isFirstReqPkt(opcode) || OpCode.isFirstReadRespPkt(opcode)
+    val isMidPkt = OpCode.isMidReqPkt(opcode) || OpCode.isMidReadRespPkt(opcode)
+    val isLastPkt =
+      OpCode.isLastReqPkt(opcode) || OpCode.isLastReadRespPkt(opcode)
+    val isOnlyPkt =
+      OpCode.isOnlyReqPkt(opcode) || OpCode.isOnlyReadRespPkt(opcode)
+
+    val concat = isFirstPkt ## isMidPkt ## isLastPkt ## isOnlyPkt
+    val width = log2Up(widthOf(concat) + 1)
+    when(fire) {
+      assert(
+        assertion = CountOne(concat) === 1,
+        message =
+          L"${REPORT_TIME} time: illegal opcode=${opcode}, isFirstPkt=${isFirstPkt}, isMidPkt=${isMidPkt}, isLastPkt=${isLastPkt}, isOnlyPkt=${isOnlyPkt}, should be first/middle/last/only request/response",
+        severity = FAILURE
+      )
+
+//      report(
+//        L"${REPORT_TIME} time: opcode=${pktFireFlow.opcode}, PSN=${pktFireFlow.psn}, mty=${pktFireFlow.mty}, padCnt=${pktFireFlow.padCnt}"
+//      )
+    }
+
+    val firstPkt = U(0, width bits)
+    val midPkt = U(1, width bits)
+    val lastPkt = U(2, width bits)
+    val onlyPkt = U(3, width bits)
+    val illegalPkt = U(4, width bits)
+    val isFirstMidLastOnlyPkt = concat.mux(
+      8 -> firstPkt,
+      4 -> midPkt,
+      2 -> lastPkt,
+      1 -> onlyPkt,
+      default -> illegalPkt
+    )
+
+    val pktHeaderLenBytes = reqRespOpCodeHeaderLen(opcode)
+//    val firstPktLenAdjust = firstPktHeaderLenFunc(opcode)
+//    val midPktLenAdjust = midPktHeaderLenFunc(opcode)
+//    val lastPktLenAdjust = lastPktHeaderLenFunc(opcode)
+//    val onlyPktLenAdjust = onlyPktHeaderLenFunc(opcode)
+
+    val pktLenBytesReg = RegInit(U(0, RDMA_MAX_LEN_WIDTH bits))
+    val totalLenBytesReg = RegInit(U(0, RDMA_MAX_LEN_WIDTH bits))
+
+    val pktFragLenBytes = CountOne(mty).resize(RDMA_MAX_LEN_WIDTH)
+    val isPktLenCheckErr = False
+
+    val totalLenValid = False
+    val totalLenOutput = UInt(RDMA_MAX_LEN_WIDTH bits)
+    totalLenOutput := totalLenBytesReg
+    val totalLenOutFlow = Flow(LenCheckResult())
+    totalLenOutFlow.valid := totalLenValid
+    totalLenOutFlow.totalLenOutput := totalLenOutput
+    totalLenOutFlow.isPktLenCheckErr := isPktLenCheckErr
+
+    def checkPmtuAndPadCnt4FirstOrMidPkt(pktLenBytes: UInt, padCnt: UInt) = {
+      pktLenBytes === pmtuLenBytes &&
+      padCnt === 0
+    }
+    def checkPadCnt4LastOrOnlyPkt(totalLenBytes: UInt, padCnt: UInt) = {
+      totalLenBytes((PAD_COUNT_WIDTH - 1) downto 0) ===
+        (PAD_COUNT_FULL - padCnt).resize(PAD_COUNT_WIDTH)
+    }
+    // Calculate request/response total length
+    when(fire) {
+      switch(isFirstFrag ## isLastFrag) {
+        is(True ## False) { // First fragment
+          switch(isFirstMidLastOnlyPkt) {
+            is(firstPkt) {
+              totalLenBytesReg := 0
+
+              pktLenBytesReg := pktFragLenBytes - pktHeaderLenBytes
+            }
+            is(midPkt) {
+              pktLenBytesReg := pktFragLenBytes - pktHeaderLenBytes
+            }
+            is(lastPkt) {
+              pktLenBytesReg := pktFragLenBytes - pktHeaderLenBytes - padCnt
+            }
+            is(onlyPkt) {
+              totalLenBytesReg := 0
+
+              pktLenBytesReg := pktFragLenBytes - pktHeaderLenBytes - padCnt
+            }
+            default {
+              report(
+                message =
+                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}",
+                severity = FAILURE
+              )
+            }
+          }
+        }
+        is(False ## True) { // Last fragment
+          pktLenBytesReg := 0
+
+          switch(isFirstMidLastOnlyPkt) {
+            is(firstPkt) {
+              val pktLenBytes = pktLenBytesReg + pktFragLenBytes
+              totalLenBytesReg := pktLenBytes
+              isPktLenCheckErr := !checkPmtuAndPadCnt4FirstOrMidPkt(
+                pktLenBytes,
+                padCnt
+              )
+            }
+            is(midPkt) {
+              val pktLenBytes = pktLenBytesReg + pktFragLenBytes
+              totalLenBytesReg := totalLenBytesReg + pktLenBytes
+              isPktLenCheckErr := !checkPmtuAndPadCnt4FirstOrMidPkt(
+                pktLenBytes,
+                padCnt
+              )
+            }
+            is(lastPkt) {
+              totalLenBytesReg := 0
+              val totalLenBytes =
+                totalLenBytesReg + pktLenBytesReg + pktFragLenBytes
+              isPktLenCheckErr := !checkPadCnt4LastOrOnlyPkt(
+                totalLenBytes,
+                padCnt
+              )
+              totalLenValid := True
+              totalLenOutput := totalLenBytes
+            }
+            is(onlyPkt) {
+              totalLenBytesReg := 0
+              val totalLenBytes = pktLenBytesReg + pktFragLenBytes
+              isPktLenCheckErr := !checkPadCnt4LastOrOnlyPkt(
+                totalLenBytes,
+                padCnt
+              )
+              totalLenValid := True
+              totalLenOutput := totalLenBytes
+            }
+            default {
+              report(
+                message =
+                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}",
+                severity = FAILURE
+              )
+            }
+          }
+        }
+        is(True ## True) { // Single fragment, both first and last
+          totalLenBytesReg := 0
+          pktLenBytesReg := 0
+
+          switch(isFirstMidLastOnlyPkt) {
+            is(onlyPkt) {
+              val totalLenBytes = pktFragLenBytes - pktHeaderLenBytes - padCnt
+              isPktLenCheckErr := !checkPadCnt4LastOrOnlyPkt(
+                totalLenBytes,
+                padCnt
+              )
+              totalLenValid := True
+              totalLenOutput := totalLenBytes
+            }
+            is(lastPkt) {
+              val totalLenBytes =
+                totalLenBytesReg + pktFragLenBytes - pktHeaderLenBytes - padCnt
+              isPktLenCheckErr := !checkPadCnt4LastOrOnlyPkt(
+                totalLenBytes,
+                padCnt
+              )
+              totalLenValid := True
+              totalLenOutput := totalLenBytes
+            }
+            is(firstPkt, midPkt) {
+              report(
+                message =
+                  L"${REPORT_TIME} time: first or middle request/response packet length check failed, opcode=${opcode}, when isFirstFrag=${isFirstFrag} and isLastFrag=${isLastFrag}",
+                severity = FAILURE // TODO: change to NOTE
+              )
+
+              isPktLenCheckErr := True
+            }
+            default {
+              report(
+                message =
+                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}",
+                severity = FAILURE
+              )
+            }
+          }
+        }
+        is(False ## False) { // Middle fragment
+          pktLenBytesReg := pktLenBytesReg + pktFragLenBytes
+        }
+      }
+    }
+    val result = totalLenOutFlow
+
+    when(flush) {
+      pktLenBytesReg := 0
+      totalLenBytesReg := 0
+    }
+  }.result
+}
+/*
 object ReqRespTotalLenCalculator {
   def apply(
       flush: Bool,
@@ -2604,7 +2817,7 @@ object ReqRespTotalLenCalculator {
     }
   }.result
 }
-
+ */
 object AddrCacheQueryAndRespHandler {
   def apply[Tin <: Data](
       inputFragStream: Stream[Fragment[Tin]],
