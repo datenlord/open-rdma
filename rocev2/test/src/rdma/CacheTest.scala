@@ -87,9 +87,7 @@ class ReadAtomicRstCacheTest extends AnyFunSuite {
     }
     fork {
       dut.io.queryPort4DupReq.req.valid #= false
-      dut.clockDomain.waitSampling()
-
-      waitUntil(dut.io.full.toBoolean)
+      dut.clockDomain.waitSamplingWhere(dut.io.full.toBoolean)
       while (true) {
         dut.io.queryPort4DupReq.req.valid #= false
         val (opcode, queryPsn, rmtKey, nextPsn) =
@@ -104,8 +102,7 @@ class ReadAtomicRstCacheTest extends AnyFunSuite {
 //          f"${simTime()} time: CAM query request with queryPsn=${queryPsn}%X, ePSN=${nextPsn}%X, opcode=${opcode}"
 //        )
 
-        dut.clockDomain.waitSampling()
-        waitUntil(
+        dut.clockDomain.waitSamplingWhere(
           dut.io.queryPort4DupReq.req.valid.toBoolean &&
             dut.io.queryPort4DupReq.req.ready.toBoolean
         )
@@ -117,12 +114,12 @@ class ReadAtomicRstCacheTest extends AnyFunSuite {
         dut.clockDomain.waitSampling()
 
         // Wait until ReadAtomicRstCache is full
-        waitUntil(dut.io.full.toBoolean)
+        dut.clockDomain.waitSamplingWhere(dut.io.full.toBoolean)
         // Then wait until the CAM query is done
         waitUntil(outputQueryQueue.isEmpty)
         // Clear ReadAtomicRstCache by popping
         dut.io.pop.ready #= true
-        waitUntil(dut.io.empty.toBoolean)
+        dut.clockDomain.waitSamplingWhere(dut.io.empty.toBoolean)
       }
     }
     streamSlaveAlwaysReady(dut.io.queryPort4DupReq.resp, dut.clockDomain)
@@ -258,20 +255,22 @@ class WorkReqCacheTest extends AnyFunSuite {
 
             // Set retry state and wait for retry done
             dut.io.txQCtrl.retry #= true
-            waitUntil(dut.io.retryScanCtrlBus.donePulse.toBoolean)
+            dut.clockDomain.waitSamplingWhere(
+              dut.io.retryScanCtrlBus.donePulse.toBoolean
+            )
             dut.io.txQCtrl.retry #= false
             dut.clockDomain.waitSampling()
           }
 
           // Clear WorkReqCache
           dut.io.pop.ready #= true
-          waitUntil(dut.io.empty.toBoolean)
+          dut.clockDomain.waitSamplingWhere(dut.io.empty.toBoolean)
           dut.io.pop.ready #= false
         }
       }
 
       onStreamFire(dut.io.push, dut.clockDomain) {
-        //      println(f"${simTime()} time, dut.io.push.workReq.id=${dut.io.push.workReq.id.toBigInt}%X")
+//      println(f"${simTime()} time, dut.io.push.workReq.id=${dut.io.push.workReq.id.toBigInt}%X")
         inputQueue.enqueue(
           (
             dut.io.push.pa.toBigInt,
@@ -324,7 +323,7 @@ class WorkReqCacheTest extends AnyFunSuite {
         val workReqOpCode =
           dut.io.retryWorkReq.scanOutData.workReq.opcode.toEnum
         if (rnrCnt >= retryTimes || retryCnt >= retryTimes) {
-          //          println(f"${simTime()} time, dut.io.retryWorkReq.scanOutData.psnStart=${psnStart}%X, workReqOpCode=${workReqOpCode}, rnrCnt=${rnrCnt}, retryCnt=${retryCnt}")
+//          println(f"${simTime()} time, dut.io.retryWorkReq.scanOutData.psnStart=${psnStart}%X, workReqOpCode=${workReqOpCode}, rnrCnt=${rnrCnt}, retryCnt=${retryCnt}")
           retryOutQueue.enqueue(
             (
               dut.io.retryWorkReq.scanOutData.pa.toBigInt,

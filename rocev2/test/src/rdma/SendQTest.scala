@@ -114,7 +114,7 @@ class WorkReqValidatorTest extends AnyFunSuite {
         }
         inputWorkCompErrQueue.enqueue(
           (
-            WorkCompSim.setOpCodeFromSqWorkReqOpCode(
+            WorkCompSim.fromSqWorkReqOpCode(
               dut.io.workReq.opcode.toEnum
             ),
             workCompStatus,

@@ -5,11 +5,11 @@ set -o nounset
 set -o xtrace
 
 CI_ENV="${CI_ENV:-false}"
-export MILL_VERSION="0.9.7"
+export MILL_VERSION="0.10.0"
 TEST_ONLY="${1:-false}"
 
 if [ ! -f mill ]; then
-  curl -L https://github.com/com-lihaoyi/mill/releases/download/$MILL_VERSION/$MILL_VERSION > mill && chmod +x mill
+  curl -JLO https://github.com/com-lihaoyi/mill/releases/download/$MILL_VERSION/$MILL_VERSION && mv $MILL_VERSION mill && chmod +x mill
 fi
 
 MILL="./mill --no-server"
@@ -35,45 +35,46 @@ if [ "$TEST_ONLY" = "false" ]; then
   fi
 fi
 
-#$MILL rocev2.test.testOnly rdma.SetSuite
+#$MILL rocev2.test.testSim rdma.SetSuite
 # mill test is not compatible with SpinalHDL, use testOnly instead
 
 # Cache Test
-$MILL rocev2.test.testOnly rdma.ReadAtomicRstCacheTest
-$MILL rocev2.test.testOnly rdma.WorkReqCacheTest
+$MILL rocev2.test.testSim rdma.ReadAtomicRstCacheTest
+$MILL rocev2.test.testSim rdma.WorkReqCacheTest
 
 # SQ Test
-$MILL rocev2.test.testOnly rdma.SendReqGeneratorTest
-$MILL rocev2.test.testOnly rdma.WriteReqGeneratorTest
-$MILL rocev2.test.testOnly rdma.WorkReqValidatorTest
-$MILL rocev2.test.testOnly rdma.WorkReqCacheAndOutPsnRangeHandlerTest
-$MILL rocev2.test.testOnly rdma.SqOutTest # Slow test
+$MILL rocev2.test.testSim rdma.SendReqGeneratorTest
+$MILL rocev2.test.testSim rdma.WriteReqGeneratorTest
+$MILL rocev2.test.testSim rdma.WorkReqValidatorTest
+$MILL rocev2.test.testSim rdma.WorkReqCacheAndOutPsnRangeHandlerTest
+$MILL rocev2.test.testSim rdma.SqOutTest # Slow test
 
 # Retry Handler Test
-$MILL rocev2.test.testOnly rdma.RetryHandlerTest
+$MILL rocev2.test.testSim rdma.RetryHandlerTest
 
 # Response Handler Test
-$MILL rocev2.test.testOnly rdma.CoalesceAndNormalAndRetryNakHandlerTest
-$MILL rocev2.test.testOnly rdma.ReadRespLenCheckTest
-$MILL rocev2.test.testOnly rdma.ReadAtomicRespVerifierAndFatalNakNotifierTest
-$MILL rocev2.test.testOnly rdma.ReadAtomicRespDmaReqInitiatorTest
+$MILL rocev2.test.testSim rdma.CoalesceAndNormalAndRetryNakHandlerTest
+$MILL rocev2.test.testSim rdma.ReadRespLenCheckTest
+$MILL rocev2.test.testSim rdma.ReadAtomicRespVerifierAndFatalNakNotifierTest
+$MILL rocev2.test.testSim rdma.ReadAtomicRespDmaReqInitiatorTest
+$MILL rocev2.test.testSim rdma.WorkCompGenTest
 
 # RQ Test
-$MILL rocev2.test.testOnly rdma.ReqCommCheckTest
-$MILL rocev2.test.testOnly rdma.ReqRnrCheckTest
-$MILL rocev2.test.testOnly rdma.DupReqHandlerAndReadAtomicRstCacheQueryTest
-$MILL rocev2.test.testOnly rdma.DupReadDmaReqBuilderTest
-$MILL rocev2.test.testOnly rdma.ReqAddrInfoExtractorTest
-$MILL rocev2.test.testOnly rdma.ReqAddrValidatorTest
-$MILL rocev2.test.testOnly rdma.ReqPktLenCheckTest
-$MILL rocev2.test.testOnly rdma.ReqSplitterAndNakGenTest
-$MILL rocev2.test.testOnly rdma.RqSendWriteDmaReqInitiatorTest
-$MILL rocev2.test.testOnly rdma.RqReadAtomicDmaReqBuilderTest
-$MILL rocev2.test.testOnly rdma.ReadDmaReqInitiatorTest
+$MILL rocev2.test.testSim rdma.ReqCommCheckTest
+$MILL rocev2.test.testSim rdma.ReqRnrCheckTest
+$MILL rocev2.test.testSim rdma.DupReqHandlerAndReadAtomicRstCacheQueryTest
+$MILL rocev2.test.testSim rdma.DupReadDmaReqBuilderTest
+$MILL rocev2.test.testSim rdma.ReqAddrInfoExtractorTest
+$MILL rocev2.test.testSim rdma.ReqAddrValidatorTest
+$MILL rocev2.test.testSim rdma.ReqPktLenCheckTest
+$MILL rocev2.test.testSim rdma.ReqSplitterAndNakGenTest
+$MILL rocev2.test.testSim rdma.RqSendWriteDmaReqInitiatorTest
+$MILL rocev2.test.testSim rdma.RqReadAtomicDmaReqBuilderTest
+$MILL rocev2.test.testSim rdma.ReadDmaReqInitiatorTest
 # Slow test
-$MILL rocev2.test.testOnly rdma.SendWriteRespGeneratorTest
-$MILL rocev2.test.testOnly rdma.RqSendWriteWorkCompGeneratorTest
+$MILL rocev2.test.testSim rdma.SendWriteRespGeneratorTest
+$MILL rocev2.test.testSim rdma.RqSendWriteWorkCompGeneratorTest
 
-$MILL rocev2.test.testOnly rdma.RqReadDmaRespHandlerTest
-$MILL rocev2.test.testOnly rdma.ReadRespGeneratorTest
-$MILL rocev2.test.testOnly rdma.RqOutTest
+$MILL rocev2.test.testSim rdma.RqReadDmaRespHandlerTest
+$MILL rocev2.test.testSim rdma.ReadRespGeneratorTest
+$MILL rocev2.test.testSim rdma.RqOutTest

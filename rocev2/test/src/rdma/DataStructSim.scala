@@ -35,7 +35,8 @@ object RdmaTypeReDef {
   type PsnNext = Int
   type QueryPsn = Int
   type QuerySuccess = Boolean
-  type QPN = Int
+  type DQPN = Int
+  type SQPN = Int
   type PktFragData = BigInt
   type WorkReqId = BigInt
   type WorkReqFlags = Int
@@ -165,7 +166,7 @@ class PsnSim(val psn: PSN) {
 }
 
 object WorkCompSim {
-  def setOpCodeFromSqWorkReqOpCode(
+  def fromSqWorkReqOpCode(
       workReqOpCode: SpinalEnumElement[WorkReqOpCode.type]
   ): SpinalEnumElement[WorkCompOpCode.type] = {
     // TODO: check WR opcode without WC opcode equivalent
@@ -541,6 +542,15 @@ object WorkReqSim {
       }
     }
     allHeaderLen / BYTE_WIDTH
+  }
+
+  def assignFlagBits(
+      workReqSendFlags: SpinalEnumElement[WorkReqSendFlagEnum.type]*
+  ): BigInt = {
+    val result = workReqSendFlags
+      .map(WorkReqSendFlagEnum.defaultEncoding.getValue(_))
+      .reduce(_ | _)
+    result
   }
 }
 
@@ -976,7 +986,7 @@ object OpCodeSim {
         case OpCode.RDMA_WRITE_FIRST | OpCode.RDMA_WRITE_ONLY =>
           bthWidth + rethWidth
         case OpCode.RDMA_WRITE_MIDDLE | OpCode.RDMA_WRITE_LAST => bthWidth
-        case OpCode.RDMA_WRITE_LAST_WITH_IMMEDIATE             => bthWidth + immDtWidth
+        case OpCode.RDMA_WRITE_LAST_WITH_IMMEDIATE => bthWidth + immDtWidth
         case OpCode.RDMA_WRITE_ONLY_WITH_IMMEDIATE =>
           bthWidth + rethWidth + immDtWidth
         case OpCode.ACKNOWLEDGE => bthWidth + aethWidth

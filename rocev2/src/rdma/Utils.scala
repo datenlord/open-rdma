@@ -397,9 +397,9 @@ class StreamZipByCondition[T1 <: Data, T2 <: Data](
   }
 }
 
-/** Throw the first several fragments of the inputStream.
-  * The number of fragments to throw is specified by headerFragNum.
-  * Note, headerFragNum should keep stable during the first fragment of inputStream.
+/** Throw the first several fragments of the inputStream. The number of
+  * fragments to throw is specified by headerFragNum. Note, headerFragNum should
+  * keep stable during the first fragment of inputStream.
   */
 object StreamDropHeader {
   def apply[T <: Data](
@@ -437,9 +437,9 @@ class StreamDropHeader[T <: Data](dataType: HardType[T]) extends Component {
   io.outputStream << io.inputStream.throwWhen(throwCond)
 }
 
-/** Segment the inputStream into multiple pieces,
-  * Each piece is at most segmentLenBytes long, and segmentLenBytes cannot be zero.
-  * Each piece is indicated by fragment last.
+/** Segment the inputStream into multiple pieces, Each piece is at most
+  * segmentLenBytes long, and segmentLenBytes cannot be zero. Each piece is
+  * indicated by fragment last.
   */
 object StreamSegment {
   def apply[T <: Data](
@@ -494,10 +494,10 @@ class StreamSegment[T <: Data](dataType: HardType[T]) extends Component {
   }
 }
 
-/** When adding header, the headerMty can only have consecutive zero bits from the left-most side.
-  * Assume the header width is 4, the valid header Mty can only be 4'b0000, 4'b0001, 4'b0011,
-  * 4'b0111, 4'b1111.
-  * The output stream does not make any change to the header.
+/** When adding header, the headerMty can only have consecutive zero bits from
+  * the left-most side. Assume the header width is 4, the valid header Mty can
+  * only be 4'b0000, 4'b0001, 4'b0011, 4'b0111, 4'b1111. The output stream does
+  * not make any change to the header.
   *
   * Each header is for a packet, from first fragment to last fragment.
   */
@@ -701,9 +701,9 @@ class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
   io.outputStream << outputStream
 }
 
-/** When remove header, it removes the first several bytes data from the first fragment,
-  * StreamRemoveHeader will shift the remaining bits,
-  * The output stream have valid data start from MSB for all fragments.
+/** When remove header, it removes the first several bytes data from the first
+  * fragment, StreamRemoveHeader will shift the remaining bits, The output
+  * stream have valid data start from MSB for all fragments.
   */
 object StreamRemoveHeader {
   def apply(
@@ -806,8 +806,8 @@ class StreamRemoveHeader(busWidth: BusWidth) extends Component {
   io.outputStream << inputStreamTranslate
 }
 
-/** Join a stream A with a stream B, and A is always fired,
-  * but B is only fired when condition is satisfied.
+/** Join a stream A with a stream B, and A is always fired, but B is only fired
+  * when condition is satisfied.
   */
 object StreamConditionalJoin {
   def apply[T1 <: Data, T2 <: Data](
@@ -818,12 +818,20 @@ object StreamConditionalJoin {
     val emptyStream =
       StreamSource().translateWith(inputB.payloadType().assignDontCare())
     val streamToJoin = StreamMux(joinCond.asUInt, Vec(emptyStream, inputB))
+    when(joinCond) {
+      assert(
+        assertion = inputA.fire === inputB.fire,
+        message =
+          L"${REPORT_TIME} time, inputA.fire=${inputA.fire} should fire with inputB.fire=${inputB.fire} when joinCond=${joinCond}",
+        severity = FAILURE
+      )
+    }
     StreamJoin(inputA, streamToJoin).combStage()
   }
 }
 
-/** Join a stream A of fragments with a stream B,
-  * that B will fire only when the last fragment of A fires.
+/** Join a stream A of fragments with a stream B, that B will fire only when the
+  * last fragment of A fires.
   */
 object FragmentStreamJoinStream {
   def apply[T1 <: Data, T2 <: Data](
@@ -848,10 +856,9 @@ object FragmentStreamJoinStream {
   }
 }
 
-/** Join a stream A of fragments with a stream B,
-  * and only fire B when condition is satisfied.
-  * When B fires if condition satisfied,
-  * it only fires at the same time when the last fragment of A fires.
+/** Join a stream A of fragments with a stream B, and only fire B when condition
+  * is satisfied. When B fires if condition satisfied, it only fires at the same
+  * time when the last fragment of A fires.
   */
 object FragmentStreamConditionalJoinStream {
   def apply[T1 <: Data, T2 <: Data](
@@ -903,9 +910,9 @@ class FragmentStreamConditionalJoinStream[T1 <: Data, T2 <: Data](
   }
 }
 
-/** StreamConditionalFork will fork the input based on the condition.
-  * If condition is true, then fork the input, otherwise not fork.
-  * So the return streams have the last one as the original input stream.
+/** StreamConditionalFork will fork the input based on the condition. If
+  * condition is true, then fork the input, otherwise not fork. So the return
+  * streams have the last one as the original input stream.
   */
 object StreamConditionalFork {
   def apply[T <: Data](
@@ -923,10 +930,10 @@ object StreamConditionalFork {
   }
 }
 
-/** StreamConditionalFork2 will fork the input based on the condition.
-  * If condition is true, then fork the input, otherwise not fork.
-  * So the first return stream is the conditional forked input stream,
-  * the second return stream is the original input stream.
+/** StreamConditionalFork2 will fork the input based on the condition. If
+  * condition is true, then fork the input, otherwise not fork. So the first
+  * return stream is the conditional forked input stream, the second return
+  * stream is the original input stream.
   */
 object StreamConditionalFork2 {
   def apply[T <: Data](
@@ -956,15 +963,15 @@ class StreamConditionalFork[T <: Data](payloadType: HardType[T], portCount: Int)
 }
 
 /** FragmentStreamForkQueryJoinResp will send out query based on query
-  * condition, and join the response based on join condition.
-  * To avoid back-pressure / stall, FragmentStreamForkQueryJoinResp has
-  * internal queue to cache the pending inputs waiting for response to join.
+  * condition, and join the response based on join condition. To avoid
+  * back-pressure / stall, FragmentStreamForkQueryJoinResp has internal queue to
+  * cache the pending inputs waiting for response to join.
   *
   * The second field of the result joinStream is to indicate the third field,
   * the respStream is valid or not.
   *
-  * NOTE: if not expect to join with response stream, the input stream just pass through.
-  * It's better to always expect response and join with input stream.
+  * NOTE: if not expect to join with response stream, the input stream just pass
+  * through. It's better to always expect response and join with input stream.
   */
 object FragmentStreamForkQueryJoinResp {
   def apply[Tin <: Data, Tquery <: Data, Tresp <: Data](
@@ -988,16 +995,14 @@ object FragmentStreamForkQueryJoinResp {
       .takeWhen(expectResp(input4QueryStream))
       .translateWith(buildQuery(input4QueryStream))
 
+    val emptyStream = StreamSource().translateWith(
+      cloneOf(respStream.payloadType).assignDontCare()
+    )
     // When not expect query response, join with StreamSource()
     val selectedStreamValid = expectResp(originalInputQueue)
     val selectedStream = StreamMux(
       select = selectedStreamValid.asUInt,
-      inputs = Vec(
-        StreamSource().translateWith(
-          cloneOf(respStream.payloadType).assignDontCare()
-        ),
-        respStream
-      )
+      inputs = Vec(emptyStream, respStream)
     )
     val stream4Join = selectedStream.translateWith {
       val result = TupleBundle(selectedStreamValid, selectedStream.payload)
@@ -1214,9 +1219,9 @@ object StreamDeMuxByConditions {
   }
 }
 
-/** StreamDeMuxByOneCondition will de-multiplex input stream into two output streams.
-  * The first output stream corresponds to the condition is false,
-  * the second output stream corresponds to the condition is true.
+/** StreamDeMuxByOneCondition will de-multiplex input stream into two output
+  * streams. The first output stream corresponds to the condition is false, the
+  * second output stream corresponds to the condition is true.
   */
 object StreamDeMuxByOneCondition {
   def apply[T <: Data](
@@ -1336,8 +1341,8 @@ class StreamVec[T <: Data](val strmVec: Vec[Stream[T]]) {
   //  }
 }
 
-/** StreamCounterSource generates a stream of counter value,
-  * from startValue to stopValue (exclusive).
+/** StreamCounterSource generates a stream of counter value, from startValue to
+  * stopValue (exclusive).
   */
 object StreamCounterSource {
   def apply(
@@ -1366,8 +1371,8 @@ object StreamCounterSource {
   }
 }
 
-/** StreamExtractCompany extracts a company data from inputStream,
-  * and outputStream contains inputStream payload and extracted company data
+/** StreamExtractCompany extracts a company data from inputStream, and
+  * outputStream contains inputStream payload and extracted company data
   */
 object StreamExtractCompany {
   def apply[Tpay <: Data, Tcomp <: Data](
@@ -1652,9 +1657,8 @@ object PsnUtil {
       }
     }.result
 
-  /** The diff between two PSNs.
-    * Since valid PSNs are within nPSN + 2^23,
-    * So psnA - psnB, always <= HALF_MAX_PSN
+  /** The diff between two PSNs. Since valid PSNs are within nPSN + 2^23, So
+    * psnA - psnB, always <= HALF_MAX_PSN
     */
   def diff(psnA: UInt, psnB: UInt): UInt =
     new Composite(psnA, "PsnUtil_diff") {
@@ -2046,8 +2050,8 @@ object pmtuLenMask {
   }.result
 }
 
-/** Divide the dividend by a divisor, and take the celling
-  * NOTE: divisor must be power of 2
+/** Divide the dividend by a divisor, and take the celling NOTE: divisor must be
+  * power of 2
   */
 object divideByPmtuUp {
   private def checkPmtu(pmtu: UInt): Bool =
@@ -2078,8 +2082,7 @@ object divideByPmtuUp {
     }.result
 }
 
-/** Modulo of the dividend by a divisor.
-  * NOTE: divisor must be power of 2
+/** Modulo of the dividend by a divisor. NOTE: divisor must be power of 2
   */
 object moduloByPmtu {
   def apply(dividend: UInt, pmtu: UInt): UInt =
