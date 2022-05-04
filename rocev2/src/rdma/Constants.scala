@@ -2,69 +2,69 @@ package rdma
 
 import spinal.core._
 
-/** ibv_device_attr fields definition:
-  * https://www.mellanox.com/related-docs/prod_software/RDMA_Aware_Programming_user_manual.pdf
-  *
-  * fw_ver                    Firmware version
-  * node_guid                 Node global unique identifier (GUID)
-  * sys_image_guid            System image GUID
-  * max_mr_size               Largest contiguous block that can be registered
-  * page_size_cap             Supported page sizes
-  * vendor_id                 Vendor ID, per IEEE
-  * vendor_part_id            Vendor supplied part ID
-  * hw_ver                    Hardware version
-  * max_qp                    Maximum number of Queue Pairs (QP)
-  * max_qp_wr                 Maximum outstanding work requests (WR) on any queue
-  * device_cap_flags
-  *         IBV_DEVICE_RESIZE_MAX_WR
-  *         IBV_DEVICE_BAD_PKEY_CNTR
-  *         IBV_DEVICE_BAD_QKEY_CNTR
-  *         IBV_DEVICE_RAW_MULTI
-  *         IBV_DEVICE_AUTO_PATH_MIG
-  *         IBV_DEVICE_CHANGE_PHY_PORT
-  *         IBV_DEVICE_UD_AV_PORT_ENFORCE
-  *         IBV_DEVICE_CURR_QP_STATE_MOD
-  *         IBV_DEVICE_SHUTDOWN_PORT
-  *         IBV_DEVICE_INIT_TYPE
-  *         IBV_DEVICE_PORT_ACTIVE_EVENT
-  *         IBV_DEVICE_SYS_IMAGE_GUID
-  *         IBV_DEVICE_RC_RNR_NAK_GEN
-  *         IBV_DEVICE_SRQ_RESIZE
-  *         IBV_DEVICE_N_NOTIFY_CQ
-  *         IBV_DEVICE_XRC
-  * max_sge                    Maximum scatter/gather entries (SGE) per WR for non-RD QPs
-  * max_sge_rd                 Maximum SGEs per WR for RD QPs
-  * max_cq                     Maximum supported completion queues (CQ)
-  * max_cqe                    Maximum completion queue entries (CQE) per CQ
-  * max_mr                     Maximum supported memory regions (MR)
-  * max_pd                     Maximum supported protection domains (PD)
-  * max_qp_rd_atom             Maximum outstanding RDMA read and atomic operations per QP
-  * max_ee_rd_atom             Maximum outstanding RDMA read and atomic operations per End to End (EE) context (RD connections)
-  * max_res_rd_atom            Maximum resources used for incoming RDMA read and atomic operations
-  * max_qp_init_rd_atom        Maximum RDMA read and atomic operations that may be initiated per QP
-  * max_ee_init_atom           Maximum RDMA read and atomic operations that may be initiated per EE
-  * atomic_cap
-  *         IBV_ATOMIC_NONE    - no atomic guarantees
-  *         IBV_ATOMIC_HCA     - atomic guarantees within this device
-  *         IBV_ATOMIC_GLOB    - global atomic guarantees
-  * max_ee                     Maximum supported EE contexts
-  * max_rdd                    Maximum supported RD domains
-  * max_mw                     Maximum supported memory windows (MW)
-  * max_raw_ipv6_qp            Maximum supported raw IPv6 datagram QPs
-  * max_raw_ethy_qp            Maximum supported ethertype datagram QPs
-  * max_mcast_grp              Maximum supported multicast groups
-  * max_mcast_qp_attach        Maximum QPs per multicast group that can be attached
-  * max_total_mcast_qp_attach  Maximum total QPs that can be attached to multicast groups
-  * max_ah                     Maximum supported address handles (AH)
-  * max_fmr                    Maximum supported fast memory regions (FMR)
-  * max_map_per_fmr            Maximum number of remaps per FMR before an unmap operation is required
-  * max_srq                    Maximum supported shared receive queues (SRCQ)
-  * max_srq_wr                 Maximum work requests (WR) per SRQ
-  * max_srq_sge                Maximum SGEs per SRQ
-  * max_pkeys                  Maximum number of partitions
-  * local_ca_ack_delay         Local CA ack delay
-  * phys_port_cnt              Number of physical ports
-  */
+// ibv_device_attr fields definition:
+// https://www.mellanox.com/related-docs/prod_software/RDMA_Aware_Programming_user_manual.pdf
+//
+// fw_ver                    Firmware version
+// node_guid                 Node global unique identifier (GUID)
+// sys_image_guid            System image GUID
+// max_mr_size               Largest contiguous block that can be registered
+// page_size_cap             Supported page sizes
+// vendor_id                 Vendor ID, per IEEE
+// vendor_part_id            Vendor supplied part ID
+// hw_ver                    Hardware version
+// max_qp                    Maximum number of Queue Pairs (QP)
+// max_qp_wr                 Maximum outstanding work requests (WR) on any queue
+// device_cap_flags
+// device_cap_flags
+// IBV_DEVICE_RESIZE_MAX_WR
+// IBV_DEVICE_BAD_PKEY_CNTR
+// IBV_DEVICE_BAD_QKEY_CNTR
+// IBV_DEVICE_RAW_MULTI
+// IBV_DEVICE_AUTO_PATH_MIG
+// IBV_DEVICE_CHANGE_PHY_PORT
+// IBV_DEVICE_UD_AV_PORT_ENFORCE
+// IBV_DEVICE_CURR_QP_STATE_MOD
+// IBV_DEVICE_SHUTDOWN_PORT
+// IBV_DEVICE_INIT_TYPE
+// IBV_DEVICE_PORT_ACTIVE_EVENT
+// IBV_DEVICE_SYS_IMAGE_GUID
+// IBV_DEVICE_RC_RNR_NAK_GEN
+// IBV_DEVICE_SRQ_RESIZE
+// IBV_DEVICE_N_NOTIFY_CQ
+// IBV_DEVICE_XRC
+// max_sge                    Maximum scatter/gather entries (SGE) per WR for non-RD QPs
+// max_sge_rd                 Maximum SGEs per WR for RD QPs
+// max_cq                     Maximum supported completion queues (CQ)
+// max_cqe                    Maximum completion queue entries (CQE) per CQ
+// max_mr                     Maximum supported memory regions (MR)
+// max_pd                     Maximum supported protection domains (PD)
+// max_qp_rd_atom             Maximum outstanding RDMA read and atomic operations per QP
+// max_ee_rd_atom             Maximum outstanding RDMA read and atomic operations per End to End (EE) context (RD connections)
+// max_res_rd_atom            Maximum resources used for incoming RDMA read and atomic operations
+// max_qp_init_rd_atom        Maximum RDMA read and atomic operations that may be initiated per QP
+// max_ee_init_atom           Maximum RDMA read and atomic operations that may be initiated per EE
+// atomic_cap
+// IBV_ATOMIC_NONE    - no atomic guarantees
+// IBV_ATOMIC_HCA     - atomic guarantees within this device
+// IBV_ATOMIC_GLOB    - global atomic guarantees
+// max_ee                     Maximum supported EE contexts
+// max_rdd                    Maximum supported RD domains
+// max_mw                     Maximum supported memory windows (MW)
+// max_raw_ipv6_qp            Maximum supported raw IPv6 datagram QPs
+// max_raw_ethy_qp            Maximum supported ethertype datagram QPs
+// max_mcast_grp              Maximum supported multicast groups
+// max_mcast_qp_attach        Maximum QPs per multicast group that can be attached
+// max_total_mcast_qp_attach  Maximum total QPs that can be attached to multicast groups
+// max_ah                     Maximum supported address handles (AH)
+// max_fmr                    Maximum supported fast memory regions (FMR)
+// max_map_per_fmr            Maximum number of remaps per FMR before an unmap operation is required
+// max_srq                    Maximum supported shared receive queues (SRCQ)
+// max_srq_wr                 Maximum work requests (WR) per SRQ
+// max_srq_sge                Maximum SGEs per SRQ
+// max_pkeys                  Maximum number of partitions
+// local_ca_ack_delay         Local CA ack delay
+// phys_port_cnt              Number of physical ports
 object ConstantSettings {
   // Device changeable settings
   val PENDING_REQ_NUM = 32

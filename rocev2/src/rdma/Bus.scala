@@ -1039,6 +1039,7 @@ case class DmaWriteReq(busWidth: BusWidth) extends Bundle {
 case class DmaWriteResp() extends Bundle {
   val initiator = DmaInitiator()
   val sqpn = UInt(QPN_WIDTH bits)
+  // TODO: PSN should be PsnStart?
   val psn = UInt(PSN_WIDTH bits)
   val workReqId = Bits(WR_ID_WIDTH bits)
   val lenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
@@ -1374,6 +1375,12 @@ case class RxWorkReq() extends Bundle {
   }
 }
 
+case class WorkReqAndMetaData() extends Bundle {
+  val workReq = WorkReq()
+  val psnStart = UInt(PSN_WIDTH bits)
+  val pktNum = UInt(PSN_WIDTH bits)
+}
+
 case class CachedWorkReq() extends Bundle {
   val workReq = WorkReq()
   val psnStart = UInt(PSN_WIDTH bits)
@@ -1398,30 +1405,6 @@ case class CachedWorkReq() extends Bundle {
 //      val psnEnd = psnStart + pktNum
       val result = PsnUtil.withInRange(psn, psnStart, pktNum, curPsn)
     }.result
-
-//  def incRnrOrRetryCnt(retryReason: SpinalEnumCraft[RetryReason.type]): Unit =
-//    new Composite(this) {
-//      switch(retryReason) {
-//        is(RetryReason.RNR) {
-//          rnrCnt := rnrCnt + 1
-//        }
-//        is(
-//          RetryReason.IMPLICIT_ACK,
-//          RetryReason.SEQ_ERR,
-//          RetryReason.RESP_TIMEOUT
-//        ) {
-//          retryCnt := retryCnt + 1
-//        }
-//        default {
-//          report(
-//            message =
-//              L"${REPORT_TIME} time: input retryReason=${retryReason} should be valid reason",
-//            severity = FAILURE
-//          )
-//        }
-//      }
-//      val result = ()
-//    }.result
 }
 
 case class WorkReqCacheQueryReq() extends Bundle {

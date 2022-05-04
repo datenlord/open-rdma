@@ -497,6 +497,84 @@ object StreamSimUtil {
     respQueue
   }
 
+  def streamMasterFromQueueRandom[T <: Data, PayloadData](
+      stream: Stream[T],
+      clockDomain: ClockDomain,
+      payloadQueue: mutable.Queue[PayloadData],
+      maxIntervalCycles: Int,
+      payloadAssignFunc: (T, PayloadData) => Unit
+  ): Unit =
+    fork {
+      stream.valid #= false
+      clockDomain.waitSampling()
+
+      while (true) {
+        val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
+        val randomWaitingCycles =
+          scala.util.Random.nextInt(maxIntervalCycles - 1) + 1
+        clockDomain.waitSampling(randomWaitingCycles)
+        stream.valid #= true
+        payloadAssignFunc(stream.payload, payloadData)
+//        do {
+//          clockDomain.waitSampling()
+//          stream.randomize()
+//          sleep(0)
+//        } while (!stream.valid.toBoolean)
+
+        clockDomain.waitSamplingWhere(
+          stream.valid.toBoolean && stream.ready.toBoolean
+        )
+        stream.valid #= false
+      }
+    }
+
+  def streamMasterFromQueueAlways[T <: Data, PayloadData](
+      stream: Stream[T],
+      clockDomain: ClockDomain,
+      payloadQueue: mutable.Queue[PayloadData],
+      maxIntervalCycles: Int,
+      payloadAssignFunc: (T, PayloadData) => Unit
+  ): Unit =
+    fork {
+      stream.valid #= false
+      clockDomain.waitSampling()
+
+      while (true) {
+        val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
+        clockDomain.waitSampling(maxIntervalCycles)
+        stream.valid #= true
+        payloadAssignFunc(stream.payload, payloadData)
+
+        clockDomain.waitSamplingWhere(
+          stream.valid.toBoolean && stream.ready.toBoolean
+        )
+        stream.valid #= false
+      }
+    }
+  /*
+  def streamMasterFromQueueAlways[T <: Data, PayloadData](
+      stream: Stream[T],
+      clockDomain: ClockDomain,
+      payloadQueue: mutable.Queue[PayloadData],
+      payloadAssignFunc: (T, PayloadData) => Unit
+  ): Unit =
+    fork {
+      stream.valid #= false
+      clockDomain.waitSampling()
+
+      while (true) {
+        val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
+        stream.valid #= true
+        payloadAssignFunc(stream.payload, payloadData)
+
+        clockDomain.waitSamplingWhere(
+          stream.valid.toBoolean && stream.ready.toBoolean
+        )
+        stream.valid #= false
+      }
+    }
+   */
+  // TODO: remove this
   def pktFragStreamMasterDriver[T <: Data, InternalData](
       stream: Stream[Fragment[T]],
       clockDomain: ClockDomain

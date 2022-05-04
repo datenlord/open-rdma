@@ -242,13 +242,13 @@ class WorkReqValidator extends Component {
     // In order to not block pipeline, use a FIFO to cache incoming data.
     val inputWorkReqQueue = workReq4Queue
       .translateWith {
-        val result = CachedWorkReq()
+        val result = WorkReqAndMetaData()
         result.workReq := workReq
         result.psnStart := io.qpAttr.npsn
         result.pktNum := numReqPkt.resize(PSN_WIDTH)
         // PA will be updated after QpAddrCacheAgent query
         // TODO: remove this
-        result.pa.assignDontCare()
+//        result.pa.assignDontCare()
 //        result.rnrCnt := 0 // New WR has no RNR
 //        result.retryCnt := 0 // New WR has no retry
         result
@@ -347,9 +347,14 @@ class WorkReqValidator extends Component {
 //    val (normalOut4WorkReqCache, normalOut4SqOutPsnRangeFifoPush) = StreamFork2(
 //      normalStream
 //    )
-    io.workReqToCache <-/< normalStream.translateWith(
-      normalStream._1
-    )
+    io.workReqToCache <-/< normalStream.translateWith {
+      val result = cloneOf(io.workReqToCache)
+      result.workReq := normalStream._1.workReq
+      result.psnStart := normalStream._1.psnStart
+      result.pktNum := normalStream._1.pktNum
+      result.pa := normalStream._2.pa
+      result
+    }
 
 //    io.sqOutPsnRangeFifoPush <-/< normalOut4SqOutPsnRangeFifoPush
 //      .throwWhen(io.txQCtrl.wrongStateFlush) ~~ { payloadData =>
@@ -501,20 +506,22 @@ class SqOut(busWidth: BusWidth) extends Component {
     flush = io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush,
     outPsnRangeFifoPush = io.outPsnRangeFifoPush,
     outDataStreamVec = normalReqVec,
-    outputValidateFunc =
-      (psnOutRangeFifoPop: ReqPsnRange, req: RdmaDataPkt) => {
-        assert(
-          assertion = checkWorkReqOpCodeMatch(
-            psnOutRangeFifoPop.workReqOpCode,
-            req.bth.opcode
-          ),
-          message =
-            // TODO: check SpinalEnumCraft print bug
-            L"${REPORT_TIME} time: WR opcode does not match request opcode=${req.bth.opcode}, req.bth.psn=${req.bth.psn}, psnOutRangeFifo.io.pop.start=${psnOutRangeFifoPop.start}, psnOutRangeFifo.io.pop.end=${psnOutRangeFifoPop.end}",
+    outputValidateFunc = (
+        psnOutRangeFifoPop: ReqPsnRange,
+        req: RdmaDataPkt
+    ) => {
+      assert(
+        assertion = checkWorkReqOpCodeMatch(
+          psnOutRangeFifoPop.workReqOpCode,
+          req.bth.opcode
+        ),
+        message =
+          // TODO: check SpinalEnumCraft print bug
+          L"${REPORT_TIME} time: WR opcode does not match request opcode=${req.bth.opcode}, req.bth.psn=${req.bth.psn}, psnOutRangeFifo.io.pop.start=${psnOutRangeFifoPop.start}, psnOutRangeFifo.io.pop.end=${psnOutRangeFifoPop.end}",
 //            L"${REPORT_TIME} time: WR opcode=${psnOutRangeFifoPop.workReqOpCode} does not match request opcode=${req.bth.opcode}, req.bth.psn=${req.bth.psn}, psnOutRangeFifo.io.pop.start=${psnOutRangeFifoPop.start}, psnOutRangeFifo.io.pop.end=${psnOutRangeFifoPop.end}",
-          severity = FAILURE
-        )
-      },
+        severity = FAILURE
+      )
+    },
     hasPktToOutput = hasPktToOutput,
     opsnInc = opsnInc
   )
