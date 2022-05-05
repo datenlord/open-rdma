@@ -1835,20 +1835,20 @@ case class QpCreateOrModifyBus() extends Bundle with IMasterSlave {
 }
 
 case class AccessType() extends Bundle {
-  val accessType = Bits(ACCESS_PERMISSION_WIDTH bits)
+  val accessBits = Bits(ACCESS_PERMISSION_WIDTH bits)
 
   def init(): this.type = {
-    accessType := AccessPermission.LOCAL_READ.asBits
+    accessBits := AccessPermission.LOCAL_READ.asBits
     this
   }
 
   def set(permissions: SpinalEnumCraft[AccessPermission.type]*): Unit = {
-    accessType := permissions.map(_.asBits).reduceBalancedTree(_ | _)
+    accessBits := permissions.map(_.asBits).reduceBalancedTree(_ | _)
   }
 
   // Check whether this AccessType contains all that AccessType permissions
   def permit(that: AccessType): Bool = {
-    (this.accessType | that.accessType) === this.accessType
+    (this.accessBits | that.accessBits) === this.accessBits
   }
 }
 
@@ -1930,7 +1930,9 @@ case class PdAddrDataCreateOrDeleteReq() extends Bundle {
 }
 
 case class PdAddrDataCreateOrDeleteResp() extends Bundle {
-  val successOrFailure = Bool()
+  val isSuccess = Bool()
+  val createOrDelete = CRUD()
+  val addrData = AddrData()
 }
 
 case class PdAddrDataCreateOrDeleteBus() extends Bundle with IMasterSlave {

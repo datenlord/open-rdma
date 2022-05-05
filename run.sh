@@ -39,6 +39,8 @@ fi
 # mill test is not compatible with SpinalHDL, use testOnly instead
 
 # Cache Test
+$MILL rocev2.test.testSim rdma.FifoTest
+$MILL rocev2.test.testSim rdma.PdAddrCacheTest
 $MILL rocev2.test.testSim rdma.ReadAtomicRstCacheTest
 $MILL rocev2.test.testSim rdma.WorkReqCacheTest
 
