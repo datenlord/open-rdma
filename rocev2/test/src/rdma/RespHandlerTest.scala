@@ -82,7 +82,6 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
         val (pktNum, psnStart, totalLenBytes) = dupOrGhostAckQueue.dequeue()
 
         // Set input to dut.io.cachedWorkReqPop
-        dut.io.cachedWorkReqPop.randomize()
         val randOpCode = WorkReqSim.randomSendWriteOpCode()
         dut.io.cachedWorkReqPop.workReq.opcode #= randOpCode
         // NOTE: if PSN comparison is involved, it must update nPSN too
@@ -594,7 +593,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
     }
 
   def testReadRespFunc(addrCacheQuerySuccess: Boolean): Unit =
-    simCfg.doSim(585613617) { dut =>
+    simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
       dut.io.txQCtrl.wrongStateFlush #= false
@@ -1027,7 +1026,7 @@ class WorkCompGenTest extends AnyFunSuite {
         )
       }
 
-      streamMasterFromQueueRandom(
+      streamMasterPayloadFromQueueRandomInterval(
         dut.io.readRespDmaWriteResp.resp,
         dut.clockDomain,
         workReqQueue,

@@ -5,7 +5,6 @@ import spinal.core.sim._
 import spinal.lib._
 
 import ConstantSettings._
-//import PsnSim._
 import RdmaConstants._
 import RdmaTypeReDef._
 
@@ -262,24 +261,6 @@ object StreamSimUtil {
     streamMasterDriverHelper(stream, clockDomain, alwaysValid = false)(
       assignments
     )
-//  fork {
-//    stream.valid #= false
-//    clockDomain.waitSampling()
-//
-//    while (true) {
-//      stream.valid.randomize()
-//      stream.payload.randomize()
-//      sleep(0)
-//      if (stream.valid.toBoolean) {
-//        assignments
-//        clockDomain.waitSamplingWhere(
-//          stream.valid.toBoolean && stream.ready.toBoolean
-//        )
-//      } else {
-//        clockDomain.waitSampling()
-//      }
-//    }
-//  }
 
   def streamMasterDriverAlwaysValid[T <: Data](
       stream: Stream[T],
@@ -288,42 +269,6 @@ object StreamSimUtil {
     streamMasterDriverHelper(stream, clockDomain, alwaysValid = true)(
       assignments
     )
-//    fork {
-//    stream.valid #= false
-//    clockDomain.waitSampling()
-//
-//    while (true) {
-//      stream.valid #= true
-//      stream.payload.randomize()
-//      sleep(0)
-//      if (stream.valid.toBoolean) {
-//        assignments
-//        clockDomain.waitSamplingWhere(
-//          stream.valid.toBoolean && stream.ready.toBoolean
-//        )
-//      } else {
-//        clockDomain.waitSampling()
-//      }
-//    }
-//  }
-
-  //  def streamMasterDriverOneShot[T <: Data](
-  //      stream: Stream[T],
-  //      clockDomain: ClockDomain
-  //  )(assignments: => Unit): Unit = fork {
-  //    stream.valid #= false
-  //    clockDomain.waitSampling()
-  //
-  //    stream.valid #= true
-  //    stream.payload.randomize()
-  //    sleep(0)
-  //    assignments
-  //    clockDomain.waitSamplingWhere(
-  //      stream.valid.toBoolean && stream.ready.toBoolean
-  //    )
-  //    stream.valid #= false
-  //    clockDomain.waitSampling()
-  //  }
 
   def streamSlaveRandomizer[T <: Data](
       stream: Stream[T],
@@ -331,6 +276,16 @@ object StreamSimUtil {
   ): Unit = fork {
     while (true) {
       stream.ready.randomize()
+      clockDomain.waitSampling()
+    }
+  }
+
+  def streamSlaveAlwaysReady[T <: Data](
+      stream: Stream[T],
+      clockDomain: ClockDomain
+  ): Unit = fork {
+    stream.ready #= true
+    while (true) {
       clockDomain.waitSampling()
     }
   }
@@ -355,16 +310,6 @@ object StreamSimUtil {
       if (stream.valid.toBoolean && stream.ready.toBoolean) {
         body
       }
-    }
-  }
-
-  def streamSlaveAlwaysReady[T <: Data](
-      stream: Stream[T],
-      clockDomain: ClockDomain
-  ): Unit = fork {
-    stream.ready #= true
-    while (true) {
-      clockDomain.waitSampling()
     }
   }
 
@@ -409,7 +354,7 @@ object StreamSimUtil {
     val fixedLatencyBetweenReqAndResp = 2
     while (true) {
       if (reqStream.valid.toBoolean) {
-        reqStream.ready #= true
+//        reqStream.ready #= true
         do {
           reqStream.ready.randomize()
           clockDomain.waitSampling()
@@ -431,7 +376,7 @@ object StreamSimUtil {
       }
     }
   }
-
+  /*
   def onReceiveStreamReqAndThenResponseOneShot[T1 <: Data, T2 <: Data](
       reqStream: Stream[T1],
       respStream: Stream[T2],
@@ -455,7 +400,7 @@ object StreamSimUtil {
     respStream.valid #= false
     clockDomain.waitSampling()
   }
-
+   */
   def queryCacheHelper[Treq <: Data, Tresp <: Data, ReqData, RespData](
       reqStream: Stream[Treq],
       respStream: Stream[Tresp],
@@ -497,7 +442,7 @@ object StreamSimUtil {
     respQueue
   }
 
-  def streamMasterFromQueueRandom[T <: Data, PayloadData](
+  def streamMasterPayloadFromQueueRandomInterval[T <: Data, PayloadData](
       stream: Stream[T],
       clockDomain: ClockDomain,
       payloadQueue: mutable.Queue[PayloadData],
@@ -517,7 +462,7 @@ object StreamSimUtil {
         payloadAssignFunc(stream.payload, payloadData)
 //        do {
 //          clockDomain.waitSampling()
-//          stream.randomize()
+//          stream.valid.randomize()
 //          sleep(0)
 //        } while (!stream.valid.toBoolean)
 
@@ -528,7 +473,7 @@ object StreamSimUtil {
       }
     }
 
-  def streamMasterFromQueueAlways[T <: Data, PayloadData](
+  def streamMasterPayloadFromQueueFixedInterval[T <: Data, PayloadData](
       stream: Stream[T],
       clockDomain: ClockDomain,
       payloadQueue: mutable.Queue[PayloadData],
@@ -551,11 +496,12 @@ object StreamSimUtil {
         stream.valid #= false
       }
     }
-  /*
-  def streamMasterFromQueueAlways[T <: Data, PayloadData](
+
+  def streamMasterPayloadFromQueue[T <: Data, PayloadData](
       stream: Stream[T],
       clockDomain: ClockDomain,
       payloadQueue: mutable.Queue[PayloadData],
+//    semaphore: Semaphore,
       payloadAssignFunc: (T, PayloadData) => Unit
   ): Unit =
     fork {
@@ -563,8 +509,14 @@ object StreamSimUtil {
       clockDomain.waitSampling()
 
       while (true) {
+//        semaphore.acquire()
         val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
-        stream.valid #= true
+        do {
+          clockDomain.waitSampling()
+          stream.valid.randomize()
+          stream.payload.randomize()
+          sleep(0)
+        } while (!stream.valid.toBoolean)
         payloadAssignFunc(stream.payload, payloadData)
 
         clockDomain.waitSamplingWhere(
@@ -573,7 +525,82 @@ object StreamSimUtil {
         stream.valid #= false
       }
     }
-   */
+
+  def streamMasterPayloadFromQueueAlwaysValid[T <: Data, PayloadData](
+      stream: Stream[T],
+      clockDomain: ClockDomain,
+      payloadQueue: mutable.Queue[PayloadData],
+//     semaphore: Semaphore,
+      payloadAssignFunc: (T, PayloadData) => Unit
+  ): Unit =
+    fork {
+      stream.valid #= false
+      clockDomain.waitSampling()
+
+      while (true) {
+//        semaphore.acquire()
+        val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
+        stream.valid #= true
+        stream.payload.randomize()
+        payloadAssignFunc(stream.payload, payloadData)
+
+        clockDomain.waitSamplingWhere(
+          stream.valid.toBoolean && stream.ready.toBoolean
+        )
+        stream.valid #= false
+      }
+    }
+
+//  private def streamMasterSyncDriverHelper[T <: Data](
+//                                                   stream: Stream[T],
+//                                                   clockDomain: ClockDomain,
+//                                                   semaphore: Semaphore,
+//                                                   alwaysValid: Boolean
+//                                                 )(assignments: => Unit): Unit =
+//    fork {
+//      stream.valid #= false
+//      clockDomain.waitSampling()
+//
+//      while (true) {
+//        semaphore.acquire()
+//
+//        if (alwaysValid) {
+//          stream.valid #= true
+//        } else {
+//          stream.valid.randomize()
+//        }
+//        stream.payload.randomize()
+//        sleep(0)
+//
+//        if (stream.valid.toBoolean) {
+//          assignments
+//          clockDomain.waitSamplingWhere(
+//            stream.valid.toBoolean && stream.ready.toBoolean
+//          )
+//        } else {
+//          clockDomain.waitSampling()
+//        }
+//      }
+//    }
+//
+//  def streamMasterSyncDriver[T <: Data](
+//                                     stream: Stream[T],
+//                                     clockDomain: ClockDomain,
+//                                     semaphore: Semaphore,
+//                                   )(assignments: => Unit): Unit =
+//    streamMasterSyncDriverHelper(stream, clockDomain, semaphore, alwaysValid = false)(
+//      assignments
+//    )
+//
+//  def streamMasterSyncDriverAlwaysValid[T <: Data](
+//                                                stream: Stream[T],
+//                                                clockDomain: ClockDomain,
+//                                                semaphore: Semaphore,
+//                                              )(assignments: => Unit): Unit =
+//    streamMasterSyncDriverHelper(stream, clockDomain, semaphore, alwaysValid = true)(
+//      assignments
+//    )
+
   // TODO: remove this
   def pktFragStreamMasterDriver[T <: Data, InternalData](
       stream: Stream[Fragment[T]],

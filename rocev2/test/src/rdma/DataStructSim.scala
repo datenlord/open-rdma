@@ -32,6 +32,7 @@ object RdmaTypeReDef {
   type PSN = Int
   type PsnStart = Int
   type PsnEnd = Int
+  type PsnExpected = Int
   type PsnNext = Int
   type QueryPsn = Int
   type QuerySuccess = Boolean
@@ -51,6 +52,7 @@ object RdmaTypeReDef {
   type KeyValid = Boolean
   type SizeValid = Boolean
   type AccessValid = Boolean
+  type AccessPermissionType = Int
 
   type AethRsvd = Int
   type AethCode = Int
@@ -268,7 +270,12 @@ object WorkCompSim {
         WorkCompOpCode.COMP_SWAP
       case WorkReqOpCode.ATOMIC_FETCH_AND_ADD =>
         WorkCompOpCode.FETCH_ADD
-      case _ => ??? // Just break on no match
+      case _ => {
+        println(
+          f"${simTime()} time: SQ check WR opcode=${workReqOpCode} not match WC opcode=${workCompOpCode}"
+        )
+        ??? // Just break on no match
+      }
     }
 //    println(
 //      f"${simTime()} time: SQ side workCompOpCode=${workCompOpCode} not match expected matchOpCode=${matchOpCode}, workReqOpCode=${workReqOpCode}"
@@ -291,7 +298,12 @@ object WorkCompSim {
           WorkReqOpCode.RDMA_READ | WorkReqOpCode.ATOMIC_CMP_AND_SWP |
           WorkReqOpCode.ATOMIC_FETCH_AND_ADD =>
         WorkCompFlags.NO_FLAGS
-      case _ => ??? // Just break on no match
+      case _ => {
+        println(
+          f"${simTime()} time: SQ check WR opcode=${workReqOpCode} not match WC flags=${workCompFlags}"
+        )
+        ??? // Just break on no match
+      }
     }
 //    println(
 //      f"${simTime()} time: SQ side workCompFlags=${workCompFlags} not match expected matchFlag=${matchFlag}, workReqOpCode=${workReqOpCode}"
