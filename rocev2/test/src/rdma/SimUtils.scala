@@ -744,7 +744,7 @@ object MiscUtils {
           )(inputData shouldBe outputData)
 
           matchQueue.enqueue(inputData)
-//          println(f"matchQueue.size=${matchQueue.size}")
+//          println(f"${simTime()} time: matchQueue.size=${matchQueue.size}")
         }
       }
     }

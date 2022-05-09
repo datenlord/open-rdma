@@ -14,8 +14,6 @@ import StreamSimUtil._
 import RdmaTypeReDef._
 import PsnSim._
 
-//import java.util.concurrent.Semaphore
-
 class ReadAtomicRstCacheTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
   val pmtuLen = PMTU.U1024
@@ -434,6 +432,10 @@ class WorkReqCacheTest extends AnyFunSuite {
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(10)
 
+      dut.io.qpAttr.maxPendingWorkReqNum #= depth
+      dut.io.qpAttr.maxDstPendingWorkReqNum #= depth
+      dut.io.qpAttr.maxPendingReadAtomicWorkReqNum #= depth
+      dut.io.qpAttr.maxDstPendingReadAtomicWorkReqNum #= depth
       dut.io.txQCtrl.retry #= false
       dut.io.txQCtrl.wrongStateFlush #= false
 
@@ -691,8 +693,13 @@ class WorkReqCacheTest extends AnyFunSuite {
   def testPushPopFunc(): Unit = simCfg.doSim { dut =>
     dut.clockDomain.forkStimulus(10)
 
+    dut.io.qpAttr.maxPendingWorkReqNum #= depth
+    dut.io.qpAttr.maxDstPendingWorkReqNum #= depth
+    dut.io.qpAttr.maxPendingReadAtomicWorkReqNum #= depth
+    dut.io.qpAttr.maxDstPendingReadAtomicWorkReqNum #= depth
     dut.io.txQCtrl.retry #= false
     dut.io.txQCtrl.wrongStateFlush #= false
+
     dut.io.retryWorkReq.ready #= false
     dut.io.retryScanCtrlBus.startPulse #= false
 

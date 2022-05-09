@@ -254,45 +254,39 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
     val inputWorkReq4CachePushQueue = mutable.Queue[
       (SpinalEnumElement[WorkReqOpCode.type], PsnStart, PktLen, WorkReqId)
     ]()
-//    val inputWorkReq4DmaReadQueue =
-//      mutable.Queue[(PsnStart, PktLen, PhysicalAddr)]()
-    val inputReadWorkReqOutQueue =
-      mutable.Queue[
-        (SpinalEnumElement[WorkReqOpCode.type], PSN, PktLen, VirtualAddr, LRKey)
-      ]()
-    val inputAtomicWorkReqOutQueue = mutable
-      .Queue[
-        (
-            SpinalEnumElement[WorkReqOpCode.type],
-            PSN,
-            VirtualAddr,
-            LRKey,
-            AtomicComp,
-            AtomicSwap
-        )
-      ]()
+
+    val inputReadWorkReqOutQueue = mutable.Queue[
+      (SpinalEnumElement[WorkReqOpCode.type], PSN, PktLen, VirtualAddr, LRKey)
+    ]()
+    val inputAtomicWorkReqOutQueue = mutable.Queue[
+      (
+          SpinalEnumElement[WorkReqOpCode.type],
+          PSN,
+          VirtualAddr,
+          LRKey,
+          AtomicComp,
+          AtomicSwap
+      )
+    ]()
     val outputWorkReqCachePushQueue = mutable.Queue[
       (SpinalEnumElement[WorkReqOpCode.type], PsnStart, PktLen, WorkReqId)
     ]()
     val outputSendWriteWorkReqOutQueue = mutable.Queue[
       (SpinalEnumElement[WorkReqOpCode.type], PsnStart, PktLen, WorkReqId)
     ]()
-//    val outputDmaReadQueue = mutable.Queue[(PsnStart, PktLen, PhysicalAddr)]()
-    val outputReadWorkReqOutQueue =
-      mutable.Queue[
-        (SpinalEnumElement[WorkReqOpCode.type], PSN, PktLen, VirtualAddr, LRKey)
-      ]()
-    val outputAtomicWorkReqOutQueue = mutable
-      .Queue[
-        (
-            SpinalEnumElement[WorkReqOpCode.type],
-            PSN,
-            VirtualAddr,
-            LRKey,
-            AtomicComp,
-            AtomicSwap
-        )
-      ]()
+    val outputReadWorkReqOutQueue = mutable.Queue[
+      (SpinalEnumElement[WorkReqOpCode.type], PSN, PktLen, VirtualAddr, LRKey)
+    ]()
+    val outputAtomicWorkReqOutQueue = mutable.Queue[
+      (
+          SpinalEnumElement[WorkReqOpCode.type],
+          PSN,
+          VirtualAddr,
+          LRKey,
+          AtomicComp,
+          AtomicSwap
+      )
+    ]()
 
     val input4SqOutPsnRangeQueue =
       mutable.Queue[(SpinalEnumElement[WorkReqOpCode.type], PsnStart, PsnEnd)]()
@@ -306,7 +300,7 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
       dut.io.retryWorkReq.valid #= false
       dut.io.normalWorkReq
     }
-    streamMasterDriverAlwaysValid(inputWorkReqStream, dut.clockDomain) {
+    streamMasterDriver(inputWorkReqStream, dut.clockDomain) {
       val workReqOpCode = WorkReqSim.randomSendWriteReadAtomicOpCode()
       inputWorkReqStream.workReq.opcode #= workReqOpCode
       val workReqLen = inputWorkReqStream.workReq.lenBytes.toLong
@@ -342,7 +336,6 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
       if (workReqOpCode.isReadReq()) {
         inputReadWorkReqOutQueue.enqueue(
           (
-//            OpCode.RDMA_READ_REQUEST,
             workReqOpCode,
             psnStart,
             workReqLen,
@@ -351,11 +344,8 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
           )
         )
       } else if (workReqOpCode.isAtomicReq()) {
-//        val atomicReqOpCode =
-//          WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx = 0, pktNum = 1)
         inputAtomicWorkReqOutQueue.enqueue(
           (
-//            atomicReqOpCode,
             workReqOpCode,
             psnStart,
             inputWorkReqStream.workReq.raddr.toBigInt,
@@ -373,17 +363,10 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
             workReqId
           )
         )
-//        inputWorkReq4DmaReadQueue.enqueue(
-//          (
-//            psnStart,
-//            workReqLen,
-//            inputWorkReqStream.pa.toBigInt
-//          )
-//        )
       }
     }
 
-    streamSlaveAlwaysReady(dut.io.workReqCachePush, dut.clockDomain)
+    streamSlaveRandomizer(dut.io.workReqCachePush, dut.clockDomain)
     onStreamFire(dut.io.workReqCachePush, dut.clockDomain) {
       outputWorkReqCachePushQueue.enqueue(
         (
@@ -394,7 +377,7 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
         )
       )
     }
-    streamSlaveAlwaysReady(dut.io.sendWriteWorkReqOut, dut.clockDomain)
+    streamSlaveRandomizer(dut.io.sendWriteWorkReqOut, dut.clockDomain)
     onStreamFire(dut.io.sendWriteWorkReqOut, dut.clockDomain) {
       outputSendWriteWorkReqOutQueue.enqueue(
         (
@@ -405,17 +388,8 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
         )
       )
     }
-//    streamSlaveAlwaysReady(dut.io.dmaRead.req, dut.clockDomain)
-//    onStreamFire(dut.io.dmaRead.req, dut.clockDomain) {
-//      outputDmaReadQueue.enqueue(
-//        (
-//          dut.io.dmaRead.req.psnStart.toInt,
-//          dut.io.dmaRead.req.lenBytes.toLong,
-//          dut.io.dmaRead.req.pa.toBigInt
-//        )
-//      )
-//    }
-    streamSlaveAlwaysReady(dut.io.readWorkReqOut, dut.clockDomain)
+
+    streamSlaveRandomizer(dut.io.readWorkReqOut, dut.clockDomain)
     onStreamFire(dut.io.readWorkReqOut, dut.clockDomain) {
       outputReadWorkReqOutQueue.enqueue(
         (
@@ -427,7 +401,7 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
         )
       )
     }
-    streamSlaveAlwaysReady(dut.io.atomicWorkReqOut, dut.clockDomain)
+    streamSlaveRandomizer(dut.io.atomicWorkReqOut, dut.clockDomain)
     onStreamFire(dut.io.atomicWorkReqOut, dut.clockDomain) {
       outputAtomicWorkReqOutQueue.enqueue(
         (
@@ -440,7 +414,7 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
         )
       )
     }
-    streamSlaveAlwaysReady(dut.io.sqOutPsnRangeFifoPush, dut.clockDomain)
+    streamSlaveRandomizer(dut.io.sqOutPsnRangeFifoPush, dut.clockDomain)
     onStreamFire(dut.io.sqOutPsnRangeFifoPush, dut.clockDomain) {
       outputSqOutPsnRangeQueue.enqueue(
         (
@@ -450,15 +424,7 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
         )
       )
     }
-//    fork {
-//      while(true) {
-//        dut.clockDomain.waitSampling()
-//        if (inputWorkReqStream.valid.toBoolean && inputWorkReqStream.ready.toBoolean) {
-//          dut.io.retryFlushDone.toBoolean shouldBe isRetryWorkReq withClue
-//            f"${simTime()} time: dut.io.retryFlushDone=${dut.io.retryFlushDone.toBoolean} should == isRetryWorkReq=${isRetryWorkReq}"
-//        }
-//      }
-//    }
+
     MiscUtils.checkSignalWhen(
       dut.clockDomain,
       when =
@@ -507,12 +473,6 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
       outputAtomicWorkReqOutQueue,
       MATCH_CNT
     )
-//    MiscUtils.checkInputOutputQueues(
-//      dut.clockDomain,
-//      inputWorkReq4DmaReadQueue,
-//      outputDmaReadQueue,
-//      MATCH_CNT
-//    )
   }
 
   test("WorkReqCachePushAndReadAtomicHandler normal case") {

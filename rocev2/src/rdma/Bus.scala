@@ -361,8 +361,10 @@ case class QpAttrData() extends Bundle {
   val rqOutPsn = UInt(PSN_WIDTH bits)
   val sqOutPsn = UInt(PSN_WIDTH bits)
   val pmtu = UInt(PMTU_WIDTH bits)
-  val maxPendingReadAtomicReqNum = UInt(MAX_WR_NUM_WIDTH bits)
-  val maxDstPendingReadAtomicReqNum = UInt(MAX_WR_NUM_WIDTH bits)
+  val maxPendingReadAtomicWorkReqNum = UInt(MAX_WR_NUM_WIDTH bits)
+  val maxDstPendingReadAtomicWorkReqNum = UInt(MAX_WR_NUM_WIDTH bits)
+  val maxPendingWorkReqNum = UInt(MAX_WR_NUM_WIDTH bits)
+  val maxDstPendingWorkReqNum = UInt(MAX_WR_NUM_WIDTH bits)
   val sqpn = UInt(QPN_WIDTH bits)
   val dqpn = UInt(QPN_WIDTH bits)
 
@@ -387,7 +389,7 @@ case class QpAttrData() extends Bundle {
   def isValid = state =/= QpState.RESET.id
   def isReset = state === QpState.RESET.id
 
-  def initOrReset(): this.type = {
+  def init(): this.type = {
     ipv4Peer := 0
     pdId := 0
     epsn := 0
@@ -395,13 +397,12 @@ case class QpAttrData() extends Bundle {
     rqOutPsn := 0
     sqOutPsn := 0
     pmtu := PMTU.U1024.id
-    maxPendingReadAtomicReqNum := 0
-    maxDstPendingReadAtomicReqNum := 0
+    maxPendingReadAtomicWorkReqNum := 0
+    maxDstPendingReadAtomicWorkReqNum := 0
+    maxPendingWorkReqNum := 0
+    maxDstPendingWorkReqNum := 0
     sqpn := 0
     dqpn := 0
-
-//    nakSeqTrigger := False
-//    rnrTrigger := False
 
     rqPreReqOpCode := OpCode.SEND_ONLY.id
     rnrTimeOut := 1 // 1 means 0.01ms
@@ -419,39 +420,49 @@ case class QpAttrData() extends Bundle {
     this
   }
 
-// RNR timeout settings:
-//  0 - 655.36 milliseconds delay
-//  1 - 0.01 milliseconds delay
-//  2 - 0.02 milliseconds delay
-//  3 - 0.03 milliseconds delay
-//  4 - 0.04 milliseconds delay
-//  5 - 0.06 milliseconds delay
-//  6 - 0.08 milliseconds delay
-//  7 - 0.12 milliseconds delay
-//  8 - 0.16 milliseconds delay
-//  9 - 0.24 milliseconds delay
-//  10 - 0.32 milliseconds delay
-//  11 - 0.48 milliseconds delay
-//  12 - 0.64 milliseconds delay
-//  13 - 0.96 milliseconds delay
-//  14 - 1.28 milliseconds delay
-//  15 - 1.92 milliseconds delay
-//  16 - 2.56 milliseconds delay
-//  17 - 3.84 milliseconds delay
-//  18 - 5.12 milliseconds delay
-//  19 - 7.68 milliseconds delay
-//  20 - 10.24 milliseconds delay
-//  21 - 15.36 milliseconds delay
-//  22 - 20.48 milliseconds delay
-//  23 - 30.72 milliseconds delay
-//  24 - 40.96 milliseconds delay
-//  25 - 61.44 milliseconds delay
-//  26 - 81.92 milliseconds delay
-//  27 - 122.88 milliseconds delay
-//  28 - 163.84 milliseconds delay
-//  29 - 245.76 milliseconds delay
-//  30 - 327.68 milliseconds delay
-//  31 - 491.52 milliseconds delay
+  def getMaxPendingReadAtomicWorkReqNum() = {
+    (maxDstPendingReadAtomicWorkReqNum < maxPendingReadAtomicWorkReqNum) ?
+      maxDstPendingReadAtomicWorkReqNum | maxPendingReadAtomicWorkReqNum
+  }
+
+  def getMaxPendingWorkReqNum() = {
+    (maxDstPendingWorkReqNum < maxPendingWorkReqNum) ?
+      maxDstPendingWorkReqNum | maxPendingWorkReqNum
+  }
+
+  // RNR timeout settings:
+  // 0 - 655.36 milliseconds delay
+  // 1 - 0.01 milliseconds delay
+  // 2 - 0.02 milliseconds delay
+  // 3 - 0.03 milliseconds delay
+  // 4 - 0.04 milliseconds delay
+  // 5 - 0.06 milliseconds delay
+  // 6 - 0.08 milliseconds delay
+  // 7 - 0.12 milliseconds delay
+  // 8 - 0.16 milliseconds delay
+  // 9 - 0.24 milliseconds delay
+  // 10 - 0.32 milliseconds delay
+  // 11 - 0.48 milliseconds delay
+  // 12 - 0.64 milliseconds delay
+  // 13 - 0.96 milliseconds delay
+  // 14 - 1.28 milliseconds delay
+  // 15 - 1.92 milliseconds delay
+  // 16 - 2.56 milliseconds delay
+  // 17 - 3.84 milliseconds delay
+  // 18 - 5.12 milliseconds delay
+  // 19 - 7.68 milliseconds delay
+  // 20 - 10.24 milliseconds delay
+  // 21 - 15.36 milliseconds delay
+  // 22 - 20.48 milliseconds delay
+  // 23 - 30.72 milliseconds delay
+  // 24 - 40.96 milliseconds delay
+  // 25 - 61.44 milliseconds delay
+  // 26 - 81.92 milliseconds delay
+  // 27 - 122.88 milliseconds delay
+  // 28 - 163.84 milliseconds delay
+  // 29 - 245.76 milliseconds delay
+  // 30 - 327.68 milliseconds delay
+  // 31 - 491.52 milliseconds delay
   def getRnrTimeOut(): UInt =
     new Composite(this) {
       val result = UInt()

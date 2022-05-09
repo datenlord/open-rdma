@@ -425,10 +425,9 @@ class ReadRespLenCheck(busWidth: BusWidth) extends Component {
       severity = FAILURE
     )
 
-    report(
-      L"${REPORT_TIME} time: readRespExpectedTotalLenBytes=${readRespExpectedTotalLenBytes}, totalLenBytes=${totalLenBytes}, isRespTotalLenCheckErr=${isRespTotalLenCheckErr}, isPktLenCheckErr=${isPktLenCheckErr}"
-    )
-
+//    report(
+//      L"${REPORT_TIME} time: readRespExpectedTotalLenBytes=${readRespExpectedTotalLenBytes}, totalLenBytes=${totalLenBytes}, isRespTotalLenCheckErr=${isRespTotalLenCheckErr}, isPktLenCheckErr=${isPktLenCheckErr}"
+//    )
     isRespTotalLenCheckErr := readRespExpectedTotalLenBytes =/= totalLenBytes
     when(!io.txQCtrl.wrongStateFlush) {
       when(isRespTotalLenCheckErr || isPktLenCheckErr) {
@@ -671,14 +670,12 @@ class WorkCompGen extends Component {
   io.atomicRespDmaWriteResp.resp.ready := False
 
   val insertIntoQueue = new Area {
-    val isReadWorkReq =
-      WorkReqOpCode.isReadReq(
-        io.cachedWorkReqAndAck.cachedWorkReq.workReq.opcode
-      )
-    val isAtomicWorkReq =
-      WorkReqOpCode.isAtomicReq(
-        io.cachedWorkReqAndAck.cachedWorkReq.workReq.opcode
-      )
+    val isReadWorkReq = WorkReqOpCode.isReadReq(
+      io.cachedWorkReqAndAck.cachedWorkReq.workReq.opcode
+    )
+    val isAtomicWorkReq = WorkReqOpCode.isAtomicReq(
+      io.cachedWorkReqAndAck.cachedWorkReq.workReq.opcode
+    )
     val isWorkCompNeeded = isReadWorkReq || isAtomicWorkReq ||
       io.cachedWorkReqAndAck.cachedWorkReq.workReq.flags.signaled
 
@@ -725,14 +722,12 @@ class WorkCompGen extends Component {
       insertIntoQueue.inputWorkReqAndAckQueue.ackValid && !insertIntoQueue.inputWorkReqAndAckQueue.ack.aeth
         .isNormalAck()
 
-    val isReadWorkReq =
-      WorkReqOpCode.isReadReq(
-        insertIntoQueue.inputWorkReqAndAckQueue.cachedWorkReq.workReq.opcode
-      )
-    val isAtomicWorkReq =
-      WorkReqOpCode.isAtomicReq(
-        insertIntoQueue.inputWorkReqAndAckQueue.cachedWorkReq.workReq.opcode
-      )
+    val isReadWorkReq = WorkReqOpCode.isReadReq(
+      insertIntoQueue.inputWorkReqAndAckQueue.cachedWorkReq.workReq.opcode
+    )
+    val isAtomicWorkReq = WorkReqOpCode.isAtomicReq(
+      insertIntoQueue.inputWorkReqAndAckQueue.cachedWorkReq.workReq.opcode
+    )
 
     val joinDmaRespCond = (isReadWorkReq || isAtomicWorkReq) && !inputHasNak
     val joinStream = StreamConditionalJoin(

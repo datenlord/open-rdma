@@ -439,22 +439,12 @@ class ReadAtomicRstCache(depth: Int) extends Component {
   for ((queryPort, portIdx) <- queryPortVec.zipWithIndex) {
     cam.io.queryBusVec(portIdx).req << queryPort.req
     queryPort.resp << cam.io.queryBusVec(portIdx).resp
-//    queryPort.resp << cam.io
-//      .queryBusVec(portIdx)
-//      .resp
-//      .translateWith {
-//        val result = cloneOf(queryPort.resp.payloadType)
-//        result.rstCacheData := cam.io.queryBusVec(portIdx).resp.respValue
-//        result.query := cam.io.queryBusVec(portIdx).resp.queryKey
-//        result.found := cam.io.queryBusVec(portIdx).resp.found
-//        result
-//      }
   }
 }
 
 class WorkReqCache(depth: Int) extends Component {
   val io = new Bundle {
-//    val qpAttr = in(QpAttrData())
+    val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
     val push = slave(Stream(CachedWorkReq()))
     val pop = master(Stream(CachedWorkReq()))
@@ -473,9 +463,47 @@ class WorkReqCache(depth: Int) extends Component {
     initDataVal = CachedWorkReq().setInitVal(),
     depth = depth
   )
-  fifo.io.push << io.push
+  val isInputReadWorkReq = WorkReqOpCode.isReadReq(fifo.io.push.workReq.opcode)
+  val isInputAtomicWorkReq =
+    WorkReqOpCode.isAtomicReq(fifo.io.push.workReq.opcode)
+  val isOutputReadWorkReq = WorkReqOpCode.isReadReq(fifo.io.pop.workReq.opcode)
+  val isOutputAtomicWorkReq =
+    WorkReqOpCode.isAtomicReq(fifo.io.pop.workReq.opcode)
+  val incReadAtomicWorkReqCnt =
+    (isInputReadWorkReq || isInputAtomicWorkReq) && fifo.io.push.fire
+  val decReadAtomicWorkReqCnt =
+    (isOutputReadWorkReq || isOutputAtomicWorkReq) && fifo.io.pop.fire
+
+  val readAtomicWorkReqCnt = Counter(widthOf(fifo.io.occupancy) bits)
+  when(io.txQCtrl.wrongStateFlush) {
+    readAtomicWorkReqCnt := 0
+  } elsewhen (incReadAtomicWorkReqCnt && !decReadAtomicWorkReqCnt) {
+    readAtomicWorkReqCnt.increment()
+  } elsewhen (!incReadAtomicWorkReqCnt && decReadAtomicWorkReqCnt) {
+    readAtomicWorkReqCnt.valueNext := readAtomicWorkReqCnt - 1
+  }
+
+  val readAtomicWorkReqFull =
+    readAtomicWorkReqCnt >= io.qpAttr.getMaxPendingReadAtomicWorkReqNum()
+  val workReqCacheFull =
+    fifo.io.occupancy >= io.qpAttr.getMaxPendingWorkReqNum()
+  assert(
+    assertion = io.qpAttr.getMaxPendingReadAtomicWorkReqNum() > 0,
+    message =
+      L"${REPORT_TIME} time: io.qpAttr.getMaxPendingReadAtomicWorkReqNum()=${io.qpAttr
+        .getMaxPendingReadAtomicWorkReqNum()} should > 0",
+    severity = FAILURE
+  )
+  assert(
+    assertion = io.qpAttr.getMaxPendingWorkReqNum() > 0,
+    message =
+      L"${REPORT_TIME} time: io.qpAttr.getMaxPendingWorkReqNum()=${io.qpAttr.getMaxPendingWorkReqNum()} should > 0",
+    severity = FAILURE
+  )
+
+  fifo.io.push << io.push.haltWhen(workReqCacheFull || readAtomicWorkReqFull)
   io.pop << fifo.io.pop
-  io.full := fifo.io.full
+  io.full := fifo.io.full || workReqCacheFull || readAtomicWorkReqFull
   io.empty := fifo.io.empty
   io.occupancy := fifo.io.occupancy
   fifo.io.flush := io.txQCtrl.wrongStateFlush
@@ -555,12 +583,6 @@ class PdAddrCache(depth: Int) extends Component {
   // TODO: add initial values to Mem
   val addrCacheMem = Vec(
     RegInit(CachedValue(AddrData()).init(AddrData().init())),
-//    RegInit {
-//      val result = CachedValue(AddrData())
-//      result.data := AddrData().init()
-//      result.valid := False
-//      result
-//    },
     depth
   )
 
@@ -571,16 +593,14 @@ class PdAddrCache(depth: Int) extends Component {
       io.addrCreateOrDelete.req.createOrDelete === CRUD.DELETE
 
     val ramAvailableOH = Vec((0 until depth).map(idx => {
-      //      val v = addrCacheMem.readAsync(
-      //        address = U(idx, log2Up(depth) bits),
-      //        // The read will get the new value (provided by the write)
-      //        readUnderWrite = writeFirst
-      //      )
+//      val v = addrCacheMem.readAsync(
+//        address = U(idx, log2Up(depth) bits),
+//        // The read will get the new value (provided by the write)
+//        readUnderWrite = writeFirst
+//      )
       val v = addrCacheMem(idx)
-      ~v.valid // False is available, True is taken
+      ~v.valid // False means available, True means taken
     })).asBits
-//    val inserting = io.addrCreateOrDelete.req.fire && isAddrDataCreation
-//    val deleting = io.addrCreateOrDelete.req.fire && isAddrDataDeletion
     io.full := !(ramAvailableOH.orR) // && !deleting
     io.empty := ramAvailableOH.andR // && !inserting
 
@@ -617,20 +637,6 @@ class PdAddrCache(depth: Int) extends Component {
       result.addrData := io.addrCreateOrDelete.req.addrData
       result
     }
-
-//    io.addrCreateOrDelete.req.ready := (isAddrDataCreation && !io.full) || (isAddrDataDeletion && !io.empty)
-
-//    when(io.addrCreateOrDelete.req.fire) {
-//      val payloadData = io.addrCreateOrDelete.req.payload
-//      val createOrDelete = payloadData.createOrDelete
-//      val addrData = payloadData.addrData
-//      val rkey = addrData.rkey
-//      val pa = addrData.pa
-//      val va = addrData.va
-//      report(
-//        L"${REPORT_TIME} time: PA=${pa}, VA=${va}, rkey=${rkey}, createOrDelete=${createOrDelete}"
-//      )
-//    }
   }
 
   val search = new Area {
@@ -674,11 +680,8 @@ class PdAddrCache(depth: Int) extends Component {
 //        )
 
         val pa = UInt(MEM_ADDR_WIDTH bits)
-//          when(reqSizeValid) {
         pa := cacheResp.pa + (originalReq.va - cacheResp.va)
-//          } otherwise {
-//            pa.assignDontCare() // Invalid PhysicalAddr
-//          }
+
         val accessValid = cacheResp.accessType.permit(originalReq.accessType)
 
         val result = cloneOf(io.query.resp.payloadType)
