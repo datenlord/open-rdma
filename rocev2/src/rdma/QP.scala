@@ -91,7 +91,8 @@ class QpCtrl extends Component {
       whenIsActive {
         when(
           io.qpCreateOrModify.req.valid &&
-            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask
+              .include(QpAttrMaskEnum.QP_STATE) &&
             io.qpCreateOrModify.req.qpAttr.state === QpState.RESET.id
         ) {
           exit()
@@ -124,7 +125,8 @@ class QpCtrl extends Component {
       .whenIsActive {
         when(
           io.qpCreateOrModify.req.valid &&
-            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask
+              .include(QpAttrMaskEnum.QP_STATE) &&
             io.qpCreateOrModify.req.qpAttr.state === QpState.INIT.id
         ) {
           goto(INIT)
@@ -138,7 +140,8 @@ class QpCtrl extends Component {
       .whenIsActive {
         when(
           io.qpCreateOrModify.req.valid &&
-            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask
+              .include(QpAttrMaskEnum.QP_STATE) &&
             io.qpCreateOrModify.req.qpAttr.state === QpState.RTR.id
         ) {
           goto(RTR)
@@ -156,7 +159,8 @@ class QpCtrl extends Component {
       .whenIsActive {
         when(
           io.qpCreateOrModify.req.valid &&
-            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask
+              .include(QpAttrMaskEnum.QP_STATE) &&
             io.qpCreateOrModify.req.qpAttr.state === QpState.RTS.id
         ) {
           goto(RTS)
@@ -174,7 +178,8 @@ class QpCtrl extends Component {
       .whenIsActive {
         when(
           io.qpCreateOrModify.req.valid &&
-            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask
+              .include(QpAttrMaskEnum.QP_STATE) &&
             io.qpCreateOrModify.req.qpAttr.state === QpState.SQD.id
         ) {
           // TODO: verify that transfer to SQD without quit internal FSMs
@@ -265,7 +270,8 @@ class QpCtrl extends Component {
       whenIsActive {
         when(
           io.qpCreateOrModify.req.valid &&
-            io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_STATE.id &&
+            io.qpCreateOrModify.req.qpAttr.modifyMask
+              .include(QpAttrMaskEnum.QP_STATE) &&
             io.qpCreateOrModify.req.qpAttr.state === QpState.RTS.id
         ) {
           exit()

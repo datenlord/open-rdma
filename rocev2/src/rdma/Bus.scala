@@ -352,6 +352,22 @@ case class PsnIncNotifier() extends Bundle {
   val sq = SqPsnInc()
 }
 
+case class QpAttrMask() extends Bundle {
+  val maskBits = Bits(widthOf(QpAttrMaskEnum()) bits)
+
+  def set(masks: SpinalEnumCraft[QpAttrMaskEnum.type]*): Unit = {
+    maskBits := masks.map(_.asBits).reduceBalancedTree(_ | _)
+  }
+
+  def include(mask: SpinalEnumCraft[QpAttrMaskEnum.type]): Bool = {
+    (maskBits & mask.asBits).orR
+  }
+
+  def init(): Unit = {
+    maskBits := QpAttrMaskEnum.QP_CREATE.asBits // QP_CREATE -> 0
+  }
+}
+
 case class QpAttrData() extends Bundle {
   val ipv4Peer = Bits(IPV4_WIDTH bits) // IPv4 only
 
@@ -384,7 +400,7 @@ case class QpAttrData() extends Bundle {
 
   val state = Bits(QP_STATE_WIDTH bits)
 
-  val modifyMask = Bits(QP_ATTR_MASK_WIDTH bits)
+  val modifyMask = QpAttrMask() // Bits(QP_ATTR_MASK_WIDTH bits)
 
   def isValid = state =/= QpState.RESET.id
   def isReset = state === QpState.RESET.id
@@ -416,16 +432,16 @@ case class QpAttrData() extends Bundle {
 
     state := QpState.RESET.id
 
-    modifyMask := 0
+    modifyMask.init()
     this
   }
 
-  def getMaxPendingReadAtomicWorkReqNum() = {
+  def getMaxPendingReadAtomicWorkReqNum(): UInt = {
     (maxDstPendingReadAtomicWorkReqNum < maxPendingReadAtomicWorkReqNum) ?
       maxDstPendingReadAtomicWorkReqNum | maxPendingReadAtomicWorkReqNum
   }
 
-  def getMaxPendingWorkReqNum() = {
+  def getMaxPendingWorkReqNum(): UInt = {
     (maxDstPendingWorkReqNum < maxPendingWorkReqNum) ?
       maxDstPendingWorkReqNum | maxPendingWorkReqNum
   }
@@ -1303,7 +1319,7 @@ case class ScatterGatherList() extends Bundle {
 }
 
 case class WorkReqSendFlags() extends Bundle {
-  val flagBits = Bits(WR_FLAG_WIDTH bits)
+  val flagBits = Bits(widthOf(WorkReqSendFlagEnum()) bits)
 
   def set(flags: SpinalEnumCraft[WorkReqSendFlagEnum.type]*): Unit = {
     flagBits := flags.map(_.asBits).reduceBalancedTree(_ | _)
@@ -1313,11 +1329,11 @@ case class WorkReqSendFlags() extends Bundle {
     flagBits := 0 // No flags
   }
 
-  def fence = (flagBits & WorkReqSendFlagEnum.FENCE.asBits).orR
-  def signaled = (flagBits & WorkReqSendFlagEnum.SIGNALED.asBits).orR
-  def solicited = (flagBits & WorkReqSendFlagEnum.SOLICITED.asBits).orR
-  def inline = (flagBits & WorkReqSendFlagEnum.INLINE.asBits).orR
-  def ipChkSum = (flagBits & WorkReqSendFlagEnum.IP_CSUM.asBits).orR
+  def fence: Bool = (flagBits & WorkReqSendFlagEnum.FENCE.asBits).orR
+  def signaled: Bool = (flagBits & WorkReqSendFlagEnum.SIGNALED.asBits).orR
+  def solicited: Bool = (flagBits & WorkReqSendFlagEnum.SOLICITED.asBits).orR
+  def inline: Bool = (flagBits & WorkReqSendFlagEnum.INLINE.asBits).orR
+  def ipChkSum: Bool = (flagBits & WorkReqSendFlagEnum.IP_CSUM.asBits).orR
 }
 
 case class WorkReq() extends Bundle {
