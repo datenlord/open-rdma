@@ -103,7 +103,7 @@ object ConstantSettings {
   val ACK_TYPE_WIDTH = 3
 
 //  val WR_OPCODE_WIDTH = log2Up(11) // 11 is the max WR opcode
-  val WR_FLAG_WIDTH = log2Up(16) + 1 // 16 is the max WR flag
+//  val WR_FLAG_WIDTH = log2Up(16) + 1 // 16 is the max WR flag
 //  val WC_OPCODE_WIDTH = log2Up(135) // 135 is the max WC opcode
 //  val WC_FLAG_WIDTH = log2Up(64) + 1 // 64 is the max WC flag
 //  val WC_STATUS_WIDTH = log2Up(23) // 23 is the max WC status
@@ -115,7 +115,7 @@ object ConstantSettings {
 
   val QP_STATE_WIDTH = 3
 
-  val QP_ATTR_MASK_WIDTH = 32
+//  val QP_ATTR_MASK_WIDTH = 26
 
   val ACCESS_PERMISSION_WIDTH = 21
   require(
@@ -247,8 +247,45 @@ object RdmaConstants {
   val PSN_MASK = (1 << PSN_WIDTH) - 1
 }
 
+object QpAttrMaskEnum extends SpinalEnum {
+  val QP_CREATE, QP_STATE, QP_CUR_STATE, QP_EN_SQD_ASYNC_NOTIFY,
+      QP_ACCESS_FLAGS, QP_PKEY_INDEX, QP_PORT, QP_QKEY, QP_AV, QP_PATH_MTU,
+      QP_TIMEOUT, QP_RETRY_CNT, QP_RNR_RETRY, QP_RQ_PSN, QP_MAX_QP_RD_ATOMIC,
+      QP_ALT_PATH, QP_MIN_RNR_TIMER, QP_SQ_PSN, QP_MAX_DEST_RD_ATOMIC,
+      QP_PATH_MIG_STATE, QP_CAP, QP_DEST_QPN, QP_RATE_LIMIT = newElement()
+
+  defaultEncoding = SpinalEnumEncoding("opt")(
+    QP_CREATE -> 0,
+    QP_STATE -> 1, // Use the value of attr->qp_state
+    QP_CUR_STATE -> 2, // Use the value of attr->cur_qp_state
+    // Use the value of attr->en_sqd_async_notify
+    QP_EN_SQD_ASYNC_NOTIFY -> 4,
+    QP_ACCESS_FLAGS -> 8, // Use the value of attr->qp_access_flags
+    QP_PKEY_INDEX -> 16, // Use the value of attr->pkey_index
+    QP_PORT -> 32, // Use the value of attr->port_num
+    QP_QKEY -> 64, // Use the value of attr->qkey
+    QP_AV -> 128, // Use the value of attr->ah_attr
+    QP_PATH_MTU -> 256, // Use the value of attr->path_mtu
+    QP_TIMEOUT -> 512, // Use the value of attr->timeout
+    QP_RETRY_CNT -> 1024, // Use the value of attr->retry_cnt
+    QP_RNR_RETRY -> 2048, // Use the value of attr->rnr_retry
+    QP_RQ_PSN -> 4096, // Use the value of attr->rq_psn
+    QP_MAX_QP_RD_ATOMIC -> 8192, // Use the value of attr->max_rd_atomic
+    // Use the value of attr->alt_ah_attr, attr->alt_pkey_index, attr->alt_port_num, attr->alt_timeout
+    QP_ALT_PATH -> 16384,
+    QP_MIN_RNR_TIMER -> 32768, // Use the value of attr->min_rnr_timer
+    QP_SQ_PSN -> 65536, // Use the value of attr->sq_psn
+    // Use the value of attr->max_dest_rd_atomic
+    QP_MAX_DEST_RD_ATOMIC -> 131072,
+    QP_PATH_MIG_STATE -> 262144, // Use the value of attr->path_mig_state
+    QP_CAP -> 524288, // Use the value of attr->cap
+    QP_DEST_QPN -> 1048576, // Use the value of attr->dest_qp_num
+    QP_RATE_LIMIT -> 33554432 // 33554432 = 2^25
+  )
+}
+/*
 object QpAttrMask extends Enumeration {
-  type QpAttrMask = Value
+  type QpAttrMaskEnum = Value
 
   val QP_CREATE = Value(0)
   val QP_STATE = Value(1) // Use the value of attr->qp_state
@@ -277,6 +314,7 @@ object QpAttrMask extends Enumeration {
   val QP_DEST_QPN = Value(1048576) // Use the value of attr->dest_qp_num
   val QP_RATE_LIMIT = Value(33554432) // 33554432 = 2^25
 }
+ */
 
 object PMTU extends Enumeration {
   type PMTU = Value

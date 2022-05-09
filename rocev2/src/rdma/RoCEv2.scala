@@ -70,7 +70,7 @@ class AllQpCtrl(numMaxQPs: Int) extends Component {
   val foundQpModify = modifyQpOH.orR
 
   val isQpCreation =
-    io.qpCreateOrModify.req.qpAttr.modifyMask === QpAttrMask.QP_CREATE.id
+    io.qpCreateOrModify.req.qpAttr.modifyMask.include(QpAttrMaskEnum.QP_CREATE)
   val qpSelIdxOH = isQpCreation ? availableQpOH | modifyQpOH
   when(io.qpCreateOrModify.req.valid) {
     when(isQpCreation) {
