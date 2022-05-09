@@ -553,12 +553,12 @@ abstract class SendWriteReqGenerator(busWidth: BusWidth) extends Component {
 
 class SendReqGenerator(busWidth: BusWidth)
     extends SendWriteReqGenerator(busWidth) {
-  val isSendReq = WorkReqOpCode.isSendReq(
+  val isSendWorkReq = WorkReqOpCode.isSendReq(
     io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode
   )
   when(io.cachedWorkReqAndDmaReadResp.valid) {
     assert(
-      assertion = isSendReq,
+      assertion = isSendWorkReq,
       message =
         L"${REPORT_TIME} time: the WR opcode=${io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode} should be send request",
       severity = FAILURE
@@ -690,12 +690,12 @@ class SendReqGenerator(busWidth: BusWidth)
 
 class WriteReqGenerator(busWidth: BusWidth)
     extends SendWriteReqGenerator(busWidth) {
-  val isWriteReq = WorkReqOpCode.isWriteReq(
+  val isWriteWorkReq = WorkReqOpCode.isWriteReq(
     io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode
   )
   when(io.cachedWorkReqAndDmaReadResp.valid) {
     assert(
-      assertion = isWriteReq,
+      assertion = isWriteWorkReq,
       message =
         L"${REPORT_TIME} time: the WR opcode=${io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode} should be write request",
       severity = FAILURE

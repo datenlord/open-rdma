@@ -22,12 +22,10 @@ class SendQ(busWidth: BusWidth) extends Component {
     val dma = master(SqDmaBus(busWidth))
     val workComp = master(Stream(WorkComp()))
     val workCompErr = master(Stream(WorkComp())) // TODO: remove
-//    val workReqCacheScanBus = slave(
-//      CamFifoScanBus(CachedWorkReq(), PENDING_REQ_NUM)
-//    )
   }
 
   val workReqCache = new WorkReqCache(depth = PENDING_REQ_NUM)
+  workReqCache.io.qpAttr := io.qpAttr
   workReqCache.io.txQCtrl := io.txQCtrl
   io.notifier.workReqCacheEmpty := workReqCache.io.empty
 
@@ -41,59 +39,25 @@ class SendQ(busWidth: BusWidth) extends Component {
   io.addrCacheRead4Req << normalAndRetryWorkReqHandler.io.addrCacheRead
   io.psnInc := normalAndRetryWorkReqHandler.io.psnInc
   io.dma.reqOut << normalAndRetryWorkReqHandler.io.dmaRead
-//  io.notifier.workReqHasFence := normalAndRetryWorkReqHandler.io.workReqHasFence
   io.notifier.retryClear := normalAndRetryWorkReqHandler.io.retryClear
   workReqCache.io.retryScanCtrlBus << normalAndRetryWorkReqHandler.io.retryScanCtrlBus
   // TODO: remove
   io.workCompErr << normalAndRetryWorkReqHandler.io.workCompErr
-  /*
-  val reqSender = new ReqSender(busWidth)
-  reqSender.io.qpAttr := io.qpAttr
-  reqSender.io.txQCtrl := io.txQCtrl
-  reqSender.io.workReqCacheEmpty := workReqCache.io.empty
-  reqSender.io.workReq << io.workReq
-  workReqCache.io.push << reqSender.io.workReqCachePush
-//  workReqCache.io.queryPort4SqReqDmaRead << reqSender.io.workReqQueryPort4SqDmaReadResp
-  io.addrCacheRead4Req << reqSender.io.addrCacheRead
-  io.psnInc.npsn := reqSender.io.npsnInc
-  io.dma.reqSender << reqSender.io.dmaRead
-  io.notifier.workReqHasFence := reqSender.io.workReqHasFence
-  // TODO: remove
-  io.workCompErr << reqSender.io.workCompErr
-   */
+
   val respHandler = new RespHandler(busWidth)
   respHandler.io.qpAttr := io.qpAttr
   respHandler.io.txQCtrl := io.txQCtrl
   respHandler.io.rx << io.rxResp
-//  workReqCache.io.queryPort4SqRespDmaWrite << respHandler.io.workReqQuery
   respHandler.io.cachedWorkReqPop << workReqCache.io.pop
   io.notifier.retry := respHandler.io.retryNotifier
   io.addrCacheRead4Resp << respHandler.io.addrCacheRead
   io.workComp << respHandler.io.workComp
   io.dma.readResp << respHandler.io.readRespDmaWrite
   io.dma.atomic << respHandler.io.atomicRespDmaWrite
-  /*
-  val retryHandler = new RetryHandler(busWidth)
-  retryHandler.io.qpAttr := io.qpAttr
-  retryHandler.io.txQCtrl := io.txQCtrl
-  retryHandler.io.retryWorkReq << io.retryWorkReq
-//  workReqCache.io.queryPort4DupReqDmaRead << retryHandler.io.workReqQueryPort4DupDmaReadResp
-  io.dma.retry << retryHandler.io.dmaRead
-   */
+
   // TODO: handle simultaneous fatal error
   io.notifier.err := normalAndRetryWorkReqHandler.io.errNotifier || respHandler.io.errNotifier
   io.notifier.coalesceAckDone := respHandler.io.coalesceAckDone
-
-//  val sqOut = new SqOut(busWidth)
-//  sqOut.io.qpAttr := io.qpAttr
-//  sqOut.io.txQCtrl := io.txQCtrl
-//  sqOut.io.rxSendReq << normalAndRetryWorkReqHandler.io.txSendReq
-//  sqOut.io.rxWriteReq << normalAndRetryWorkReqHandler.io.txWriteReq
-//  sqOut.io.rxAtomicReq << normalAndRetryWorkReqHandler.io.txAtomicReq
-//  sqOut.io.rxReadReq << normalAndRetryWorkReqHandler.io.txReadReq
-//  sqOut.io.outPsnRangeFifoPush << normalAndRetryWorkReqHandler.io.sqOutPsnRangeFifoPush
-//  io.psnInc.opsn := sqOut.io.opsnInc
-//  io.tx << sqOut.io.tx
 
   io.tx << normalAndRetryWorkReqHandler.io.tx
 }
@@ -104,27 +68,16 @@ class NormalAndRetryWorkReqHandler(busWidth: BusWidth) extends Component {
     val txQCtrl = in(TxQCtrl())
     val workReqCacheEmpty = in(Bool())
     val psnInc = out(SqPsnInc())
-//    val opsnInc = out(OPsnInc())
-//    val npsnInc = out(NPsnInc())
     val errNotifier = out(SqErrNotifier())
     val retryClear = out(SqRetryClear())
     val workReq = slave(Stream(WorkReq()))
     val retryScanCtrlBus = master(RamScanCtrlBus())
     val retryWorkReq = slave(Stream(RamScanOut(CachedWorkReq())))
     val addrCacheRead = master(QpAddrCacheAgentReadBus())
-//    val sqOutPsnRangeFifoPush = master(Stream(ReqPsnRange()))
     val workReqCachePush = master(Stream(CachedWorkReq()))
-//    val workReqHasFence = out(Bool())
     val dmaRead = master(DmaReadBus(busWidth))
     val workCompErr = master(Stream(WorkComp()))
     val tx = master(RdmaDataBus(busWidth))
-//    val txSendReq = master(RdmaDataBus(busWidth))
-//    val txWriteReq = master(RdmaDataBus(busWidth))
-//    val txReadReq = master(Stream(ReadReq()))
-//    val txAtomicReq = master(Stream(AtomicReq()))
-//    val workReqCacheScanBus = master(
-//      CamFifoScanBus(CachedWorkReq(), PENDING_REQ_NUM)
-//    )
   }
 
   val normalWorkReq = new Area {
@@ -152,11 +105,6 @@ class NormalAndRetryWorkReqHandler(busWidth: BusWidth) extends Component {
   io.retryClear.retryWorkReqDone := retryHandler.io.retryWorkReqDone
   io.retryScanCtrlBus << retryHandler.io.retryScanCtrlBus
 
-//  val retryWorkReqHandler = new RetryWorkReqHandler
-//  retryWorkReqHandler.io.qpAttr := io.qpAttr
-//  retryWorkReqHandler.io.txQCtrl := io.txQCtrl
-//  retryWorkReqHandler.io.retryWorkReq << io.retryWorkReq
-
   io.errNotifier := normalWorkReq.workReqValidator.io.errNotifier || retryHandler.io.errNotifier
 
   val workReqCacheAndOutPsnRangeHandler = new WorkReqCacheAndOutPsnRangeHandler
@@ -174,14 +122,7 @@ class NormalAndRetryWorkReqHandler(busWidth: BusWidth) extends Component {
   sqReqGenerator.io.sendWriteNormalWorkReq << workReqCacheAndOutPsnRangeHandler.io.sendWriteWorkReqOut
   sqReqGenerator.io.readNormalWorkReq << workReqCacheAndOutPsnRangeHandler.io.readWorkReqOut
   sqReqGenerator.io.atomicNormalWorkReq << workReqCacheAndOutPsnRangeHandler.io.atomicWorkReqOut
-//  sqReqGenerator.io.sendWriteRetryWorkReq << retryWorkReqHandler.io.sendWriteRetryWorkReq
-//  sqReqGenerator.io.readRetryWorkReq << retryWorkReqHandler.io.readRetryWorkReq
-//  sqReqGenerator.io.atomicRetryWorkReq << retryWorkReqHandler.io.atomicRetryWorkReq
   io.dmaRead << sqReqGenerator.io.dmaRead
-//  io.txSendReq << sqReqGenerator.io.txSendReq
-//  io.txWriteReq << sqReqGenerator.io.txWriteReq
-//  io.txAtomicReq << sqReqGenerator.io.txAtomicReq
-//  io.txReadReq << sqReqGenerator.io.txReadReq
 
   val sqOut = new SqOut(busWidth)
   sqOut.io.qpAttr := io.qpAttr
@@ -190,12 +131,8 @@ class NormalAndRetryWorkReqHandler(busWidth: BusWidth) extends Component {
   sqOut.io.rxWriteReq << sqReqGenerator.io.txWriteReq
   sqOut.io.rxAtomicReq << sqReqGenerator.io.txAtomicReq
   sqOut.io.rxReadReq << sqReqGenerator.io.txReadReq
-  //  sqOut.io.rxSendReqRetry << retryHandler.io.txSendReq
-  //  sqOut.io.rxWriteReqRetry << retryHandler.io.txWriteReq
-  //  sqOut.io.rxAtomicReqRetry << retryHandler.io.txAtomicReq
-  //  sqOut.io.rxReadReqRetry << retryHandler.io.txReadReq
   sqOut.io.outPsnRangeFifoPush << workReqCacheAndOutPsnRangeHandler.io.sqOutPsnRangeFifoPush
-  //  io.retryFlushDone := sqOut.io.retryFlushDone
+//  io.retryFlushDone := sqOut.io.retryFlushDone
   io.psnInc.opsn := sqOut.io.opsnInc
   io.tx << sqOut.io.tx
 }
@@ -224,16 +161,9 @@ class WorkReqValidator extends Component {
 //        .throwWhen(io.txQCtrl.wrongStateFlush)
         .haltWhen(io.txQCtrl.retry)
     )
-//    val forkStream = StreamFork(
-//      // Should generate WC for the flushed WR
-//      io.workReq.haltWhen(io.txQCtrl.fenceOrRetry),
-//      portCount = 3
-//    )
-//    val (workReq4Queue, workReq4AddrCacheQuery, sqOutPsnRangeFifoPush) =
-//      (forkStream(0), forkStream(1), forkStream(2))
+
     // Update nPSN each time io.workReq fires
     val numReqPkt = divideByPmtuUp(workReq.lenBytes, io.qpAttr.pmtu)
-//    val psnEnd = io.qpAttr.npsn + (numReqPkt - 1)
 
     io.npsnInc.incVal := numReqPkt.resize(PSN_WIDTH)
     io.npsnInc.inc := io.workReq.fire && !io.txQCtrl.wrongStateFlush
@@ -344,9 +274,6 @@ class WorkReqValidator extends Component {
       )
     }
 
-//    val (normalOut4WorkReqCache, normalOut4SqOutPsnRangeFifoPush) = StreamFork2(
-//      normalStream
-//    )
     io.workReqToCache <-/< normalStream.translateWith {
       val result = cloneOf(io.workReqToCache)
       result.workReq := normalStream._1.workReq
@@ -355,16 +282,6 @@ class WorkReqValidator extends Component {
       result.pa := normalStream._2.pa
       result
     }
-
-//    io.sqOutPsnRangeFifoPush <-/< normalOut4SqOutPsnRangeFifoPush
-//      .throwWhen(io.txQCtrl.wrongStateFlush) ~~ { payloadData =>
-//      val psnEnd = payloadData._1.psnStart + (payloadData._1.pktNum - 1)
-//      val result = cloneOf(io.sqOutPsnRangeFifoPush.payloadType)
-//      result.workReqOpCode := payloadData._1.workReq.opcode
-//      result.start := payloadData._1.psnStart
-//      result.end := psnEnd.resize(PSN_WIDTH)
-//      result
-//    }
   }
 }
 
@@ -389,16 +306,6 @@ class WorkReqFenceHandler extends Component {
   val isAtomicWorkReq = WorkReqOpCode.isAtomicReq(cachedWorkReq.workReq.opcode)
 
   val fenceWaitCond = cachedWorkReq.workReq.flags.fence && !io.workReqCacheEmpty
-  // FENCE state trigger condition
-//  io.workReqHasFence := cachedWorkReqValid && fenceWaitCond
-//  val (workReq4CachePush, workReq4Output) = StreamFork2(
-//    io.normalWorkReq
-//      .throwWhen(io.txQCtrl.wrongStateFlush)
-//      // TODO: consider remove FENCE state from QP state machine?
-//      .haltWhen(
-//        io.txQCtrl.retry || fenceWaitCond
-//      )
-//  )
 
   io.workReqOut <-/< io.normalWorkReq
     .throwWhen(io.txQCtrl.wrongStateFlush)
@@ -406,18 +313,6 @@ class WorkReqFenceHandler extends Component {
     .haltWhen(
       io.txQCtrl.retry || fenceWaitCond
     )
-
-//  val (sendWriteWorkReqIdx, readWorkReqIdx, atomicWorkReqIdx) = (0, 1, 2)
-//  val threeStreams = StreamDeMuxByConditions(
-//    workReq4Output,
-//    isSendWorkReq || isWriteWorkReq,
-//    isReadWorkReq,
-//    isAtomicWorkReq
-//  )
-//
-//  io.sendWriteWorkReqOut <-/< threeStreams(sendWriteWorkReqIdx)
-//  io.readWorkReqOut <-/< threeStreams(readWorkReqIdx)
-//  io.atomicWorkReqOut <-/< threeStreams(atomicWorkReqIdx)
 }
 
 class WorkReqCacheAndOutPsnRangeHandler extends Component {
@@ -458,9 +353,9 @@ class WorkReqCacheAndOutPsnRangeHandler extends Component {
     result
   }
 
-  io.workReqCachePush <-/< workReq4CachePush.throwWhen(
-    io.txQCtrl.wrongStateFlush || io.txQCtrl.retry
-  )
+  io.workReqCachePush <-/< workReq4CachePush
+    // When retry state, no need to push to WR cache
+    .throwWhen(io.txQCtrl.wrongStateFlush || io.txQCtrl.retry)
 
   val isSendWorkReq = WorkReqOpCode.isSendReq(workReq4Output.workReq.opcode)
   val isWriteWorkReq = WorkReqOpCode.isWriteReq(workReq4Output.workReq.opcode)

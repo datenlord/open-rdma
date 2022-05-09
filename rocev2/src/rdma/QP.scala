@@ -62,13 +62,9 @@ class QpCtrl extends Component {
     val qpAttr = out(QpAttrData())
     val rxQCtrl = out(RxQCtrl())
     val txQCtrl = out(TxQCtrl())
-//    val workReqCacheScanBus = master(
-//      CamFifoScanBus(CachedWorkReq(), PENDING_REQ_NUM)
-//    )
-//    val retryWorkReq = master(Stream(CachedWorkReq()))
   }
 
-  val qpAttr = RegInit(QpAttrData().initOrReset())
+  val qpAttr = RegInit(QpAttrData().init())
   io.qpAttr := qpAttr
 
   io.qpCreateOrModify.req.ready := True

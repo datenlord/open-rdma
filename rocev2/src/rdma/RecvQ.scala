@@ -268,7 +268,8 @@ class ReqCommCheck(busWidth: BusWidth) extends Component {
     val isReadOrAtomicReq = OpCode.isReadReqPkt(inputPktFrag.bth.opcode) ||
       OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode)
     val isReadAtomicRstCacheFull = inputValid && isReadOrAtomicReq &&
-      io.readAtomicRstCacheOccupancy >= io.qpAttr.maxPendingReadAtomicReqNum
+      io.readAtomicRstCacheOccupancy >= io.qpAttr
+        .getMaxPendingReadAtomicWorkReqNum()
 
     // TODO: should discard duplicate pending requests?
     val throwCond = isDupPendingReq
