@@ -44,6 +44,9 @@ $MILL rocev2.test.testSim rdma.PdAddrCacheTest
 $MILL rocev2.test.testSim rdma.ReadAtomicRstCacheTest
 $MILL rocev2.test.testSim rdma.WorkReqCacheTest
 
+# QpCtrl Test
+$MILL rocev2.test.testSim rdma.QpCtrlTest
+
 # SQ Test
 $MILL rocev2.test.testSim rdma.SendReqGeneratorTest
 $MILL rocev2.test.testSim rdma.WriteReqGeneratorTest

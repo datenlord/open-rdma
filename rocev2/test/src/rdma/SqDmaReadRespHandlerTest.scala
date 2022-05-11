@@ -4,6 +4,7 @@ import spinal.core.sim._
 import ConstantSettings._
 import StreamSimUtil._
 import RdmaTypeReDef._
+import SimSettings._
 
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
@@ -18,7 +19,7 @@ class SqDmaReadRespHandlerTest extends AnyFunSuite {
 
   test("zero DMA length read response test") {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       val psnQueue = mutable.Queue[PSN]()
       val matchQueue = mutable.Queue[PSN]()
@@ -64,7 +65,7 @@ class SqDmaReadRespHandlerTest extends AnyFunSuite {
 
   test("non-zero DMA length read response test") {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       val cacheDataQueue = mutable.Queue[(Int, Int, Long)]()
       val dmaRespQueue = mutable.Queue[(BigInt, Int, Long, Boolean)]()

@@ -13,6 +13,10 @@ import org.scalatest.AppendedClues._
 import scala.collection.mutable
 import scala.util.Random
 
+object SimSettings {
+  val SIM_CYCLE_TIME = 10L
+}
+
 case class PayloadFragNumItr(payloadFragNumItr: Iterator[FragNum]) {
   def next(): FragNum = {
     payloadFragNumItr.next()

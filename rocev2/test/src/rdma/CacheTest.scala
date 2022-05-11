@@ -13,6 +13,7 @@ import ConstantSettings._
 import StreamSimUtil._
 import RdmaTypeReDef._
 import PsnSim._
+import SimSettings._
 
 class ReadAtomicRstCacheTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
@@ -23,7 +24,7 @@ class ReadAtomicRstCacheTest extends AnyFunSuite {
     .compile(new ReadAtomicRstCache(depth))
 
   def testQueryFunc(): Unit = simCfg.doSim { dut =>
-    dut.clockDomain.forkStimulus(10)
+    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
     dut.io.flush #= false
     dut.io.queryPort4DupReq.req.valid #= false
@@ -345,7 +346,7 @@ class FifoTest extends AnyFunSuite {
 
   test("Fifo full and empty test") {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       val inputQueue = mutable.Queue[BigInt]()
       val outputQueue = mutable.Queue[BigInt]()
@@ -396,7 +397,7 @@ class FifoTest extends AnyFunSuite {
 
   test("Fifo normal test") {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       val inputQueue = mutable.Queue[BigInt]()
       val outputQueue = mutable.Queue[BigInt]()
@@ -430,7 +431,7 @@ class WorkReqCacheTest extends AnyFunSuite {
 
   def testRetryScan(retryReason: SpinalEnumElement[RetryReason.type]): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       dut.io.qpAttr.maxPendingWorkReqNum #= depth
       dut.io.qpAttr.maxDstPendingWorkReqNum #= depth
@@ -691,7 +692,7 @@ class WorkReqCacheTest extends AnyFunSuite {
     }
 
   def testPushPopFunc(): Unit = simCfg.doSim { dut =>
-    dut.clockDomain.forkStimulus(10)
+    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
     dut.io.qpAttr.maxPendingWorkReqNum #= depth
     dut.io.qpAttr.maxDstPendingWorkReqNum #= depth
@@ -786,7 +787,7 @@ class PdAddrCacheTest extends AnyFunSuite {
 
   def testFunc(querySuccess: Boolean, hasPermissionErr: Boolean): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
 //      dut.io.flush #= false
       val allCreateOrDeleteReqQueue = mutable.Queue[

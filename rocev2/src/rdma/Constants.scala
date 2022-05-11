@@ -226,25 +226,98 @@ object RdmaConstants {
   // This is the max number of packets of a request or a response.
   val MAX_PKT_NUM_WIDTH = RDMA_MAX_LEN_WIDTH - PMTU.U256.id
 
-  val RESP_TIMEOUT_WIDTH = 5
   val RETRY_COUNT_WIDTH = 3
   val MSN_WIDTH = 24
   val AETH_RSVD_WIDTH = 1
   val AETH_CODE_WIDTH = 2
   val AETH_VALUE_WIDTH = 5
-  val RNR_TIMEOUT_WIDTH = AETH_VALUE_WIDTH
   val CREDIT_COUNT_WIDTH = AETH_VALUE_WIDTH
+
+  val RNR_TIMEOUT_WIDTH = 5
+  val RESP_TIMEOUT_WIDTH = 5
 
   val ATOMIC_DATA_LEN = 8
   val PMTU_FRAG_NUM_WIDTH = 13 // PMTU max 4096
 
-  val MAX_RESP_TIMEOUT = 8800 sec
+//  val MAX_RESP_TIMEOUT = 8800 sec
 
   val INFINITE_RESP_TIMEOUT = 0
 
   val TOTAL_PSN = 1 << PSN_WIDTH
   val HALF_MAX_PSN = 1 << (PSN_WIDTH - 1)
   val PSN_MASK = (1 << PSN_WIDTH) - 1
+
+  // RNR timeout settings:
+  // 0 - 655.36 milliseconds delay
+  // 1 - 0.01 milliseconds delay
+  // 2 - 0.02 milliseconds delay
+  // 3 - 0.03 milliseconds delay
+  // 4 - 0.04 milliseconds delay
+  // 5 - 0.06 milliseconds delay
+  // 6 - 0.08 milliseconds delay
+  // 7 - 0.12 milliseconds delay
+  // 8 - 0.16 milliseconds delay
+  // 9 - 0.24 milliseconds delay
+  // 10 - 0.32 milliseconds delay
+  // 11 - 0.48 milliseconds delay
+  // 12 - 0.64 milliseconds delay
+  // 13 - 0.96 milliseconds delay
+  // 14 - 1.28 milliseconds delay
+  // 15 - 1.92 milliseconds delay
+  // 16 - 2.56 milliseconds delay
+  // 17 - 3.84 milliseconds delay
+  // 18 - 5.12 milliseconds delay
+  // 19 - 7.68 milliseconds delay
+  // 20 - 10.24 milliseconds delay
+  // 21 - 15.36 milliseconds delay
+  // 22 - 20.48 milliseconds delay
+  // 23 - 30.72 milliseconds delay
+  // 24 - 40.96 milliseconds delay
+  // 25 - 61.44 milliseconds delay
+  // 26 - 81.92 milliseconds delay
+  // 27 - 122.88 milliseconds delay
+  // 28 - 163.84 milliseconds delay
+  // 29 - 245.76 milliseconds delay
+  // 30 - 327.68 milliseconds delay
+  // 31 - 491.52 milliseconds delay
+  val RNR_TIMEOUT = Seq(
+    // RNR timeout value in nanoseconds
+    655360 us,
+    10 us,
+    20 us,
+    30 us,
+    40 us,
+    60 us,
+    80 us,
+    120 us,
+    160 us,
+    240 us,
+    320 us,
+    480 us,
+    640 us,
+    960 us,
+    1280 us,
+    1920 us,
+    2560 us,
+    3840 us,
+    5120 us,
+    7680 us,
+    10240 us,
+    15360 us,
+    20480 us,
+    30720 us,
+    40960 us,
+    61440 us,
+    81920 us,
+    122880 us,
+    163840 us,
+    245760 us,
+    327680 us,
+    491520 us
+  )
+
+  val MAX_RNR_TIMEOUT_OPTION = 0 // 655360us = 655.36us
+  val MAX_RESP_TIMEOUT_OPTION = 31 // 134217.7us = 134.2177ms
 }
 
 object QpAttrMaskEnum extends SpinalEnum {
@@ -327,22 +400,34 @@ object PMTU extends Enumeration {
   val U4096 = Value(log2Up(4096)) // 12
 }
 
-object QpState extends Enumeration {
-  type QpState = Value
+object QpState extends SpinalEnum {
+  val RESET, INIT, ERR, RTR, RTS, SQD, SQE = newElement()
 
-  val RESET = Value(0)
-  val INIT = Value(1)
-  val ERR = Value(2)
-  val RTR = Value(3)
-  val RTS = Value(4)
-  val SQD = Value(5)
-  val SQE = Value(6)
+  defaultEncoding = SpinalEnumEncoding("opt")(
+    RESET -> 0,
+    INIT -> 1,
+    ERR -> 2,
+    RTR -> 3,
+    RTS -> 4,
+    SQD -> 5,
+    SQE -> 6
+  )
+//object QpState extends Enumeration {
+//  type QpState = Value
+//
+//  val RESET = Value(0)
+//  val INIT = Value(1)
+//  val ERR = Value(2)
+//  val RTR = Value(3)
+//  val RTS = Value(4)
+//  val SQD = Value(5)
+//  val SQE = Value(6)
 
-  def allowRecv(opcode: Bits, qps: Bits) =
+  def allowRecv(opcode: Bits, qps: SpinalEnumCraft[this.type]): Bool =
     new Composite(qps) {
       val isReqAllowState = Bool()
       switch(qps) {
-        is(RTR.id, RTS.id, SQD.id, SQE.id) {
+        is(RTR, RTS, SQD, SQE) {
           isReqAllowState := True
         }
         default {
@@ -352,7 +437,7 @@ object QpState extends Enumeration {
 
       val isRespAllowState = Bool()
       switch(qps) {
-        is(RTR.id, SQD.id, SQE.id) {
+        is(RTR, SQD, SQE) {
           isRespAllowState := True
         }
         default {
@@ -361,9 +446,8 @@ object QpState extends Enumeration {
       }
 
       val result =
-        (OpCode.isReqPkt(opcode) && isReqAllowState) || (OpCode.isRespPkt(
-          opcode
-        ) && isRespAllowState)
+        (OpCode.isReqPkt(opcode) && isReqAllowState) ||
+          (OpCode.isRespPkt(opcode) && isRespAllowState)
     }.result
 }
 

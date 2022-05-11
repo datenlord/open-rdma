@@ -11,6 +11,7 @@ import OpCodeSim._
 import PsnSim._
 import RdmaTypeReDef._
 import WorkReqSim._
+import SimSettings._
 
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
@@ -32,7 +33,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
 
   test("CoalesceAndNormalAndRetryNakHandler duplicate and ghost ACK test") {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       dut.io.qpAttr.dqpn #= 11
       dut.io.qpAttr.respTimeOut #= INFINITE_RESP_TIMEOUT // Disable response timeout retry
@@ -122,7 +123,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
     "CoalesceAndNormalAndRetryNakHandler normal ACK, explicit retry NAK, fatal NAK test"
   ) {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       dut.io.qpAttr.dqpn #= 11
       dut.io.qpAttr.respTimeOut #= 0 // Disable response timeout retry
@@ -403,7 +404,7 @@ class ReadRespLenCheckTest extends AnyFunSuite {
   }
 
   def testNonReadRespFunc(): Unit = simCfg.doSim { dut =>
-    dut.clockDomain.forkStimulus(10)
+    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
     dut.io.txQCtrl.wrongStateFlush #= false
     dut.io.qpAttr.pmtu #= pmtuLen.id
@@ -458,7 +459,7 @@ class ReadRespLenCheckTest extends AnyFunSuite {
   def makeErrLen(pktLen: PktLen): PktLen = pktLen + 1
   def testReadRespLenCheckFunc(lenCheckPass: Boolean): Unit = simCfg.doSim {
     dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       dut.io.txQCtrl.wrongStateFlush #= false
       dut.io.qpAttr.pmtu #= pmtuLen.id
@@ -594,7 +595,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
 
   def testReadRespFunc(addrCacheQuerySuccess: Boolean): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       dut.io.txQCtrl.wrongStateFlush #= false
 
@@ -821,7 +822,7 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
 
   test("ReadAtomicRespDmaReqInitiator normal behavior test") {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       // TODO: change flush signal accordingly
       dut.io.txQCtrl.wrongStateFlush #= false
@@ -929,7 +930,7 @@ class WorkCompGenTest extends AnyFunSuite {
 
   def testFunc(ackType: SpinalEnumElement[AckType.type]): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       val workCompStatus = AckTypeSim.toWorkCompStatus(ackType)
       val sqpn = 11

@@ -14,6 +14,7 @@ import PsnSim._
 import RdmaTypeReDef._
 import StreamSimUtil._
 import WorkReqSim._
+import SimSettings._
 
 class WorkReqValidatorTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
@@ -35,7 +36,7 @@ class WorkReqValidatorTest extends AnyFunSuite {
       normalOrErrorCase: Boolean,
       addrCacheQueryErrOrFlushErr: Boolean
   ) = simCfg.doSim { dut =>
-    dut.clockDomain.forkStimulus(10)
+    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
     dut.io.qpAttr.pmtu #= pmtuLen.id
     dut.io.txQCtrl.retry #= false
@@ -243,7 +244,7 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
     .compile(new WorkReqCacheAndOutPsnRangeHandler)
 
   def testFunc(isRetryWorkReq: Boolean): Unit = simCfg.doSim { dut =>
-    dut.clockDomain.forkStimulus(10)
+    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
     dut.io.txQCtrl.wrongStateFlush #= false
     dut.io.txQCtrl.retry #= isRetryWorkReq
@@ -587,7 +588,7 @@ class SqOutTest extends AnyFunSuite {
 
   def testFunc(): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       // Input to DUT
       val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =

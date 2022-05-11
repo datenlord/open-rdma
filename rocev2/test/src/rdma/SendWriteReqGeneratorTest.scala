@@ -5,6 +5,7 @@ import spinal.core.sim._
 import ConstantSettings._
 import StreamSimUtil._
 import RdmaTypeReDef._
+import SimSettings._
 
 import scala.collection.mutable
 import org.scalatest.funsuite.AnyFunSuite
@@ -19,7 +20,7 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
 
   test("zero DMA length send/write request test") {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       val inputPsnQueue = mutable.Queue[PSN]()
       val outputPsnQueue = mutable.Queue[PSN]()
@@ -64,7 +65,7 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
 
   test("non-zero DMA length send/write request test") {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       val inputDataQueue =
         mutable.Queue[(PktFragData, MTY, PktNum, PSN, PktLen, FragLast)]()
