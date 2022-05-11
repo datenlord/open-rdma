@@ -12,6 +12,7 @@ import StreamSimUtil._
 import RdmaTypeReDef._
 import PsnSim._
 import WorkReqSim._
+import SimSettings._
 
 class RetryHandlerTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
@@ -27,7 +28,7 @@ class RetryHandlerTest extends AnyFunSuite {
 
   def testFunc(isRetryOverLimit: Boolean, isPartialRetry: Boolean): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       val retryLimit = 3
       dut.io.qpAttr.maxRetryCnt #= retryLimit

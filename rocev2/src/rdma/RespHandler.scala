@@ -302,8 +302,8 @@ class CoalesceAndNormalAndRetryNakHandler(busWidth: BusWidth)
 
   val retryReport = new Area {
     // Handle response timeout retry
-    val respTimer = Timeout(MAX_RESP_TIMEOUT)
-    val respTimeOutThreshold = io.qpAttr.getRespTimeOut()
+    val respTimer = Timeout(respTimeOutOptionToTimeNum(MAX_RESP_TIMEOUT_OPTION))
+    val respTimeOutThreshold = io.qpAttr.getRespTimeOutCycleNum()
     val respTimeOutRetry = respTimeOutThreshold =/= INFINITE_RESP_TIMEOUT &&
       respTimer.counter.value > respTimeOutThreshold
     // TODO: should use io.rx.fire or io.rx.valid to clear response timer?

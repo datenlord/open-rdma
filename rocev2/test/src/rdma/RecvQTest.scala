@@ -16,6 +16,7 @@ import RdmaConstants._
 import StreamSimUtil._
 import RdmaTypeReDef._
 import WorkReqSim._
+import SimSettings._
 
 class ReqCommCheckTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
@@ -27,7 +28,7 @@ class ReqCommCheckTest extends AnyFunSuite {
 
   test("ReqCommCheck read atomic request") {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       val inputPktNumQueue = mutable.Queue[(OpCode.Value, PktNum)]()
       val outputPktNumQueue = mutable.Queue[(OpCode.Value, PktNum)]()
@@ -92,7 +93,7 @@ class ReqCommCheckTest extends AnyFunSuite {
 
   def testSendWriteFunc(isNormalCaseOrDupCase: Boolean) = {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       // Input to DUT
       val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
@@ -240,7 +241,7 @@ class ReqRnrCheckTest extends AnyFunSuite {
       inputHasFatalNakOrSeqNak: Boolean
   ): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       // Input to DUT
       val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
@@ -459,7 +460,7 @@ class ReqAddrInfoExtractorTest extends AnyFunSuite {
 
   def testFunc(inputHasNak: Boolean): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       // Input to DUT
       val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
@@ -664,7 +665,7 @@ class ReqAddrValidatorTest extends AnyFunSuite {
 
   def testFunc(addrCacheQuerySuccess: Boolean, inputHasNak: Boolean): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       // Input to DUT
       val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
@@ -862,7 +863,7 @@ class ReqPktLenCheckTest extends AnyFunSuite {
 
   def testFunc(inputHasNak: Boolean, hasLenCheckErr: Boolean): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       // Input to DUT
       val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
@@ -1047,7 +1048,7 @@ class ReqSplitterAndNakGenTest extends AnyFunSuite {
       inputNakType: SpinalEnumElement[AckType.type]
   ) = {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       // Input to DUT
       val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
@@ -1291,7 +1292,7 @@ class ReadDmaReqInitiatorTest extends AnyFunSuite {
 
   def testFunc(inputDupReq: Boolean): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       // Input to DUT
       val inputQueue4DmaReq = mutable.Queue[(PsnStart, PhysicalAddr, PktLen)]()
@@ -1404,7 +1405,7 @@ class RqReadAtomicDmaReqBuilderTest extends AnyFunSuite {
 
   def testFunc(inputReadOrAtomicReq: Boolean): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       // Input to DUT
       val opcode = if (inputReadOrAtomicReq) {
@@ -1520,7 +1521,7 @@ class RqSendWriteDmaReqInitiatorTest extends AnyFunSuite {
     .compile(new RqSendWriteDmaReqInitiator(busWidth))
 
   def testFunc(hasNak: Boolean): Unit = simCfg.doSim { dut =>
-    dut.clockDomain.forkStimulus(10)
+    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
     // Input to DUT
     val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
@@ -1731,7 +1732,7 @@ class SendWriteRespGeneratorTest extends AnyFunSuite {
     .compile(new SendWriteRespGenerator(busWidth))
 
   def testFunc(hasNak: Boolean): Unit = simCfg.doSim { dut =>
-    dut.clockDomain.forkStimulus(10)
+    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
     // Input to DUT
     val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
@@ -1906,7 +1907,7 @@ class RqSendWriteWorkCompGeneratorTest extends AnyFunSuite {
     .compile(new RqSendWriteWorkCompGenerator)
 
   def testFunc(hasNak: Boolean): Unit = simCfg.doSim { dut =>
-    dut.clockDomain.forkStimulus(10)
+    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
     dut.io.rxQCtrl.stateErrFlush #= false
 
@@ -2014,7 +2015,7 @@ class DupReqHandlerAndReadAtomicRstCacheQueryTest extends AnyFunSuite {
       readAtomicRstCacheQuerySuccess: Boolean
   ) = {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       // Input to DUT
       val opcode = if (inputReadOrAtomicReq) {
@@ -2155,7 +2156,7 @@ class DupReqHandlerAndReadAtomicRstCacheQueryTest extends AnyFunSuite {
 
   test("DupReqHandlerAndReadAtomicRstCacheQuery duplicate send/write request") {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       // Input to DUT
       val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
@@ -2268,7 +2269,7 @@ class DupReadDmaReqBuilderTest extends AnyFunSuite {
 
   def testFunc(isPartialRetry: Boolean): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       val inputQueue = mutable.Queue[
         (
@@ -2416,7 +2417,7 @@ class ReadRespGeneratorTest extends AnyFunSuite {
   }
 
   def zeroDmaLenTestFunc(inputDupReq: Boolean) = simCfg.doSim { dut =>
-    dut.clockDomain.forkStimulus(10)
+    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
     val inputPsnQueue = mutable.Queue[PSN]()
     val outputPsnQueue = mutable.Queue[PSN]()
@@ -2486,7 +2487,7 @@ class ReadRespGeneratorTest extends AnyFunSuite {
   }
 
   def testFunc(inputDupReq: Boolean) = simCfg.doSim { dut =>
-    dut.clockDomain.forkStimulus(10)
+    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
     val inputDataQueue =
       mutable.Queue[(PktFragData, MTY, PktNum, PsnStart, PktLen, FragLast)]()
@@ -2606,7 +2607,7 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
 
   test("zero DMA length read response test") {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       val psnQueue = mutable.Queue[PSN]()
       val matchQueue = mutable.Queue[PSN]()
@@ -2654,7 +2655,7 @@ class RqReadDmaRespHandlerTest extends AnyFunSuite {
 
   test("non-zero DMA length read response test") {
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       val inputCacheDataQueue = mutable.Queue[(PsnStart, PktNum, PktLen)]()
       val inputDmaRespQueue =
@@ -2903,7 +2904,7 @@ class RqOutTest extends AnyFunSuite {
   // Since if duplicate response has error, it will be ignored.
   def testFunc(normalOrDupResp: Boolean, hasErrResp: Boolean): Unit =
     simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(10)
+      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
       // Input to DUT
       val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
