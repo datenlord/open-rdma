@@ -3,7 +3,6 @@ package rdma
 import spinal.core._
 import spinal.lib._
 
-import BusWidth.BusWidth
 import ConstantSettings._
 import RdmaConstants._
 // pp.282 spec 1.4
@@ -17,9 +16,6 @@ class RetryHandler extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
-//    val workReqCacheScanBus = master(
-//      CamFifoScanBus(CachedWorkReq(), PENDING_REQ_NUM)
-//    )
     val retryScanCtrlBus = master(RamScanCtrlBus())
     val retryWorkReqIn = slave(Stream(RamScanOut(CachedWorkReq())))
     val retryWorkReqOut = master(Stream(CachedWorkReq()))
@@ -32,10 +28,10 @@ class RetryHandler extends Component {
 
   io.errNotifier.setNoErr()
   when(io.retryWorkReqIn.valid) {
-    when(io.retryWorkReqIn.rnrCnt > io.qpAttr.maxRetryCnt) {
-      io.errNotifier.setRnrExc()
+    when(io.retryWorkReqIn.rnrCnt > io.qpAttr.maxRnrRetryCnt) {
+      io.errNotifier.setRnrExceed()
     } elsewhen (io.retryWorkReqIn.retryCnt > io.qpAttr.maxRetryCnt) {
-      io.errNotifier.setRetryExc()
+      io.errNotifier.setRetryExceed()
     }
   }
 
@@ -43,46 +39,7 @@ class RetryHandler extends Component {
   io.retryScanCtrlBus.retryReason := io.qpAttr.retryReason
   io.retryScanCtrlBus.retryStartPsn := io.qpAttr.retryStartPsn
   io.retryWorkReqDone := io.retryScanCtrlBus.donePulse
-  /*
-  val sqRetryCtrl = new Area {
-    io.retryWorkReqDone := False
 
-    // TODO: consider better setup instead of PENDING_REQ_NUM + 1
-    val curPtr = Counter(PENDING_REQ_NUM)
-
-    when(io.retryWorkReq.fire) {
-      curPtr.increment()
-      io.retryWorkReqDone := curPtr.value === io.workReqCacheScanBus.pushPtr
-    }
-    when(io.txQCtrl.wrongStateFlush) {
-      curPtr.clear()
-    }
-    when(io.txQCtrl.retryStartPulse) {
-      assert(
-        assertion = !io.workReqCacheScanBus.empty,
-        message =
-          L"illegal retry status, received retry ACK with PSN=${io.qpAttr.retryStartPsn}, io.qpAttr.retryReason=${io.qpAttr.retryReason}, but no WR to retry, io.txQCtrl.retryStartPulse=${io.txQCtrl.retryStartPulse} but io.workReqCacheScanBus.empty=${io.workReqCacheScanBus.empty}",
-        severity = FAILURE
-      )
-      when(!io.workReqCacheScanBus.empty) {
-        // Start to retry all pending WRs
-        curPtr.valueNext := io.workReqCacheScanBus.popPtr
-      }
-    }
-
-    // TODO: refactor, this has bug
-    io.workReqCacheScanBus.scanReq << StreamSource()
-      // TODO: should throwWhen wrongStateErr?
-      .takeWhen(!io.workReqCacheScanBus.empty & io.txQCtrl.retry)
-      .translateWith {
-        val result = cloneOf(io.workReqCacheScanBus.scanReq.payloadType)
-        result.ptr := curPtr
-        result.retryReason := io.qpAttr.retryReason
-        result.retryStartPsn := io.qpAttr.retryStartPsn
-        result
-      }
-
-   */
   // Handle WR partial retry
   // TODO: verify RNR has no partial retry
   val (
@@ -115,7 +72,7 @@ class RetryHandler extends Component {
   }
 }
 
-class SqReqGenerator(busWidth: BusWidth) extends Component {
+class SqReqGenerator(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
@@ -227,7 +184,7 @@ class ReadAtomicGeneratorAndDmaReadInitiator extends Component {
   }
 }
 
-class SqDmaReadRespHandler(busWidth: BusWidth) extends Component {
+class SqDmaReadRespHandler(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     // val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
@@ -257,7 +214,7 @@ class SqDmaReadRespHandler(busWidth: BusWidth) extends Component {
     }
 }
 
-class SendWriteReqSegment(busWidth: BusWidth) extends Component {
+class SendWriteReqSegment(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
@@ -317,7 +274,8 @@ class SendWriteReqSegment(busWidth: BusWidth) extends Component {
     }
 }
 
-abstract class SendWriteReqGenerator(busWidth: BusWidth) extends Component {
+abstract class SendWriteReqGenerator(busWidth: BusWidth.Value)
+    extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
@@ -370,7 +328,7 @@ abstract class SendWriteReqGenerator(busWidth: BusWidth) extends Component {
   )
 }
 
-class SendReqGenerator(busWidth: BusWidth)
+class SendReqGenerator(busWidth: BusWidth.Value)
     extends SendWriteReqGenerator(busWidth) {
   val isSendWorkReq = WorkReqOpCode.isSendReq(
     io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode
@@ -507,7 +465,7 @@ class SendReqGenerator(busWidth: BusWidth)
     }.result
 }
 
-class WriteReqGenerator(busWidth: BusWidth)
+class WriteReqGenerator(busWidth: BusWidth.Value)
     extends SendWriteReqGenerator(busWidth) {
   val isWriteWorkReq = WorkReqOpCode.isWriteReq(
     io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode

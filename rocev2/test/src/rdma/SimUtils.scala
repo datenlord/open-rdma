@@ -13,8 +13,10 @@ import org.scalatest.AppendedClues._
 import scala.collection.mutable
 import scala.util.Random
 
+// Test related settings
 object SimSettings {
   val SIM_CYCLE_TIME = 10L
+  val MATCH_CNT = 1000
 }
 
 case class PayloadFragNumItr(payloadFragNumItr: Iterator[FragNum]) {
@@ -274,6 +276,23 @@ object StreamSimUtil {
       assignments
     )
 
+  def streamMasterDriverOneShot[T <: Data](
+      stream: Stream[T],
+      clockDomain: ClockDomain
+  )(assignments: => Unit): Unit = {
+    stream.valid #= false
+    clockDomain.waitSampling()
+
+    stream.valid #= true
+    stream.payload.randomize()
+    assignments
+    clockDomain.waitSamplingWhere(
+      stream.valid.toBoolean && stream.ready.toBoolean
+    )
+
+    stream.valid #= false
+  }
+
   def streamSlaveRandomizer[T <: Data](
       stream: Stream[T],
       clockDomain: ClockDomain
@@ -404,7 +423,7 @@ object StreamSimUtil {
     respStream.valid #= false
     clockDomain.waitSampling()
   }
-   */
+
   def queryCacheHelper[Treq <: Data, Tresp <: Data, ReqData, RespData](
       reqStream: Stream[Treq],
       respStream: Stream[Tresp],
@@ -445,7 +464,7 @@ object StreamSimUtil {
 
     respQueue
   }
-
+   */
   def streamMasterPayloadFromQueueRandomInterval[T <: Data, PayloadData](
       stream: Stream[T],
       clockDomain: ClockDomain,
@@ -505,7 +524,6 @@ object StreamSimUtil {
       stream: Stream[T],
       clockDomain: ClockDomain,
       payloadQueue: mutable.Queue[PayloadData],
-//    semaphore: Semaphore,
       payloadAssignFunc: (T, PayloadData) => Unit
   ): Unit =
     fork {
@@ -513,7 +531,6 @@ object StreamSimUtil {
       clockDomain.waitSampling()
 
       while (true) {
-//        semaphore.acquire()
         val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
         do {
           clockDomain.waitSampling()
@@ -534,7 +551,6 @@ object StreamSimUtil {
       stream: Stream[T],
       clockDomain: ClockDomain,
       payloadQueue: mutable.Queue[PayloadData],
-//     semaphore: Semaphore,
       payloadAssignFunc: (T, PayloadData) => Unit
   ): Unit =
     fork {
@@ -542,7 +558,6 @@ object StreamSimUtil {
       clockDomain.waitSampling()
 
       while (true) {
-//        semaphore.acquire()
         val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
         stream.valid #= true
         stream.payload.randomize()
@@ -554,56 +569,6 @@ object StreamSimUtil {
         stream.valid #= false
       }
     }
-
-//  private def streamMasterSyncDriverHelper[T <: Data](
-//                                                   stream: Stream[T],
-//                                                   clockDomain: ClockDomain,
-//                                                   semaphore: Semaphore,
-//                                                   alwaysValid: Boolean
-//                                                 )(assignments: => Unit): Unit =
-//    fork {
-//      stream.valid #= false
-//      clockDomain.waitSampling()
-//
-//      while (true) {
-//        semaphore.acquire()
-//
-//        if (alwaysValid) {
-//          stream.valid #= true
-//        } else {
-//          stream.valid.randomize()
-//        }
-//        stream.payload.randomize()
-//        sleep(0)
-//
-//        if (stream.valid.toBoolean) {
-//          assignments
-//          clockDomain.waitSamplingWhere(
-//            stream.valid.toBoolean && stream.ready.toBoolean
-//          )
-//        } else {
-//          clockDomain.waitSampling()
-//        }
-//      }
-//    }
-//
-//  def streamMasterSyncDriver[T <: Data](
-//                                     stream: Stream[T],
-//                                     clockDomain: ClockDomain,
-//                                     semaphore: Semaphore,
-//                                   )(assignments: => Unit): Unit =
-//    streamMasterSyncDriverHelper(stream, clockDomain, semaphore, alwaysValid = false)(
-//      assignments
-//    )
-//
-//  def streamMasterSyncDriverAlwaysValid[T <: Data](
-//                                                stream: Stream[T],
-//                                                clockDomain: ClockDomain,
-//                                                semaphore: Semaphore,
-//                                              )(assignments: => Unit): Unit =
-//    streamMasterSyncDriverHelper(stream, clockDomain, semaphore, alwaysValid = true)(
-//      assignments
-//    )
 
   // TODO: remove this
   def pktFragStreamMasterDriver[T <: Data, InternalData](
@@ -905,7 +870,7 @@ object MiscUtils {
       }
     }
 
-    waitUntil(matchPsnQueue.size > MATCH_CNT)
+    waitUntil(matchPsnQueue.size > SimSettings.MATCH_CNT)
   }
 
   def countOnes(num: BigInt, width: Int): Int = {

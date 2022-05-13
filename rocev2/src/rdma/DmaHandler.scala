@@ -2,9 +2,8 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-import BusWidth.BusWidth
 
-class DmaHandler(busWidth: BusWidth) extends Component {
+class DmaHandler(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val dma = slave(DmaBus(busWidth))
   }

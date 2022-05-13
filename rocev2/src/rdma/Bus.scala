@@ -2,15 +2,29 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-import BusWidth.BusWidth
+
 import RdmaConstants._
 import ConstantSettings._
 import StreamVec._
 
+sealed abstract class ReqRespBus[Req <: Data, Resp <: Data](
+    reqType: HardType[Req],
+    respType: HardType[Resp]
+) extends Bundle
+    with IMasterSlave {
+  val req = Stream(reqType())
+  val resp = Stream(respType())
+
+  override def asMaster(): Unit = {
+    master(req)
+    slave(resp)
+  }
+}
+
 case class DevMetaData() extends Bundle {
   val maxPendingReqNum = UInt(MAX_WR_NUM_WIDTH bits)
   val maxPendingReadAtomicReqNum = UInt(MAX_WR_NUM_WIDTH bits)
-  val minRnrTimeOut = UInt(RNR_TIMEOUT_WIDTH bits)
+  val minRnrTimeOut = Bits(RNR_TIMEOUT_WIDTH bits)
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
@@ -25,6 +39,7 @@ case class SqRetryNotifier() extends Bundle {
   val pulse = Bool()
   val psnStart = UInt(PSN_WIDTH bits)
   val reason = RetryReason()
+  val receivedRnrTimeOut = Bits(RNR_TIMEOUT_WIDTH bits)
 
   def needRetry(): Bool = {
     when(pulse) {
@@ -38,6 +53,7 @@ case class SqRetryNotifier() extends Bundle {
     pulse
   }
 
+  // When merge, this has higher priority than that
   def merge(that: SqRetryNotifier, curPsn: UInt): SqRetryNotifier = {
     val result = SqRetryNotifier()
     result.pulse := this.pulse || that.pulse
@@ -145,13 +161,13 @@ case class SqErrNotifier() extends Bundle {
     this
   }
 
-  def setRetryExc(): this.type = {
+  def setRetryExceed(): this.type = {
     errType := SqErrType.RETRY_EXC
     pulse := True
     this
   }
 
-  def setRnrExc(): this.type = {
+  def setRnrExceed(): this.type = {
     errType := SqErrType.RNR_EXC
     pulse := True
     this
@@ -401,8 +417,12 @@ case class QpAttrData() extends Bundle {
 
   val retryStartPsn = UInt(PSN_WIDTH bits)
   val retryReason = RetryReason()
+
   val maxRetryCnt = UInt(RETRY_COUNT_WIDTH bits)
-  val rnrTimeOut = Bits(RNR_TIMEOUT_WIDTH bits)
+  val maxRnrRetryCnt = UInt(RETRY_COUNT_WIDTH bits)
+  val minRnrTimeOut = Bits(RNR_TIMEOUT_WIDTH bits)
+  val negotiatedRnrTimeOut = Bits(RNR_TIMEOUT_WIDTH bits)
+  val receivedRnrTimeOut = Bits(RNR_TIMEOUT_WIDTH bits)
   // respTimeOut need to be converted to actual cycle number,
   // by calling getRespTimeOut()
   val respTimeOut = Bits(RESP_TIMEOUT_WIDTH bits)
@@ -412,7 +432,7 @@ case class QpAttrData() extends Bundle {
 
   val state = QpState() // Bits(QP_STATE_WIDTH bits)
 
-  val modifyMask = QpAttrMask() // Bits(QP_ATTR_MASK_WIDTH bits)
+//  val modifyMask = QpAttrMask() // Bits(QP_ATTR_MASK_WIDTH bits)
 
   def isValid = state =/= QpState.RESET
   def isReset = state === QpState.RESET
@@ -424,7 +444,7 @@ case class QpAttrData() extends Bundle {
     npsn := 0
     rqOutPsn := 0
     sqOutPsn := 0
-    pmtu := PMTU.U1024.id
+    pmtu := PMTU.U512.id
     maxPendingReadAtomicWorkReqNum := 0
     maxDstPendingReadAtomicWorkReqNum := 0
     maxPendingWorkReqNum := 0
@@ -433,18 +453,20 @@ case class QpAttrData() extends Bundle {
     dqpn := 0
 
     rqPreReqOpCode := OpCode.SEND_ONLY.id
-    rnrTimeOut := 1 // 1 means 0.01ms
-    respTimeOut := 17 // 17 means 536.8709ms
     retryStartPsn := 0
     retryReason := RetryReason.RESP_TIMEOUT
-    maxRetryCnt := 3
-
+    maxRetryCnt := DEFAULT_MAX_RETRY_CNT
+    maxRnrRetryCnt := DEFAULT_MAX_RNR_RETRY_CNT
+    minRnrTimeOut := DEFAULT_MIN_RNR_TIME_OUT
+    negotiatedRnrTimeOut := DEFAULT_RNR_TIME_OUT
+    receivedRnrTimeOut := DEFAULT_RNR_TIME_OUT
+    respTimeOut := DEFAULT_RESP_TIME_OUT
 //    fence := False
 //    psnBeforeFence := 0
 
     state := QpState.RESET
 
-    modifyMask.init()
+//    modifyMask.init()
     this
   }
 
@@ -461,7 +483,7 @@ case class QpAttrData() extends Bundle {
   def getRnrTimeOutCycleNum(): UInt =
     new Composite(this) {
       val result = UInt()
-      switch(rnrTimeOut) {
+      switch(receivedRnrTimeOut) {
 //        is(0) {
 //          result := timeNumToCycleNum(655360 us)
 //        }
@@ -805,7 +827,7 @@ case class DmaReadReq() extends Bundle {
   }
 }
 
-case class DmaReadResp(busWidth: BusWidth) extends Bundle {
+case class DmaReadResp(busWidth: BusWidth.Value) extends Bundle {
   val initiator = DmaInitiator()
   val sqpn = UInt(QPN_WIDTH bits)
   val psnStart = UInt(PSN_WIDTH bits)
@@ -849,7 +871,9 @@ case class DmaReadReqBus() extends Bundle with IMasterSlave {
   }
 }
 
-case class DmaReadRespBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
+case class DmaReadRespBus(busWidth: BusWidth.Value)
+    extends Bundle
+    with IMasterSlave {
   val resp = Stream(Fragment(DmaReadResp(busWidth)))
 
   def >>(that: DmaReadRespBus): Unit = {
@@ -863,9 +887,12 @@ case class DmaReadRespBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
   }
 }
 
-case class DmaReadBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
-  val req = Stream(DmaReadReq())
-  val resp = Stream(Fragment(DmaReadResp(busWidth)))
+case class DmaReadBus(busWidth: BusWidth.Value)
+    extends ReqRespBus(DmaReadReq(), Fragment(DmaReadResp(busWidth))) {
+//    extends Bundle
+//    with IMasterSlave {
+//  val req = Stream(DmaReadReq())
+//  val resp = Stream(Fragment(DmaReadResp(busWidth)))
 
   def arbitReq(dmaRdReqVec: Vec[Stream[DmaReadReq]]) = new Area {
     val dmaRdReqSel =
@@ -964,7 +991,7 @@ case class DmaReadBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
   }
 }
 
-case class DmaWriteReq(busWidth: BusWidth) extends Bundle {
+case class DmaWriteReq(busWidth: BusWidth.Value) extends Bundle {
   val initiator = DmaInitiator()
   val sqpn = UInt(QPN_WIDTH bits)
   val psn = UInt(PSN_WIDTH bits)
@@ -1026,7 +1053,9 @@ case class DmaWriteResp() extends Bundle {
   }
 }
 
-case class DmaWriteReqBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
+case class DmaWriteReqBus(busWidth: BusWidth.Value)
+    extends Bundle
+    with IMasterSlave {
   val req = Stream(Fragment(DmaWriteReq(busWidth)))
 
   def >>(that: DmaWriteReqBus): Unit = {
@@ -1054,9 +1083,12 @@ case class DmaWriteRespBus() extends Bundle with IMasterSlave {
   }
 }
 
-case class DmaWriteBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
-  val req = Stream(Fragment(DmaWriteReq(busWidth)))
-  val resp = Stream(DmaWriteResp())
+case class DmaWriteBus(busWidth: BusWidth.Value)
+    extends ReqRespBus(Fragment(DmaWriteReq(busWidth)), DmaWriteResp()) {
+//    extends Bundle
+//    with IMasterSlave {
+//  val req = Stream(Fragment(DmaWriteReq(busWidth)))
+//  val resp = Stream(DmaWriteResp())
 
   def arbitReqAndDemuxRespByQpn(
       dmaWrReqVec: Vec[Stream[Fragment[DmaWriteReq]]],
@@ -1139,7 +1171,7 @@ case class DmaWriteBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
   }
 }
 
-case class DmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
+case class DmaBus(busWidth: BusWidth.Value) extends Bundle with IMasterSlave {
   val rd = DmaReadBus(busWidth)
   val wr = DmaWriteBus(busWidth)
 
@@ -1155,7 +1187,7 @@ case class DmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
   }
 }
 
-case class SqDmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
+case class SqDmaBus(busWidth: BusWidth.Value) extends Bundle with IMasterSlave {
   val reqOut = DmaReadBus(busWidth)
 //  val reqSender = DmaReadBus(busWidth)
 //  val retry = DmaReadBus(busWidth)
@@ -1183,7 +1215,7 @@ case class SqDmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
   }
 }
 
-case class RqDmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
+case class RqDmaBus(busWidth: BusWidth.Value) extends Bundle with IMasterSlave {
   val sendWrite = DmaWriteBus(busWidth)
 //  val dupRead = DmaReadBus(busWidth)
   val read = DmaReadBus(busWidth)
@@ -1213,7 +1245,7 @@ case class RqDmaBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
   }
 }
 
-case class LenCheckElements(busWidth: BusWidth) extends Bundle {
+case class LenCheckElements(busWidth: BusWidth.Value) extends Bundle {
   val opcode = Bits(OPCODE_WIDTH bits)
   val psn = UInt(PSN_WIDTH bits)
 //  val psnStart = UInt(PSN_WIDTH bits)
@@ -1494,12 +1526,17 @@ case class ReadAtomicRstCacheReq() extends Bundle {
 //  }
 //}
 
-case class ReadAtomicRstCacheQueryBus() extends Bundle with IMasterSlave {
-  val req = Stream(ReadAtomicRstCacheReq())
-//  val resp = Stream(ReadAtomicRstCacheResp())
-  val resp = Stream(
-    CamQueryResp(ReadAtomicRstCacheReq(), ReadAtomicRstCacheData())
-  )
+case class ReadAtomicRstCacheQueryBus()
+    extends ReqRespBus(
+      ReadAtomicRstCacheReq(),
+      CamQueryResp(ReadAtomicRstCacheReq(), ReadAtomicRstCacheData())
+    ) {
+//case class ReadAtomicRstCacheQueryBus() extends Bundle with IMasterSlave {
+//  val req = Stream(ReadAtomicRstCacheReq())
+////  val resp = Stream(ReadAtomicRstCacheResp())
+//  val resp = Stream(
+//    CamQueryResp(ReadAtomicRstCacheReq(), ReadAtomicRstCacheData())
+//  )
 
   def >>(that: ReadAtomicRstCacheQueryBus): Unit = {
     this.req >> that.req
@@ -1508,13 +1545,13 @@ case class ReadAtomicRstCacheQueryBus() extends Bundle with IMasterSlave {
 
   def <<(that: ReadAtomicRstCacheQueryBus): Unit = that >> this
 
-  override def asMaster(): Unit = {
-    master(req)
-    slave(resp)
-  }
+//  override def asMaster(): Unit = {
+//    master(req)
+//    slave(resp)
+//  }
 }
 
-case class CombineHeaderAndDmaRespInternalRst(busWidth: BusWidth)
+case class CombineHeaderAndDmaRespInternalRst(busWidth: BusWidth.Value)
     extends Bundle {
   val pktNum = UInt(PSN_WIDTH bits)
   val bth = BTH()
@@ -1539,14 +1576,14 @@ case class CombineHeaderAndDmaRespInternalRst(busWidth: BusWidth)
 
 case class ReqAndDmaReadResp[T <: Data](
     reqType: HardType[T],
-    busWidth: BusWidth
+    busWidth: BusWidth.Value
 ) extends Bundle {
   val dmaReadResp = DmaReadResp(busWidth)
   val req = reqType()
 }
 
 /** for RQ */
-//case class ReadAtomicRstCacheRespAndDmaReadResp(busWidth: BusWidth)
+//case class ReadAtomicRstCacheRespAndDmaReadResp(busWidth: BusWidth.Value)
 //    extends Bundle {
 //  val dmaReadResp = DmaReadResp(busWidth)
 //  val resultCacheResp = ReadAtomicRstCacheResp()
@@ -1556,26 +1593,28 @@ case class ReqAndDmaReadResp[T <: Data](
 //  type ReadAtomicRstCacheDataAndDmaReadResp =
 //    ReqAndDmaReadResp[ReadAtomicRstCacheData]
 //}
-case class ReadAtomicRstCacheDataAndDmaReadResp(busWidth: BusWidth)
+case class ReadAtomicRstCacheDataAndDmaReadResp(busWidth: BusWidth.Value)
     extends Bundle {
   val dmaReadResp = DmaReadResp(busWidth)
   val rstCacheData = ReadAtomicRstCacheData()
 }
 
 /** for SQ */
-case class CachedWorkReqAndDmaReadResp(busWidth: BusWidth) extends Bundle {
+case class CachedWorkReqAndDmaReadResp(busWidth: BusWidth.Value)
+    extends Bundle {
   val dmaReadResp = DmaReadResp(busWidth)
   val cachedWorkReq = CachedWorkReq()
 //  val workReqCacheResp = WorkReqCacheResp()
 }
 
-case class ResponseWithAeth(busWidth: BusWidth) extends Bundle {
+case class ResponseWithAeth(busWidth: BusWidth.Value) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val aeth = AETH()
   val workCompStatus = WorkCompStatus()
 }
 
-case class CachedWorkReqAndRespWithAeth(busWidth: BusWidth) extends Bundle {
+case class CachedWorkReqAndRespWithAeth(busWidth: BusWidth.Value)
+    extends Bundle {
   val cachedWorkReq = CachedWorkReq()
   val respValid = Bool() // False: implicit ACK, True: explicit ACK
   val pktFrag = RdmaDataPkt(busWidth)
@@ -1782,9 +1821,10 @@ case class WorkComp() extends Bundle {
 
 case class QpCreateOrModifyReq() extends Bundle {
   val qpAttr = QpAttrData()
+  val modifyMask = QpAttrMask() // Bits(QP_ATTR_MASK_WIDTH bits)
 
   def changeToState(targetState: SpinalEnumCraft[QpState.type]): Bool = {
-    qpAttr.modifyMask.include(QpAttrMaskEnum.QP_STATE) &&
+    modifyMask.include(QpAttrMaskEnum.QP_STATE) &&
     qpAttr.state === targetState
   }
 }
@@ -1855,22 +1895,34 @@ case class PdAddrCacheReadResp() extends Bundle {
   val pa = UInt(MEM_ADDR_WIDTH bits)
 }
 
-case class PdAddrCacheReadBus() extends Bundle with IMasterSlave {
-  val req = Stream(PdAddrCacheReadReq())
-  val resp = Stream(PdAddrCacheReadResp())
-
+case class PdAddrCacheReadBus()
+    extends ReqRespBus(
+      PdAddrCacheReadReq(),
+      PdAddrCacheReadResp()
+    ) {
   def >>(that: PdAddrCacheReadBus): Unit = {
     this.req >> that.req
     this.resp << that.resp
   }
 
   def <<(that: PdAddrCacheReadBus): Unit = that >> this
-
-  override def asMaster(): Unit = {
-    master(req)
-    slave(resp)
-  }
 }
+//case class PdAddrCacheReadBus() extends Bundle with IMasterSlave {
+//  val req = Stream(PdAddrCacheReadReq())
+//  val resp = Stream(PdAddrCacheReadResp())
+//
+//  def >>(that: PdAddrCacheReadBus): Unit = {
+//    this.req >> that.req
+//    this.resp << that.resp
+//  }
+//
+//  def <<(that: PdAddrCacheReadBus): Unit = that >> this
+//
+//  override def asMaster(): Unit = {
+//    master(req)
+//    slave(resp)
+//  }
+//}
 
 case class PdCreateOrDeleteReq() extends Bundle {
   val createOrDelete = CRUD()
@@ -1977,7 +2029,7 @@ case class QpAddrCacheAgentReadReq() extends Bundle {
   val key = Bits(LRKEY_IMM_DATA_WIDTH bits)
   val pdId = Bits(PD_ID_WIDTH bits)
   // TODO: consider remove remoteOrLocalKey
-  private val remoteOrLocalKey = Bool() // True: remote, False: local
+  val remoteOrLocalKey = Bool() // True: remote, False: local
   val accessType = AccessType()
   val va = UInt(MEM_ADDR_WIDTH bits)
   val dataLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
@@ -2054,9 +2106,14 @@ case class QpAddrCacheAgentReadRespBus() extends Bundle with IMasterSlave {
   }
 }
 
-case class QpAddrCacheAgentReadBus() extends Bundle with IMasterSlave {
-  val req = Stream(QpAddrCacheAgentReadReq())
-  val resp = Stream(QpAddrCacheAgentReadResp())
+case class QpAddrCacheAgentReadBus()
+    extends ReqRespBus(
+      QpAddrCacheAgentReadReq(),
+      QpAddrCacheAgentReadResp()
+    ) {
+//case class QpAddrCacheAgentReadBus() extends Bundle with IMasterSlave {
+//  val req = Stream(QpAddrCacheAgentReadReq())
+//  val resp = Stream(QpAddrCacheAgentReadResp())
 
   def >>(that: QpAddrCacheAgentReadBus): Unit = {
     this.req >> that.req
@@ -2065,83 +2122,27 @@ case class QpAddrCacheAgentReadBus() extends Bundle with IMasterSlave {
 
   def <<(that: QpAddrCacheAgentReadBus): Unit = that >> this
 
-  override def asMaster(): Unit = {
-    master(req)
-    slave(resp)
-  }
-
-//  def sendQpAddrCacheAgentReq(reqValid: Bool,
-//                       accessKey: Bits,
-//                       accessType: Bits,
-//                       pd: Bits,
-//                       remoteOrLocalKey: Bool,
-//                       va: UInt,
-//                       dataLenBytes: UInt) = new Area {
-//    req <-/< StreamSource()
-//      .throwWhen(!reqValid)
-//      .translateWith {
-//        val addrCacheReadReq = QpAddrCacheAgentReadReq()
-//        addrCacheReadReq.key := accessKey
-//        addrCacheReadReq.pd := pd
-//        addrCacheReadReq.remoteOrLocalKey := remoteOrLocalKey
-//        addrCacheReadReq.accessType := accessType
-//        addrCacheReadReq.va := va
-//        addrCacheReadReq.dataLenBytes := dataLenBytes
-//        addrCacheReadReq
-//      }
+//  override def asMaster(): Unit = {
+//    master(req)
+//    slave(resp)
 //  }
-
-//  def joinWithQpAddrCacheAgentRespStream[T <: Data](streamIn: Stream[T],
-//                                             joinCond: Bool) =
-//    new Composite(resp) {
-//      val invalidStream =
-//        StreamSource().translateWith(QpAddrCacheAgentReadResp().setDefaultVal())
-//      val addrCacheRespStream =
-//        StreamMux(select = joinCond.asUInt, Vec(invalidStream, resp))
-//      val joinedStream = StreamJoin(streamIn, addrCacheRespStream)
-//        .pipelined(m2s = true, s2m = true)
-//    }.joinedStream
 }
 
-//case class RqQpAddrCacheAgentReadBus() extends Bundle with IMasterSlave {
-//  val bus = QpAddrCacheAgentReadBus()
+//case class SqOrRetryQpAddrCacheAgentReadBus() extends Bundle with IMasterSlave {
+//  val send = QpAddrCacheAgentReadBus()
+//  val write = QpAddrCacheAgentReadBus()
 //
-//  def >>(that: RqQpAddrCacheAgentReadBus): Unit = {
-//    this.bus >> that.bus
+//  def >>(that: SqOrRetryQpAddrCacheAgentReadBus): Unit = {
+//    this.send >> that.send
+//    this.write >> that.write
 //  }
-////  val sendWrite = QpAddrCacheAgentReadBus()
-////  val read = QpAddrCacheAgentReadBus()
-////  val atomic = QpAddrCacheAgentReadBus()
-////
-////  def >>(that: RqQpAddrCacheAgentReadBus): Unit = {
-////    this.sendWrite >> that.sendWrite
-////    this.read >> that.read
-////    this.atomic >> that.atomic
-////  }
 //
-//  def <<(that: RqQpAddrCacheAgentReadBus): Unit = that >> this
+//  def <<(that: SqOrRetryQpAddrCacheAgentReadBus): Unit = that >> this
 //
 //  def asMaster(): Unit = {
-//    master(bus)
-//    // master(sendWrite, read, atomic)
+//    master(send, write)
 //  }
 //}
-
-case class SqOrRetryQpAddrCacheAgentReadBus() extends Bundle with IMasterSlave {
-  val send = QpAddrCacheAgentReadBus()
-  val write = QpAddrCacheAgentReadBus()
-
-  def >>(that: SqOrRetryQpAddrCacheAgentReadBus): Unit = {
-    this.send >> that.send
-    this.write >> that.write
-  }
-
-  def <<(that: SqOrRetryQpAddrCacheAgentReadBus): Unit = that >> this
-
-  def asMaster(): Unit = {
-    master(send, write)
-  }
-}
 
 trait PsnRange extends Bundle {
   val start = UInt(PSN_WIDTH bits)
@@ -2163,14 +2164,16 @@ case class UdpMetaData() extends Bundle {
   val lenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
 }
 
-case class UdpData(busWidth: BusWidth) extends Bundle {
+case class UdpData(busWidth: BusWidth.Value) extends Bundle {
   val udp = UdpMetaData()
   val data = Bits(busWidth.id bits)
   val mty = Bits((busWidth.id / BYTE_WIDTH) bits)
   val sop = Bool()
 }
 
-case class UdpDataBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
+case class UdpDataBus(busWidth: BusWidth.Value)
+    extends Bundle
+    with IMasterSlave {
   val pktFrag = Stream(Fragment(UdpData(busWidth)))
 
   def >>(that: UdpDataBus): Unit = {
@@ -2183,8 +2186,9 @@ case class UdpDataBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
 }
 
 //----------Combined packets----------//
-// TODO: defined as IMasterSlave
-case class RdmaDataBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
+case class RdmaDataBus(busWidth: BusWidth.Value)
+    extends Bundle
+    with IMasterSlave {
   val pktFrag = Stream(Fragment(RdmaDataPkt(busWidth)))
 
   def >>(that: RdmaDataBus): Unit = {
@@ -2205,13 +2209,14 @@ case class RdmaDataBus(busWidth: BusWidth) extends Bundle with IMasterSlave {
 
 }
 
-case class SqReadAtomicRespWithDmaInfo(busWidth: BusWidth) extends Bundle {
+case class SqReadAtomicRespWithDmaInfo(busWidth: BusWidth.Value)
+    extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val pa = UInt(MEM_ADDR_WIDTH bits)
   val workReqId = Bits(WR_ID_WIDTH bits)
 }
 
-case class SqReadAtomicRespWithDmaInfoBus(busWidth: BusWidth)
+case class SqReadAtomicRespWithDmaInfoBus(busWidth: BusWidth.Value)
     extends Bundle
     with IMasterSlave {
   val respWithDmaInfo = Stream(Fragment(SqReadAtomicRespWithDmaInfo(busWidth)))
@@ -2235,7 +2240,7 @@ case class RqReqCheckRst() extends Bundle {
   val epsn = UInt(PSN_WIDTH bits)
 }
 
-case class RqReqWithRxBuf(busWidth: BusWidth) extends Bundle {
+case class RqReqWithRxBuf(busWidth: BusWidth.Value) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
@@ -2246,7 +2251,7 @@ case class RqReqWithRxBuf(busWidth: BusWidth) extends Bundle {
   val rxBuf = RxWorkReq()
 }
 
-case class RqReqWithRxBufBus(busWidth: BusWidth)
+case class RqReqWithRxBufBus(busWidth: BusWidth.Value)
     extends Bundle
     with IMasterSlave {
   val reqWithRxBuf = Stream(Fragment(RqReqWithRxBuf(busWidth)))
@@ -2260,19 +2265,19 @@ case class RqReqWithRxBufBus(busWidth: BusWidth)
   override def asMaster(): Unit = master(reqWithRxBuf)
 }
 
-case class RqReqCheckInternalOutput(busWidth: BusWidth) extends Bundle {
+case class RqReqCheckInternalOutput(busWidth: BusWidth.Value) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val checkRst = RqReqCheckRst()
 }
 
-case class RqReqCheckStageOutput(busWidth: BusWidth) extends Bundle {
+case class RqReqCheckStageOutput(busWidth: BusWidth.Value) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
   val nakAeth = AETH()
 }
 
-case class RqReqCommCheckRstBus(busWidth: BusWidth)
+case class RqReqCommCheckRstBus(busWidth: BusWidth.Value)
     extends Bundle
     with IMasterSlave {
   val checkRst = Stream(Fragment(RqReqCheckStageOutput(busWidth)))
@@ -2301,7 +2306,8 @@ case class VirtualAddrInfo() extends Bundle {
   }
 }
 
-case class RqReqWithRxBufAndVirtualAddrInfo(busWidth: BusWidth) extends Bundle {
+case class RqReqWithRxBufAndVirtualAddrInfo(busWidth: BusWidth.Value)
+    extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
@@ -2314,7 +2320,7 @@ case class RqReqWithRxBufAndVirtualAddrInfo(busWidth: BusWidth) extends Bundle {
   val virtualAddrInfo = VirtualAddrInfo()
 }
 
-case class RqReqWithRxBufAndVirtualAddrInfoBus(busWidth: BusWidth)
+case class RqReqWithRxBufAndVirtualAddrInfoBus(busWidth: BusWidth.Value)
     extends Bundle
     with IMasterSlave {
   val reqWithRxBufAndVirtualAddrInfo = Stream(
@@ -2345,7 +2351,7 @@ case class DmaInfo() extends Bundle {
   }
 }
 
-case class RqReqWithRxBufAndDmaInfo(busWidth: BusWidth) extends Bundle {
+case class RqReqWithRxBufAndDmaInfo(busWidth: BusWidth.Value) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
@@ -2358,7 +2364,7 @@ case class RqReqWithRxBufAndDmaInfo(busWidth: BusWidth) extends Bundle {
   val dmaInfo = DmaInfo()
 }
 
-case class RqReqWithRxBufAndDmaInfoBus(busWidth: BusWidth)
+case class RqReqWithRxBufAndDmaInfoBus(busWidth: BusWidth.Value)
     extends Bundle
     with IMasterSlave {
   val reqWithRxBufAndDmaInfo = Stream(
@@ -2374,7 +2380,7 @@ case class RqReqWithRxBufAndDmaInfoBus(busWidth: BusWidth)
   override def asMaster(): Unit = master(reqWithRxBufAndDmaInfo)
 }
 
-case class RqReqWithRxBufAndDmaInfoWithLenCheck(busWidth: BusWidth)
+case class RqReqWithRxBufAndDmaInfoWithLenCheck(busWidth: BusWidth.Value)
     extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
@@ -2391,7 +2397,7 @@ case class RqReqWithRxBufAndDmaInfoWithLenCheck(busWidth: BusWidth)
   val dmaInfo = DmaInfo()
 }
 
-case class RqReqWithRxBufAndDmaInfoWithLenCheckBus(busWidth: BusWidth)
+case class RqReqWithRxBufAndDmaInfoWithLenCheckBus(busWidth: BusWidth.Value)
     extends Bundle
     with IMasterSlave {
   val reqWithRxBufAndDmaInfoWithLenCheck = Stream(
@@ -2407,7 +2413,8 @@ case class RqReqWithRxBufAndDmaInfoWithLenCheckBus(busWidth: BusWidth)
   override def asMaster(): Unit = master(reqWithRxBufAndDmaInfoWithLenCheck)
 }
 
-case class RqDupReadReqAndRstCacheData(busWidth: BusWidth) extends Bundle {
+case class RqDupReadReqAndRstCacheData(busWidth: BusWidth.Value)
+    extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val rstCacheData = ReadAtomicRstCacheData()
 }
@@ -2424,7 +2431,7 @@ sealed abstract class RdmaBasePacket extends Bundle {
   // val eth = Bits(ETH_WIDTH bits)
 }
 
-case class DataAndMty(busWidth: BusWidth) extends Bundle {
+case class DataAndMty(busWidth: BusWidth.Value) extends Bundle {
   require(isPow2(busWidth.id), s"width=${busWidth.id} should be power of 2")
   val data = Bits(busWidth.id bits)
   val mty = Bits((busWidth.id / BYTE_WIDTH) bits)
@@ -2432,7 +2439,7 @@ case class DataAndMty(busWidth: BusWidth) extends Bundle {
 
 case class HeaderDataAndMty[T <: Data](
     headerType: HardType[T],
-    busWidth: BusWidth
+    busWidth: BusWidth.Value
 ) extends Bundle {
   //  type DataAndMty = HeaderDataAndMty[NoData]
 
@@ -2443,10 +2450,10 @@ case class HeaderDataAndMty[T <: Data](
 }
 
 object RdmaDataPkt {
-  def apply(busWidth: BusWidth) = new RdmaDataPkt(busWidth)
+  def apply(busWidth: BusWidth.Value) = new RdmaDataPkt(busWidth)
 }
 
-sealed class RdmaDataPkt(busWidth: BusWidth) extends RdmaBasePacket {
+sealed class RdmaDataPkt(busWidth: BusWidth.Value) extends RdmaBasePacket {
   // data include BTH
   val data = Bits(busWidth.id bits)
   // mty does not include BTH
@@ -2569,18 +2576,18 @@ trait IethHeader extends RdmaBasePacket {
   val ieth = IETH()
 }
 
-case class SendReq(busWidth: BusWidth)
+case class SendReq(busWidth: BusWidth.Value)
     extends RdmaDataPkt(busWidth)
     with ImmDtHeader
     with IethHeader {}
 
-case class WriteReq(busWidth: BusWidth)
+case class WriteReq(busWidth: BusWidth.Value)
     extends RdmaDataPkt(busWidth)
     with RdmaReq
     with ImmDtHeader {}
 
 case class ReadReq() extends RdmaReq {
-  def asRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
+  def asRdmaDataPktFrag(busWidth: BusWidth.Value): Fragment[RdmaDataPkt] =
     new Composite(this) {
       val reqWidth = widthOf(bth) + widthOf(reth)
       require(
@@ -2623,7 +2630,7 @@ case class ReadReq() extends RdmaReq {
   }
 }
 
-case class ReadOnlyFirstLastResp(busWidth: BusWidth)
+case class ReadOnlyFirstLastResp(busWidth: BusWidth.Value)
     extends RdmaDataPkt(busWidth)
     with Response {
 //  when(OpCode.isMidReadRespPkt(bth.opcode)) {
@@ -2636,10 +2643,11 @@ case class ReadOnlyFirstLastResp(busWidth: BusWidth)
 //  }
 }
 
-case class ReadMidResp(busWidth: BusWidth) extends RdmaDataPkt(busWidth) {}
+case class ReadMidResp(busWidth: BusWidth.Value)
+    extends RdmaDataPkt(busWidth) {}
 
 case class Acknowledge() extends Response {
-  def asRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
+  def asRdmaDataPktFrag(busWidth: BusWidth.Value): Fragment[RdmaDataPkt] =
     new Composite(this) {
       val ackWidth = widthOf(bth) + widthOf(aeth)
       require(
@@ -2721,7 +2729,7 @@ case class Acknowledge() extends Response {
 case class AtomicReq() extends RdmaBasePacket {
   val atomicEth = AtomicEth()
 
-  def asRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
+  def asRdmaDataPktFrag(busWidth: BusWidth.Value): Fragment[RdmaDataPkt] =
     new Composite(this) {
       val reqWidth = widthOf(bth) + widthOf(atomicEth)
       require(
@@ -2776,7 +2784,7 @@ case class AtomicReq() extends RdmaBasePacket {
 case class AtomicResp() extends Response {
   val atomicAckEth = AtomicAckEth()
 
-  def asRdmaDataPktFrag(busWidth: BusWidth): Fragment[RdmaDataPkt] =
+  def asRdmaDataPktFrag(busWidth: BusWidth.Value): Fragment[RdmaDataPkt] =
     new Composite(this) {
       val ackWidth = widthOf(bth) + widthOf(atomicAckEth)
       require(

@@ -1,10 +1,8 @@
 package rdma
 
 import spinal.core._
-// import spinal.lib._
 
-//import BusWidth.BusWidth
-//import ConstantSettings._
+import ConstantSettings._
 import RdmaConstants._
 
 //----------RDMA defined headers----------//
@@ -109,7 +107,7 @@ case class AETH() extends RdmaHeader {
   }
 
   def toWorkCompStatus(): SpinalEnumCraft[WorkCompStatus.type] =
-    new Composite(this) {
+    new Composite(this, "AETH_toWorkCompStatus") {
       val workCompStatus = WorkCompStatus() // Bits(WC_STATUS_WIDTH bits)
       when(isNormalAck()) {
         workCompStatus := WorkCompStatus.SUCCESS
@@ -140,7 +138,7 @@ case class AETH() extends RdmaHeader {
     )
 
     val rnrTimeOut = Bits(AETH_VALUE_WIDTH bits)
-    rnrTimeOut := 0
+    rnrTimeOut := DEFAULT_MIN_RNR_TIME_OUT
     set(ackType, msn = 0, creditCnt = 0, rnrTimeOut = rnrTimeOut)
   }
 
@@ -213,49 +211,49 @@ case class AETH() extends RdmaHeader {
   }
 
   def isNormalAck(): Bool =
-    new Composite(this) {
+    new Composite(this, "AETH_isNormalAck") {
       val result = code === AethCode.ACK.id
     }.result
 
   def isRetryNak(): Bool =
-    new Composite(this) {
+    new Composite(this, "AETH_isRetryNak") {
       val result =
         code === AethCode.RNR.id || (code === AethCode.NAK.id && value === NakCode.SEQ.id)
     }.result
 
   def isRnrNak(): Bool =
-    new Composite(this) {
+    new Composite(this, "AETH_isRnrNak") {
       val result = code === AethCode.RNR.id
     }.result
 
   def isSeqNak(): Bool =
-    new Composite(this) {
+    new Composite(this, "AETH_isSeqNak") {
       val result = code === AethCode.NAK.id && value === NakCode.SEQ.id
     }.result
 
   def isErrAck(): Bool =
-    new Composite(this) {
+    new Composite(this, "AETH_isErrAck") {
       val result = code === AethCode.NAK.id && value =/= NakCode.SEQ.id &&
         !NakCode.isReserved(value)
     }.result
 
   def isInvReqNak(): Bool =
-    new Composite(this) {
+    new Composite(this, "AETH_isInvReqNak") {
       val result = code === AethCode.NAK.id && value === NakCode.INV.id
     }.result
 
   def isRmtAccNak(): Bool =
-    new Composite(this) {
+    new Composite(this, "AETH_isRmtAccNak") {
       val result = code === AethCode.NAK.id && value === NakCode.RMT_ACC.id
     }.result
 
   def isRmtOpNak(): Bool =
-    new Composite(this) {
+    new Composite(this, "AETH_isRmtOpNak") {
       val result = code === AethCode.NAK.id && value === NakCode.RMT_OP.id
     }.result
 
   def isReserved(): Bool =
-    new Composite(this) {
+    new Composite(this, "AETH_isReserved") {
       val result = code === AethCode.RSVD.id ||
         (code === AethCode.NAK.id && NakCode.isReserved(value))
     }.result

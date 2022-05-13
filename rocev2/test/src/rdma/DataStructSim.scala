@@ -1150,6 +1150,354 @@ object OpCodeSim {
   }
 }
 
+trait QueryBusSim[Treq <: Data, Tresp <: Data, QueryBus <: ReqRespBus[
+  Treq,
+  Tresp
+], ReqData, RespData] {
+//[Treq <: Data, Tresp <: Data, ReqData, RespData] {
+//  type QueryBus = ReqRespBus[Treq, Tresp]
+
+  def alwaysStreamFireAndRespSuccess(
+      queryBus: QueryBus,
+      clockDomain: ClockDomain
+  ) = {
+    queryCacheHelper(
+      queryBus,
+      clockDomain,
+      alwaysValid = true,
+      alwaysSuccess = true
+    )
+  }
+
+  def alwaysStreamFireAndRespFailure(
+      queryBus: QueryBus,
+      clockDomain: ClockDomain
+  ) = {
+    queryCacheHelper(
+      queryBus,
+      clockDomain,
+      alwaysValid = true,
+      alwaysSuccess = false
+    )
+  }
+
+  def randomStreamFireAndRespSuccess(
+      queryBus: QueryBus,
+      clockDomain: ClockDomain
+  ) = {
+    queryCacheHelper(
+      queryBus,
+      clockDomain,
+      alwaysValid = false,
+      alwaysSuccess = true
+    )
+  }
+
+  def randomStreamFireAndRespFailure(
+      queryBus: QueryBus,
+      clockDomain: ClockDomain
+  ) = {
+    queryCacheHelper(
+      queryBus,
+      clockDomain,
+      alwaysValid = false,
+      alwaysSuccess = false
+    )
+  }
+
+  // Functions need override
+  def onReqFire(reqData: Treq, reqQueue: mutable.Queue[ReqData]): Unit
+  def buildResp(
+      respData: Tresp,
+      reqQueue: mutable.Queue[ReqData],
+      alwaysSuccess: Boolean
+  ): Unit
+  def onRespFire(respData: Tresp, respQueue: mutable.Queue[RespData]): Unit
+
+  private def queryCacheHelper(
+      queryBus: QueryBus,
+      clockDomain: ClockDomain,
+      alwaysValid: Boolean,
+      alwaysSuccess: Boolean
+  ): mutable.Queue[RespData] = {
+    val reqStream = queryBus.req
+    val respStream = queryBus.resp
+
+    val reqQueue = mutable.Queue[ReqData]()
+    val respQueue = mutable.Queue[RespData]()
+
+    if (alwaysValid) {
+      onReceiveStreamReqAndThenResponseAlways(
+        reqStream = reqStream,
+        respStream = respStream,
+        clockDomain
+      ) {
+        onReqFire(reqStream.payload, reqQueue)
+      } {
+        buildResp(respStream.payload, reqQueue, alwaysSuccess)
+      }
+    } else {
+      onReceiveStreamReqAndThenResponseRandom(
+        reqStream = reqStream,
+        respStream = respStream,
+        clockDomain
+      ) {
+        onReqFire(reqStream.payload, reqQueue)
+      } {
+        buildResp(respStream.payload, reqQueue, alwaysSuccess)
+      }
+    }
+
+    onStreamFire(respStream, clockDomain) {
+      onRespFire(respStream.payload, respQueue)
+    }
+
+    respQueue
+  }
+}
+
+object AddrCacheSim
+    extends QueryBusSim[
+      QpAddrCacheAgentReadReq,
+      QpAddrCacheAgentReadResp,
+      QpAddrCacheAgentReadBus,
+      (
+          PSN,
+          LRKey,
+          Boolean,
+          VirtualAddr,
+          PktLen
+      ),
+      (
+          PSN,
+          KeyValid,
+          SizeValid,
+          AccessValid,
+          PhysicalAddr
+      )
+    ] {
+
+  override def onReqFire(
+      reqData: QpAddrCacheAgentReadReq,
+      reqQueue: mutable.Queue[
+        (
+            PSN,
+            LRKey,
+            Boolean,
+            VirtualAddr,
+            PktLen
+        )
+      ]
+  ): Unit = {
+    reqQueue.enqueue(
+      (
+        reqData.psn.toInt,
+        reqData.key.toLong,
+        reqData.remoteOrLocalKey.toBoolean,
+        reqData.va.toBigInt,
+        reqData.dataLenBytes.toLong
+      )
+    )
+  }
+
+  override def buildResp(
+      respData: QpAddrCacheAgentReadResp,
+      reqQueue: mutable.Queue[
+        (
+            PSN,
+            LRKey,
+            Boolean,
+            VirtualAddr,
+            PktLen
+        )
+      ],
+      alwaysSuccess: Boolean
+  ): Unit = {
+    val (psn, _, _, _, _) = reqQueue.dequeue()
+    respData.psn #= psn
+    if (alwaysSuccess) {
+      respData.keyValid #= true
+      respData.sizeValid #= true
+      respData.accessValid #= true
+    } else {
+      respData.keyValid #= false
+      respData.sizeValid #= false
+      respData.accessValid #= false
+    }
+  }
+
+  override def onRespFire(
+      respData: QpAddrCacheAgentReadResp,
+      respQueue: mutable.Queue[
+        (
+            PSN,
+            KeyValid,
+            SizeValid,
+            AccessValid,
+            PhysicalAddr
+        )
+      ]
+  ): Unit = {
+    respQueue.enqueue(
+      (
+        respData.psn.toInt,
+        respData.keyValid.toBoolean,
+        respData.sizeValid.toBoolean,
+        respData.accessValid.toBoolean,
+        respData.pa.toBigInt
+      )
+    )
+  }
+}
+
+object PdAddrCacheSim
+    extends QueryBusSim[
+      PdAddrCacheReadReq,
+      PdAddrCacheReadResp,
+      PdAddrCacheReadBus,
+      (
+          PSN,
+          LRKey,
+          Boolean,
+          VirtualAddr,
+          PktLen
+      ),
+      (
+          PSN,
+          KeyValid,
+          SizeValid,
+          AccessValid,
+          PhysicalAddr
+      )
+    ] {
+
+  override def onReqFire(
+      reqData: PdAddrCacheReadReq,
+      reqQueue: mutable.Queue[
+        (
+            PSN,
+            LRKey,
+            Boolean,
+            VirtualAddr,
+            PktLen
+        )
+      ]
+  ): Unit = {
+    reqQueue.enqueue(
+      (
+        reqData.psn.toInt,
+        reqData.key.toLong,
+        reqData.remoteOrLocalKey.toBoolean,
+        reqData.va.toBigInt,
+        reqData.dataLenBytes.toLong
+      )
+    )
+  }
+
+  override def buildResp(
+      respData: PdAddrCacheReadResp,
+      reqQueue: mutable.Queue[
+        (
+            PSN,
+            LRKey,
+            Boolean,
+            VirtualAddr,
+            PktLen
+        )
+      ],
+      alwaysSuccess: Boolean
+  ): Unit = {
+    val (psn, _, _, _, _) = reqQueue.dequeue()
+    respData.psn #= psn
+    if (alwaysSuccess) {
+      respData.keyValid #= true
+      respData.sizeValid #= true
+      respData.accessValid #= true
+    } else {
+      respData.keyValid #= false
+      respData.sizeValid #= false
+      respData.accessValid #= false
+    }
+  }
+
+  override def onRespFire(
+      respData: PdAddrCacheReadResp,
+      respQueue: mutable.Queue[
+        (
+            PSN,
+            KeyValid,
+            SizeValid,
+            AccessValid,
+            PhysicalAddr
+        )
+      ]
+  ): Unit = {
+    respQueue.enqueue(
+      (
+        respData.psn.toInt,
+        respData.keyValid.toBoolean,
+        respData.sizeValid.toBoolean,
+        respData.accessValid.toBoolean,
+        respData.pa.toBigInt
+      )
+    )
+  }
+}
+
+object ReadAtomicRstCacheSim
+    extends QueryBusSim[
+      ReadAtomicRstCacheReq,
+      CamQueryResp[ReadAtomicRstCacheReq, ReadAtomicRstCacheData],
+      ReadAtomicRstCacheQueryBus,
+      (PSN, OpCode.Value),
+      (QueryPsn, QuerySuccess, PsnStart, PhysicalAddr, PktNum, PktLen)
+    ] {
+  type ReadAtomicRstCacheResp =
+    CamQueryResp[ReadAtomicRstCacheReq, ReadAtomicRstCacheData]
+
+  override def onReqFire(
+      reqData: ReadAtomicRstCacheReq,
+      reqQueue: mutable.Queue[(PSN, OpCode.Value)]
+  ): Unit = {
+    reqQueue.enqueue(
+      (
+        reqData.queryPsn.toInt,
+        OpCode(reqData.opcode.toInt)
+      )
+    )
+  }
+
+  override def buildResp(
+      respData: ReadAtomicRstCacheResp,
+      reqQueue: mutable.Queue[(PSN, OpCode.Value)],
+      alwaysSuccess: Boolean
+  ): Unit = {
+    val (queryPsn, queryOpCode) = reqQueue.dequeue()
+    respData.respValue.opcode #= queryOpCode.id
+    respData.respValue.psnStart #= queryPsn // TODO: support partial retry
+    respData.queryKey.queryPsn #= queryPsn
+    respData.found #= alwaysSuccess
+  }
+
+  override def onRespFire(
+      respData: ReadAtomicRstCacheResp,
+      respQueue: mutable.Queue[
+        (QueryPsn, QuerySuccess, PsnStart, PhysicalAddr, PktNum, PktLen)
+      ]
+  ): Unit = {
+    respQueue.enqueue(
+      (
+        respData.queryKey.queryPsn.toInt,
+        respData.found.toBoolean,
+        respData.respValue.psnStart.toInt,
+        respData.respValue.pa.toBigInt,
+        respData.respValue.pktNum.toInt,
+        respData.respValue.dlen.toLong
+      )
+    )
+  }
+}
+/*
 object ReadAtomicRstCacheSim {
   type ReadAtomicRstCacheResp =
     CamQueryResp[ReadAtomicRstCacheReq, ReadAtomicRstCacheData]
@@ -1312,80 +1660,7 @@ object AddrCacheSim {
       alwaysSuccess = false
     )
   }
-  /*
-  def simHelper(
-      addrCacheRead: QpAddrCacheAgentReadBus,
-      clockDomain: ClockDomain,
-      alwaysValid: Boolean,
-      alwaysSuccess: Boolean
-  ) = {
-    val addrCacheReadReqQueue = mutable.Queue[(PSN, VirtualAddr)]()
-    val addrCacheReadRespQueue =
-      mutable.Queue[(PSN, KeyValid, SizeValid, AccessValid, PhysicalAddr)]()
 
-    val onReq = () => {
-      addrCacheReadReqQueue.enqueue(
-        (addrCacheRead.req.psn.toInt, addrCacheRead.req.va.toBigInt)
-      )
-//        println(
-//          f"${simTime()} time: dut.io.addrCacheRead.req received PSN=${dut.io.addrCacheRead.req.psn.toInt}%X"
-//        )
-    }
-
-    val onResp = () => {
-      val (psn, _) = addrCacheReadReqQueue.dequeue()
-      addrCacheRead.resp.psn #= psn
-      if (alwaysSuccess) {
-        addrCacheRead.resp.keyValid #= true
-        addrCacheRead.resp.sizeValid #= true
-        addrCacheRead.resp.accessValid #= true
-      } else {
-        addrCacheRead.resp.keyValid #= false
-        addrCacheRead.resp.sizeValid #= false
-        addrCacheRead.resp.accessValid #= false
-      }
-    }
-
-    if (alwaysValid) {
-      onReceiveStreamReqAndThenResponseAlways(
-        reqStream = addrCacheRead.req,
-        respStream = addrCacheRead.resp,
-        clockDomain
-      ) {
-        onReq()
-      } {
-        onResp()
-      }
-    } else {
-      onReceiveStreamReqAndThenResponseRandom(
-        reqStream = addrCacheRead.req,
-        respStream = addrCacheRead.resp,
-        clockDomain
-      ) {
-        onReq()
-      } {
-        onResp()
-      }
-    }
-
-    onStreamFire(addrCacheRead.resp, clockDomain) {
-      addrCacheReadRespQueue.enqueue(
-        (
-          addrCacheRead.resp.psn.toInt,
-          addrCacheRead.resp.keyValid.toBoolean,
-          addrCacheRead.resp.sizeValid.toBoolean,
-          addrCacheRead.resp.accessValid.toBoolean,
-          addrCacheRead.resp.pa.toBigInt
-        )
-      )
-//        println(
-//          f"${simTime()} time: dut.io.addrCacheRead.resp PSN=${dut.io.addrCacheRead.resp.psn.toInt}%X"
-//        )
-    }
-
-    addrCacheReadRespQueue
-  }
-   */
   def simHelper(
       addrCacheRead: QpAddrCacheAgentReadBus,
       clockDomain: ClockDomain,
@@ -1445,6 +1720,97 @@ object AddrCacheSim {
       onRespFire = onRespFire,
       clockDomain = clockDomain,
       alwaysValid = alwaysValid
+    )
+  }
+}
+ */
+object DmaWriteBusSim
+    extends QueryBusSim[
+      Fragment[DmaWriteReq],
+      DmaWriteResp,
+      DmaWriteBus,
+      (
+          PSN,
+          WorkReqId,
+          PhysicalAddr,
+          PktFragData,
+          MTY,
+          FragLast
+      ),
+      (
+          PSN,
+          WorkReqId,
+          PktLen
+      )
+    ] {
+  override def onReqFire(
+      reqData: Fragment[DmaWriteReq],
+      reqQueue: mutable.Queue[
+        (
+            PSN,
+            WorkReqId,
+            PhysicalAddr,
+            PktFragData,
+            MTY,
+            FragLast
+        )
+      ]
+  ): Unit = {
+    reqQueue.enqueue(
+      (
+        reqData.psn.toInt,
+        reqData.workReqId.toBigInt,
+        reqData.pa.toBigInt,
+        reqData.data.toBigInt,
+        reqData.mty.toBigInt,
+        reqData.last.toBoolean
+      )
+    )
+  }
+
+  override def buildResp(
+      respData: DmaWriteResp,
+      reqQueue: mutable.Queue[
+        (
+            PSN,
+            WorkReqId,
+            PhysicalAddr,
+            PktFragData,
+            MTY,
+            FragLast
+        )
+      ],
+      alwaysSuccess: KeyValid
+  ): Unit = {
+    val (
+      psn,
+      workReqId,
+      _,
+      _,
+      _,
+      _ // fragLast
+    ) = reqQueue.dequeue()
+    respData.psn #= psn
+    respData.workReqId #= workReqId
+    respData.lenBytes #= 0
+  }
+
+  override def onRespFire(
+      respData: DmaWriteResp,
+      respQueue: mutable.Queue[
+        (
+            PSN,
+            WorkReqId,
+            PktLen
+        )
+      ]
+  ): Unit = {
+    respQueue.enqueue(
+      (
+        respData.psn.toInt,
+        respData.workReqId.toBigInt,
+        respData.lenBytes.toLong
+      )
     )
   }
 }
@@ -1742,9 +2108,9 @@ object RdmaDataPktSim {
       val psnStart = psnStartItr.next()
       val payloadLenBytes = totalLenItr.next()
 
-      //      println(
-      //        f"${simTime()} time: pktNum=${pktNum}%X, totalFragNum=${totalFragNum}%X, psnStart=${psnStart}%X, totalLenBytes=${totalLenBytes}%X"
-      //      )
+//      println(
+//        f"${simTime()} time: pktNum=${pktNum}%X, totalFragNum=${totalFragNum}%X, psnStart=${psnStart}%X, totalLenBytes=${totalLenBytes}%X"
+//      )
       val workReqOpCode = WorkReqOpCode.RDMA_READ
       (
         psnStart,

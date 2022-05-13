@@ -3,11 +3,10 @@ package rdma
 import spinal.core._
 import spinal.lib._
 
-import BusWidth.BusWidth
 import ConstantSettings._
 import RdmaConstants._
 
-class RespHandler(busWidth: BusWidth) extends Component {
+class RespHandler(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
@@ -38,7 +37,7 @@ class RespHandler(busWidth: BusWidth) extends Component {
   io.coalesceAckDone := coalesceAndNormalAndRetryNakHandler.io.coalesceAckDone
   io.retryNotifier := coalesceAndNormalAndRetryNakHandler.io.retryNotifier
 
-  val readRespLenCheck = new ReadRespLenCheck(busWidth: BusWidth)
+  val readRespLenCheck = new ReadRespLenCheck(busWidth: BusWidth.Value)
   readRespLenCheck.io.qpAttr := io.qpAttr
   readRespLenCheck.io.txQCtrl := io.txQCtrl
   readRespLenCheck.io.cachedWorkReqAndRespWithAethIn << coalesceAndNormalAndRetryNakHandler.io.cachedWorkReqAndRespWithAeth
@@ -78,7 +77,7 @@ class RespHandler(busWidth: BusWidth) extends Component {
 // - NAK with reserved code;
 // - Target QP not exists; dropped by head verifier
 // - Ghost ACK;
-class RespVerifier(busWidth: BusWidth) extends Component {
+class RespVerifier(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
 //    val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
@@ -191,7 +190,7 @@ class RespVerifier(busWidth: BusWidth) extends Component {
 }
 
 // Handle coalesce ACK, normal ACK and retry ACK
-class CoalesceAndNormalAndRetryNakHandler(busWidth: BusWidth)
+class CoalesceAndNormalAndRetryNakHandler(busWidth: BusWidth.Value)
     extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
@@ -216,12 +215,11 @@ class CoalesceAndNormalAndRetryNakHandler(busWidth: BusWidth)
   val isRetryNak = io.rx.aeth.isRetryNak()
   val isErrAck = io.rx.aeth.isErrAck()
 
-  val isDupAck =
-    PsnUtil.lt(
-      inputRespPktFrag.bth.psn,
-      io.cachedWorkReqPop.psnStart,
-      io.qpAttr.npsn
-    )
+  val isDupAck = PsnUtil.lt(
+    inputRespPktFrag.bth.psn,
+    io.cachedWorkReqPop.psnStart,
+    io.qpAttr.npsn
+  )
   val isGhostAck = inputAckValid && !inputCachedWorkReqValid
 
   val isReadWorkReq =
@@ -231,13 +229,12 @@ class CoalesceAndNormalAndRetryNakHandler(busWidth: BusWidth)
 
   val cachedWorkReqPsnEnd =
     io.cachedWorkReqPop.psnStart + (io.cachedWorkReqPop.pktNum - 1)
-  val isTargetWorkReq =
-    PsnUtil.gte(
-      inputRespPktFrag.bth.psn,
-      io.cachedWorkReqPop.psnStart,
-      io.qpAttr.npsn
-    ) &&
-      PsnUtil.lte(inputRespPktFrag.bth.psn, cachedWorkReqPsnEnd, io.qpAttr.npsn)
+  val isTargetWorkReq = PsnUtil.gte(
+    inputRespPktFrag.bth.psn,
+    io.cachedWorkReqPop.psnStart,
+    io.qpAttr.npsn
+  ) &&
+    PsnUtil.lte(inputRespPktFrag.bth.psn, cachedWorkReqPsnEnd, io.qpAttr.npsn)
   val isWholeWorkReqAck =
     PsnUtil.gte(inputRespPktFrag.bth.psn, cachedWorkReqPsnEnd, io.qpAttr.npsn)
   val isPartialTargetWorkReqAck = isTargetWorkReq && !isWholeWorkReqAck
@@ -317,6 +314,7 @@ class CoalesceAndNormalAndRetryNakHandler(busWidth: BusWidth)
     io.retryNotifier.pulse := (respTimeOutRetry || hasExplicitRetry || hasImplicitRetry) && io.rx.fire
     io.retryNotifier.psnStart := inputRespPktFrag.bth.psn
     io.retryNotifier.reason := RetryReason.NO_RETRY
+    io.retryNotifier.receivedRnrTimeOut := DEFAULT_MIN_RNR_TIME_OUT
     when(hasImplicitRetry) {
       io.retryNotifier.psnStart := io.cachedWorkReqPop.psnStart
       io.retryNotifier.reason := RetryReason.IMPLICIT_ACK
@@ -325,6 +323,7 @@ class CoalesceAndNormalAndRetryNakHandler(busWidth: BusWidth)
       io.retryNotifier.reason := RetryReason.RESP_TIMEOUT
     } elsewhen (io.rx.aeth.isRnrNak()) {
       io.retryNotifier.reason := RetryReason.RNR
+      io.retryNotifier.receivedRnrTimeOut := io.rx.aeth.value
     } elsewhen (io.rx.aeth.isSeqNak()) {
       io.retryNotifier.reason := RetryReason.SEQ_ERR
     }
@@ -344,7 +343,7 @@ class CoalesceAndNormalAndRetryNakHandler(busWidth: BusWidth)
   io.coalesceAckDone := io.txQCtrl.wrongStateFlush && io.rx.fire
 }
 
-class ReadRespLenCheck(busWidth: BusWidth) extends Component {
+class ReadRespLenCheck(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
@@ -449,7 +448,7 @@ class ReadRespLenCheck(busWidth: BusWidth) extends Component {
   }
 }
 
-class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
+class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth.Value)
     extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
@@ -593,7 +592,8 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth)
 }
 
 // TODO: check read response length pass otherwise generate WC with status LOC_LEN_ERR
-class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
+class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth.Value)
+    extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
@@ -612,7 +612,7 @@ class ReadAtomicRespDmaReqInitiator(busWidth: BusWidth) extends Component {
     io.readAtomicRespWithDmaInfoBus.respWithDmaInfo
       .throwWhen(io.txQCtrl.wrongStateFlush),
     OpCode.isReadRespPkt(inputPktFrag.bth.opcode),
-    OpCode.isReadRespPkt(inputPktFrag.bth.opcode)
+    OpCode.isAtomicRespPkt(inputPktFrag.bth.opcode)
   )
 
   val isLast = io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.isLast

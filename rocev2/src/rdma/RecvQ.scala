@@ -3,7 +3,6 @@ package rdma
 import spinal.core._
 import spinal.lib._
 
-import BusWidth.BusWidth
 import RdmaConstants._
 import ConstantSettings._
 
@@ -30,7 +29,7 @@ import ConstantSettings._
 // RQ saves Atomic (Req & Result) and Read (Req only) in
 // Queue Context, size as # pending Read/Atomic;
 // TODO: RQ should send explicit ACK to SQ if it received many un-signaled requests
-class RecvQ(busWidth: BusWidth) extends Component {
+class RecvQ(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val psnInc = out(RqPsnInc())
@@ -195,7 +194,7 @@ class RecvQ(busWidth: BusWidth) extends Component {
 // - for Write, check received data size == DMALen at last packet;
 // - for Write/Read, check 0 <= DMALen <= 2^31;
 // RQ local error detected, NAK-Rmt Op;
-class ReqCommCheck(busWidth: BusWidth) extends Component {
+class ReqCommCheck(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val epsnInc = out(EPsnInc())
@@ -342,7 +341,7 @@ class ReqCommCheck(busWidth: BusWidth) extends Component {
   }
 }
 
-class ReqRnrCheck(busWidth: BusWidth) extends Component {
+class ReqRnrCheck(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -379,7 +378,7 @@ class ReqRnrCheck(busWidth: BusWidth) extends Component {
     )
   }
 
-  val rnrAeth = AETH().set(AckType.NAK_RNR, io.qpAttr.rnrTimeOut)
+  val rnrAeth = AETH().set(AckType.NAK_RNR, io.qpAttr.negotiatedRnrTimeOut)
   val nakAeth = cloneOf(io.rx.checkRst.nakAeth)
   nakAeth := io.rx.checkRst.nakAeth
   when(!inputHasNak && hasRnrErr) {
@@ -414,7 +413,7 @@ class ReqRnrCheck(busWidth: BusWidth) extends Component {
 // RQ does not re-execute the interrupted request, SQ will retry it;
 // Discard duplicate Atomic if not match original PSN (should not happen);
 class DupReqHandlerAndReadAtomicRstCacheQuery(
-    busWidth: BusWidth
+    busWidth: BusWidth.Value
 ) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
@@ -551,7 +550,7 @@ class DupReqHandlerAndReadAtomicRstCacheQuery(
     }
 }
 
-class DupReadDmaReqBuilder(busWidth: BusWidth) extends Component {
+class DupReadDmaReqBuilder(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -605,7 +604,7 @@ class DupReadDmaReqBuilder(busWidth: BusWidth) extends Component {
   }
 }
 
-class ReqAddrInfoExtractor(busWidth: BusWidth) extends Component {
+class ReqAddrInfoExtractor(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -726,7 +725,7 @@ class ReqAddrInfoExtractor(busWidth: BusWidth) extends Component {
   }
 }
 
-class ReqAddrValidator(busWidth: BusWidth) extends Component {
+class ReqAddrValidator(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -860,7 +859,7 @@ class ReqAddrValidator(busWidth: BusWidth) extends Component {
 }
 
 // TODO: verify ICRC has been stripped off
-class ReqPktLenCheck(busWidth: BusWidth) extends Component {
+class ReqPktLenCheck(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -986,7 +985,7 @@ class ReqPktLenCheck(busWidth: BusWidth) extends Component {
     }
 }
 
-class ReqSplitterAndNakGen(busWidth: BusWidth) extends Component {
+class ReqSplitterAndNakGen(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -1046,7 +1045,7 @@ class ReqSplitterAndNakGen(busWidth: BusWidth) extends Component {
   )
 }
 
-class RqSendWriteDmaReqInitiator(busWidth: BusWidth) extends Component {
+class RqSendWriteDmaReqInitiator(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -1096,7 +1095,7 @@ class RqSendWriteDmaReqInitiator(busWidth: BusWidth) extends Component {
   io.txSendWrite.reqWithRxBufAndDmaInfoWithLenCheck <-/< forkSendWriteReqStream4Output
 }
 
-class RqReadAtomicDmaReqBuilder(busWidth: BusWidth) extends Component {
+class RqReadAtomicDmaReqBuilder(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -1234,7 +1233,7 @@ class ReadDmaReqInitiator() extends Component {
 }
 
 // TODO: limit coalesce response to some max number of send/write requests
-class SendWriteRespGenerator(busWidth: BusWidth) extends Component {
+class SendWriteRespGenerator(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -1423,7 +1422,7 @@ class RqSendWriteWorkCompGenerator extends Component {
   * ReadAtomicRstCacheData to downstream, also handle zero DMA length read
   * request.
   */
-class RqReadDmaRespHandler(busWidth: BusWidth) extends Component {
+class RqReadDmaRespHandler(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
 //    val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -1452,7 +1451,7 @@ class RqReadDmaRespHandler(busWidth: BusWidth) extends Component {
   }
 }
 
-class ReadRespSegment(busWidth: BusWidth) extends Component {
+class ReadRespSegment(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -1476,7 +1475,7 @@ class ReadRespSegment(busWidth: BusWidth) extends Component {
   io.readRstCacheDataAndDmaReadRespSegment <-/< segmentOut
 }
 
-class ReadRespGenerator(busWidth: BusWidth) extends Component {
+class ReadRespGenerator(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -1638,7 +1637,7 @@ class ReadRespGenerator(busWidth: BusWidth) extends Component {
 // entry, requests after the atomic may access the responders memory
 // before the requester writes the completion queue entry for the
 // ATOMIC Operation request.
-class AtomicRespGenerator(busWidth: BusWidth) extends Component {
+class AtomicRespGenerator(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())
@@ -1686,7 +1685,7 @@ class AtomicRespGenerator(busWidth: BusWidth) extends Component {
 
 // For duplicated requests, also return ACK in PSN order
 // TODO: after RNR and NAK SEQ returned, no other nested NAK send
-class RqOut(busWidth: BusWidth) extends Component {
+class RqOut(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val rxQCtrl = in(RxQCtrl())

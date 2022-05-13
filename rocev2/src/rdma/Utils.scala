@@ -2,7 +2,7 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-import BusWidth.BusWidth
+
 import ConstantSettings._
 import RdmaConstants._
 
@@ -81,7 +81,7 @@ object DmaReadRespHandler {
       inputReq: Stream[T],
       dmaReadResp: DmaReadRespBus,
       flush: Bool,
-      busWidth: BusWidth,
+      busWidth: BusWidth.Value,
       isReqZeroDmaLen: T => Bool
   ): Stream[Fragment[ReqAndDmaReadResp[T]]] = {
     val result =
@@ -95,7 +95,7 @@ object DmaReadRespHandler {
 
 class DmaReadRespHandler[T <: Data](
     reqType: HardType[T],
-    busWidth: BusWidth,
+    busWidth: BusWidth.Value,
     isReqZeroDmaLen: T => Bool
 ) extends Component {
   val io = new Bundle {
@@ -183,7 +183,7 @@ object DmaReadRespSegment {
       input: Stream[Fragment[T]],
       flush: Bool,
       pmtu: UInt,
-      busWidth: BusWidth,
+      busWidth: BusWidth.Value,
       isReqZeroDmaLen: T => Bool
   ): Stream[Fragment[T]] = {
     val result =
@@ -198,7 +198,7 @@ object DmaReadRespSegment {
 // Handle zero DMA length request/response too
 class DmaReadRespSegment[T <: Data](
     fragType: HardType[T],
-    busWidth: BusWidth,
+    busWidth: BusWidth.Value,
     isReqZeroDmaLen: T => Bool
 ) extends Component {
   val io = new Bundle {
@@ -241,7 +241,7 @@ object CombineHeaderAndDmaResponse {
       reqAndDmaReadRespSegment: Stream[Fragment[ReqAndDmaReadResp[T]]],
       qpAttr: QpAttrData,
       flush: Bool,
-      busWidth: BusWidth,
+      busWidth: BusWidth.Value,
 //      pktNumFunc: (T, QpAttrData) => UInt,
       headerGenFunc: (
           T,
@@ -265,7 +265,7 @@ object CombineHeaderAndDmaResponse {
 
 class CombineHeaderAndDmaResponse[T <: Data](
     reqType: HardType[T],
-    busWidth: BusWidth,
+    busWidth: BusWidth.Value,
 //    pktNumFunc: (T, QpAttrData) => UInt,
     headerGenFunc: (
         T,
@@ -567,7 +567,7 @@ object StreamAddHeader {
   def apply[T <: Data](
       inputStream: Stream[Fragment[DataAndMty]],
       inputHeader: Stream[HeaderDataAndMty[T]],
-      busWidth: BusWidth
+      busWidth: BusWidth.Value
   ): Stream[Fragment[HeaderDataAndMty[T]]] = {
     require(
       widthOf(inputStream.data) == busWidth.id,
@@ -581,8 +581,10 @@ object StreamAddHeader {
   }
 }
 
-class StreamAddHeader[T <: Data](headerType: HardType[T], busWidth: BusWidth)
-    extends Component {
+class StreamAddHeader[T <: Data](
+    headerType: HardType[T],
+    busWidth: BusWidth.Value
+) extends Component {
   val io = new Bundle {
     val inputStream = slave(Stream(Fragment(DataAndMty(busWidth))))
     val inputHeader = slave(Stream(HeaderDataAndMty(headerType, busWidth)))
@@ -771,7 +773,7 @@ object StreamRemoveHeader {
   def apply(
       inputStream: Stream[Fragment[DataAndMty]],
       headerLenBytes: UInt,
-      busWidth: BusWidth
+      busWidth: BusWidth.Value
   ): Stream[Fragment[DataAndMty]] = {
     val result = new StreamRemoveHeader(busWidth)
     result.io.inputStream << inputStream
@@ -780,7 +782,7 @@ object StreamRemoveHeader {
   }
 }
 
-class StreamRemoveHeader(busWidth: BusWidth) extends Component {
+class StreamRemoveHeader(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val inputStream = slave(Stream(Fragment(DataAndMty(busWidth))))
     // Stream()
@@ -1502,13 +1504,13 @@ object setAllBits {
 }
 
 object mergeRdmaHeader {
-  def apply(busWidth: BusWidth, baseHeader: RdmaHeader): Bits =
+  def apply(busWidth: BusWidth.Value, baseHeader: RdmaHeader): Bits =
     new Composite(baseHeader, "mergeRdmaHeader1") {
       val result = baseHeader.asBigEndianBits().resize(busWidth.id)
     }.result
 
   def apply(
-      busWidth: BusWidth,
+      busWidth: BusWidth.Value,
       baseHeader: RdmaHeader,
       extHeader: RdmaHeader
   ): Bits = new Composite(baseHeader, "mergeRdmaHeader2") {
@@ -1517,7 +1519,7 @@ object mergeRdmaHeader {
   }.result
 
   def apply(
-      busWidth: BusWidth,
+      busWidth: BusWidth.Value,
       baseHeader: RdmaHeader,
       extHeader1: RdmaHeader,
       extHeader2: RdmaHeader
@@ -1529,20 +1531,24 @@ object mergeRdmaHeader {
 }
 
 object mergeRdmaHeaderMty {
-  def apply(busWidth: BusWidth, baseHeaderMty: Bits): Bits =
+  def apply(busWidth: BusWidth.Value, baseHeaderMty: Bits): Bits =
     new Composite(baseHeaderMty, "mergeRdmaHeaderMty1") {
       val busWidthBytes = busWidth.id / BYTE_WIDTH
       val result = baseHeaderMty.resize(busWidthBytes)
     }.result
 
-  def apply(busWidth: BusWidth, baseHeaderMty: Bits, extHeaderMty: Bits): Bits =
+  def apply(
+      busWidth: BusWidth.Value,
+      baseHeaderMty: Bits,
+      extHeaderMty: Bits
+  ): Bits =
     new Composite(baseHeaderMty, "mergeRdmaHeaderMty2") {
       val busWidthBytes = busWidth.id / BYTE_WIDTH
       val result = (baseHeaderMty ## extHeaderMty).resize(busWidthBytes)
     }.result
 
   def apply(
-      busWidth: BusWidth,
+      busWidth: BusWidth.Value,
       baseHeaderMty: Bits,
       extHeaderMty1: Bits,
       extHeaderMty2: Bits
@@ -1859,7 +1865,7 @@ object reqPadCountCheck {
       padCount: UInt,
       pktMty: Bits,
       isLastFrag: Bool,
-      busWidth: BusWidth
+      busWidth: BusWidth.Value
   ): Bool =
     new Composite(padCount, "reqPadCountCheck") {
       val paddingCheck = True
@@ -1891,14 +1897,13 @@ object reqPadCountCheck {
     }.result
 }
 
-// TODO: to remove?
 object respPadCountCheck {
   def apply(
       opcode: Bits,
       padCount: UInt,
       pktMty: Bits,
       isLastFrag: Bool,
-      busWidth: BusWidth
+      busWidth: BusWidth.Value
   ): Bool =
     new Composite(padCount, "respPadCountCheck") {
       val paddingCheck = True

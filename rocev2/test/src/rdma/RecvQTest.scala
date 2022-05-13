@@ -2043,7 +2043,7 @@ class DupReqHandlerAndReadAtomicRstCacheQueryTest extends AnyFunSuite {
 //        println(f"${simTime()} time: opcode=${opcode}")
       }
       onStreamFire(dut.io.rx.checkRst, dut.clockDomain) {
-        val opcode = if (inputReadOrAtomicReq) {
+        val respOpCode = if (inputReadOrAtomicReq) {
           OpCode(dut.io.rx.checkRst.pktFrag.bth.opcodeFull.toInt)
         } else {
           OpCode.ATOMIC_ACKNOWLEDGE
@@ -2052,7 +2052,7 @@ class DupReqHandlerAndReadAtomicRstCacheQueryTest extends AnyFunSuite {
         inputQueue.enqueue(
           (
             dut.io.rx.checkRst.pktFrag.bth.psn.toInt,
-            opcode
+            respOpCode
           )
         )
       }
@@ -2060,13 +2060,13 @@ class DupReqHandlerAndReadAtomicRstCacheQueryTest extends AnyFunSuite {
       val readAtomicRstCacheRespQueue = if (readAtomicRstCacheQuerySuccess) {
         ReadAtomicRstCacheSim.alwaysStreamFireAndRespSuccess(
           dut.io.readAtomicRstCache,
-          opcode,
+//          opcode,
           dut.clockDomain
         )
       } else {
         ReadAtomicRstCacheSim.alwaysStreamFireAndRespFailure(
           dut.io.readAtomicRstCache,
-          opcode,
+//          opcode,
           dut.clockDomain
         )
       }

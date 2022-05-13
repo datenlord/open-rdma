@@ -4,12 +4,11 @@ import spinal.core._
 import spinal.lib._
 import spinal.lib.fsm._
 
-import BusWidth.BusWidth
 //import ConstantSettings._
 import RdmaConstants._
 import StreamVec._
 
-class ReqRespSplitter(busWidth: BusWidth) extends Component {
+class ReqRespSplitter(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val rx = slave(RdmaDataBus(busWidth))
     val txReq = master(RdmaDataBus(busWidth))
@@ -17,10 +16,11 @@ class ReqRespSplitter(busWidth: BusWidth) extends Component {
   }
 
   // val isReq = OpCode.isReqPkt(io.rx.pktFrag.bth.opcode)
-  val isResp = OpCode.isRespPkt(io.rx.pktFrag.bth.opcode) || OpCode.isCnpPkt(
-    io.rx.pktFrag.bth.transport,
-    io.rx.pktFrag.bth.opcode
-  )
+  val isResp = OpCode.isRespPkt(io.rx.pktFrag.bth.opcode) ||
+    OpCode.isCnpPkt(
+      io.rx.pktFrag.bth.transport,
+      io.rx.pktFrag.bth.opcode
+    )
   Vec(io.txReq.pktFrag, io.txResp.pktFrag) <-/< StreamDemux(
     io.rx.pktFrag,
     select = isResp.asUInt,
@@ -29,7 +29,7 @@ class ReqRespSplitter(busWidth: BusWidth) extends Component {
 }
 
 // CNP format, Figure 349, pp. 1948, spec 1.4
-class FlowCtrl(busWidth: BusWidth) extends Component {
+class FlowCtrl(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val resp = slave(Flow(Fragment(RdmaDataPkt(busWidth))))
@@ -68,7 +68,7 @@ class QpCtrl extends Component {
 
   when(io.qpCreateOrModify.req.fire) {
     // TODO: modify QP attributes by mask
-    // TODO: set min RNR timeout
+    // TODO: set QP_MAX_DEST_RD_ATOMIC
     // TODO: set response timeout
     qpAttr := io.qpCreateOrModify.req.qpAttr
   }
@@ -78,9 +78,46 @@ class QpCtrl extends Component {
     result.successOrFailure := True
     result
   }
+  when(io.qpCreateOrModify.req.fire) {
+    when(
+      io.qpCreateOrModify.req.modifyMask.include(QpAttrMaskEnum.QP_DEST_QPN)
+    ) {
+      qpAttr.dqpn := io.qpCreateOrModify.req.qpAttr.dqpn
+    }
 
-  // retryDone just means finishing re-send requests, not means all retry responses received
-//  val retryDone = False
+    when(
+      io.qpCreateOrModify.req.modifyMask.include(QpAttrMaskEnum.QP_TIMEOUT)
+    ) {
+      qpAttr.respTimeOut := io.qpCreateOrModify.req.qpAttr.respTimeOut
+    }
+
+    when(
+      io.qpCreateOrModify.req.modifyMask
+        .include(QpAttrMaskEnum.QP_MIN_RNR_TIMER)
+    ) {
+      qpAttr.minRnrTimeOut := io.qpCreateOrModify.req.qpAttr.minRnrTimeOut
+    }
+
+    when(
+      io.qpCreateOrModify.req.modifyMask.include(QpAttrMaskEnum.QP_RETRY_CNT)
+    ) {
+      qpAttr.maxRetryCnt := io.qpCreateOrModify.req.qpAttr.maxRetryCnt
+    }
+
+    when(
+      io.qpCreateOrModify.req.modifyMask.include(QpAttrMaskEnum.QP_RNR_RETRY)
+    ) {
+      qpAttr.maxRnrRetryCnt := io.qpCreateOrModify.req.qpAttr.maxRnrRetryCnt
+    }
+
+    when(io.qpCreateOrModify.req.modifyMask.include(QpAttrMaskEnum.QP_RQ_PSN)) {
+      qpAttr.epsn := io.qpCreateOrModify.req.qpAttr.epsn
+    }
+
+    when(io.qpCreateOrModify.req.modifyMask.include(QpAttrMaskEnum.QP_SQ_PSN)) {
+      qpAttr.npsn := io.qpCreateOrModify.req.qpAttr.npsn
+    }
+  }
 
   def errStateFsm() = new StateMachine {
     val COALESCE: State = new State with EntryPoint {
@@ -396,6 +433,7 @@ class QpCtrl extends Component {
       onEntry {
         qpAttr.retryReason := io.sqNotifier.retry.reason
         qpAttr.retryStartPsn := io.sqNotifier.retry.psnStart
+        qpAttr.receivedRnrTimeOut := io.sqNotifier.retry.receivedRnrTimeOut
       }
       whenIsActive {
         // retryFlushDone just means first retry WR sent, it needs to wait for new responses, stop flushing responses
@@ -499,7 +537,7 @@ class QpCtrl extends Component {
   io.rxQCtrl.flush := io.rxQCtrl.stateErrFlush || io.rxQCtrl.rnrFlush || io.rxQCtrl.nakSeqTrigger
 }
 
-class QP(busWidth: BusWidth) extends Component {
+class QP(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = out(QpAttrData())
     val qpCreateOrModify = slave(QpCreateOrModifyBus())

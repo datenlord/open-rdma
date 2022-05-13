@@ -3,7 +3,6 @@ package rdma
 import spinal.core._
 import spinal.lib._
 
-import BusWidth.BusWidth
 import ConstantSettings._
 import RdmaConstants._
 import StreamVec._
@@ -20,7 +19,7 @@ import StreamVec._
 // - PKey matches.
 // TODO: should support PKey?
 // TODO: check whether it still needs to process pending requests/responses when QP state is ERR
-class HeadVerifier(numMaxQPs: Int, busWidth: BusWidth) extends Component {
+class HeadVerifier(numMaxQPs: Int, busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttrVec = in(Vec(QpAttrData(), numMaxQPs))
     val rx = slave(RdmaDataBus(busWidth))
@@ -70,7 +69,7 @@ class AllQpCtrl(numMaxQPs: Int) extends Component {
   val foundQpModify = modifyQpOH.orR
 
   val isQpCreation =
-    io.qpCreateOrModify.req.qpAttr.modifyMask.include(QpAttrMaskEnum.QP_CREATE)
+    io.qpCreateOrModify.req.modifyMask.include(QpAttrMaskEnum.QP_CREATE)
   val qpSelIdxOH = isQpCreation ? availableQpOH | modifyQpOH
   when(io.qpCreateOrModify.req.valid) {
     when(isQpCreation) {
@@ -101,6 +100,7 @@ class AllQpCtrl(numMaxQPs: Int) extends Component {
     io.qpCreateOrModify.req.translateWith {
       val result = cloneOf(io.qpCreateOrModify.req.payloadType)
       result.qpAttr := io.qpCreateOrModify.req.qpAttr
+      result.modifyMask := io.qpCreateOrModify.req.modifyMask
       when(io.qpCreateOrModify.req.valid && isQpCreation && foundQpAvailable) {
         result.qpAttr.sqpn := nextQpnReg
       }
@@ -113,7 +113,7 @@ class AllQpCtrl(numMaxQPs: Int) extends Component {
     .on(Vec(io.qpCreateOrModifyVec.map(_.resp)))
 }
 
-class UdpRdmaPktConverter(numMaxQPs: Int, busWidth: BusWidth)
+class UdpRdmaPktConverter(numMaxQPs: Int, busWidth: BusWidth.Value)
     extends Component {
   val io = new Bundle {
     val qpAttrVec = in(Vec(QpAttrData(), numMaxQPs))
@@ -220,7 +220,7 @@ class AllAddrCache(numMaxPDs: Int, numMaxMRsPerPD: Int) extends Component {
 }
 
 // TODO: RoCE should have QP1?
-class AllQpModules(numMaxQPs: Int, busWidth: BusWidth) extends Component {
+class AllQpModules(numMaxQPs: Int, busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpCreateOrModify = slave(QpCreateOrModifyBus())
     val pdCreateOrDelete = slave(PdCreateOrDeleteBus())
@@ -295,7 +295,7 @@ class AllQpModules(numMaxQPs: Int, busWidth: BusWidth) extends Component {
   )
 }
 
-class RoCEv2(numMaxQPs: Int, busWidth: BusWidth) extends Component {
+class RoCEv2(numMaxQPs: Int, busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpCreateOrModify = slave(QpCreateOrModifyBus())
     val pdCreateOrDelete = slave(PdCreateOrDeleteBus())
