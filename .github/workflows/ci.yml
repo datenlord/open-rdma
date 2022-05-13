@@ -19,7 +19,13 @@ jobs:
           # Local install Cocotb and set PATH env
           pip3 install cocotb
           export PATH="$HOME/.local/bin:$PATH"
-          CI_ENV="true" ./run.sh
+          TEST_LOG="test.log"
+          CI_ENV="true" ./run.sh 2>&1 | tee $TEST_LOG
+          if [ `grep -c FAILURE $TEST_LOG | cat` -ne 0 ]; then
+            grep FAILURE $TEST_LOG
+            echo "there is assertion failure uncaught!"
+            exit 1
+          fi
       - name: Setup tmate session
         if: ${{ failure() }}
         uses: mxschmitt/action-tmate@v3

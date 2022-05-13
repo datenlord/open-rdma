@@ -3,12 +3,11 @@ package rdma
 import spinal.core._
 import spinal.lib._
 
-import BusWidth.BusWidth
 import ConstantSettings._
 import RdmaConstants._
 
 // TODO: if retrying, SQ should wait until retry go-back-to-N finished?
-class SendQ(busWidth: BusWidth) extends Component {
+class SendQ(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
@@ -62,7 +61,7 @@ class SendQ(busWidth: BusWidth) extends Component {
   io.tx << normalAndRetryWorkReqHandler.io.tx
 }
 
-class NormalAndRetryWorkReqHandler(busWidth: BusWidth) extends Component {
+class NormalAndRetryWorkReqHandler(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())
@@ -374,7 +373,7 @@ class WorkReqCacheAndOutPsnRangeHandler extends Component {
   io.atomicWorkReqOut <-/< threeStreams(atomicWorkReqIdx)
 }
 
-class SqOut(busWidth: BusWidth) extends Component {
+class SqOut(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
     val qpAttr = in(QpAttrData())
     val txQCtrl = in(TxQCtrl())

@@ -75,7 +75,11 @@ object ConstantSettings {
   val MAX_SGL_LEN_WIDTH = 8
   val MAX_SG_LEN_WIDTH = 12 // Max SG size is 4K bytes, a page size
 
-  require(PENDING_REQ_NUM > MAX_PENDING_READ_ATOMIC_REQ_NUM)
+  require(
+    PENDING_REQ_NUM > MAX_PENDING_READ_ATOMIC_REQ_NUM,
+    f"PENDING_REQ_NUM=${PENDING_REQ_NUM} should > MAX_PENDING_READ_ATOMIC_REQ_NUM=${MAX_PENDING_READ_ATOMIC_REQ_NUM}"
+  )
+  // TODO: find out the meaning of this requirement
   require((2 << MAX_WR_NUM_WIDTH) >= PENDING_REQ_NUM)
 
 //  val WORK_REQ_CACHE_QUERY_DELAY_CYCLE = 4
@@ -91,8 +95,17 @@ object ConstantSettings {
   val MAX_MR_PER_PD = 8
   // require(MAX_PD <= (1 << PD_ID_WIDTH))
 
-  // Test related settings
-  val MATCH_CNT = 1000
+  // Default QP attributes
+  val DEFAULT_MIN_RNR_TIME_OUT = 1 // 1 means 0.01ms
+  val DEFAULT_RNR_TIME_OUT = 1 // 1 means 0.01ms
+  val DEFAULT_RESP_TIME_OUT = 17 // 17 means 536.8709ms
+  val DEFAULT_MAX_RETRY_CNT = 3
+  val DEFAULT_MAX_RNR_RETRY_CNT = 3
+
+  require(
+    DEFAULT_RNR_TIME_OUT >= DEFAULT_MIN_RNR_TIME_OUT,
+    f"DEFAULT_RNR_TIME_OUT=${DEFAULT_RNR_TIME_OUT} should >= DEFAULT_MIN_RNR_TIME_OUT=${DEFAULT_MIN_RNR_TIME_OUT}"
+  )
 
   // Non-changeable settings
   val BYTE_WIDTH = 8
@@ -113,7 +126,7 @@ object ConstantSettings {
   val PMTU_WIDTH = 4 // log2Up(log2Up(4096)) = log2Up(12) = 4
   // val MAX_PKT_NUM_WIDTH = 24 // packet max length = 2^31, min PMUT size = 256 = 2^8, max packet number = 2^(31 - 8)
 
-  val QP_STATE_WIDTH = 3
+//  val QP_STATE_WIDTH = 3
 
 //  val QP_ATTR_MASK_WIDTH = 26
 

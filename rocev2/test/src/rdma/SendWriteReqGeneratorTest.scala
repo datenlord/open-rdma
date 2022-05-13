@@ -2,7 +2,7 @@ package rdma
 
 import spinal.core._
 import spinal.core.sim._
-import ConstantSettings._
+//import ConstantSettings._
 import StreamSimUtil._
 import RdmaTypeReDef._
 import SimSettings._

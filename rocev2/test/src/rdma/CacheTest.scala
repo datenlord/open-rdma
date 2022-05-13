@@ -362,19 +362,17 @@ class FifoTest extends AnyFunSuite {
           }
           dut.io.write.valid #= false
           dut.clockDomain.waitSampling()
-
-          println(
-            f"${simTime()} time: push to FIFO until full=${dut.io.full.toBoolean}"
-          )
+//          println(
+//            f"${simTime()} time: push to FIFO until full=${dut.io.full.toBoolean}"
+//          )
 
           // Clear FIFO
           dut.io.read.ready #= true
           dut.clockDomain.waitSamplingWhere(dut.io.empty.toBoolean)
           dut.io.read.ready #= false
-
-          println(
-            f"${simTime()} time: pop from FIFO until empty=${dut.io.empty.toBoolean}"
-          )
+//          println(
+//            f"${simTime()} time: pop from FIFO until empty=${dut.io.empty.toBoolean}"
+//          )
         }
       }
 
