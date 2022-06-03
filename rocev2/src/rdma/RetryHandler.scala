@@ -2,9 +2,10 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-
 import ConstantSettings._
 import RdmaConstants._
+
+import scala.language.postfixOps
 // pp.282 spec 1.4
 // The retried request may only reread those portions that were not
 // successfully responded to the first time.
@@ -56,7 +57,7 @@ class RetryHandler extends Component {
     retryWorkReqValid = io.retryWorkReqIn.valid
   )
 
-  io.retryWorkReqOut <-/< io.retryWorkReqIn ~~ { payloadData =>
+  io.retryWorkReqOut <-/< io.retryWorkReqIn.map { payloadData =>
     val result = cloneOf(io.retryWorkReqOut.payloadType)
     result := payloadData.scanOutData
 
@@ -141,7 +142,7 @@ class ReadAtomicGeneratorAndDmaReadInitiator extends Component {
   )
   io.outSendWriteWorkReq <-/< sendWriteWorkReq4Out
 
-  io.dmaRead.req <-/< sendWriteWorkReq4Dma ~~ { payloadData =>
+  io.dmaRead.req <-/< sendWriteWorkReq4Dma.map { payloadData =>
     val result = cloneOf(io.dmaRead.req.payloadType)
     result.set(
       initiator = DmaInitiator.SQ_RD,
@@ -154,8 +155,8 @@ class ReadAtomicGeneratorAndDmaReadInitiator extends Component {
   }
 
   io.txReadReq <-/< io.readWorkReq
-    .throwWhen(io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush) ~~ {
-    payloadData =>
+    .throwWhen(io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush)
+    .map { payloadData =>
       val result = ReadReq().set(
         dqpn = io.qpAttr.dqpn,
         psn = payloadData.psnStart,
@@ -164,11 +165,11 @@ class ReadAtomicGeneratorAndDmaReadInitiator extends Component {
         dlen = payloadData.workReq.lenBytes
       )
       result
-  }
+    }
 
   io.txAtomicReq <-/< io.atomicWorkReq
-    .throwWhen(io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush) ~~ {
-    payloadData =>
+    .throwWhen(io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush)
+    .map { payloadData =>
       val isCompSwap =
         payloadData.workReq.opcode === WorkReqOpCode.ATOMIC_CMP_AND_SWP
       val result = AtomicReq().set(
@@ -181,7 +182,7 @@ class ReadAtomicGeneratorAndDmaReadInitiator extends Component {
         swap = payloadData.workReq.swap
       )
       result
-  }
+    }
 }
 
 class SqDmaReadRespHandler(busWidth: BusWidth.Value) extends Component {
@@ -199,8 +200,10 @@ class SqDmaReadRespHandler(busWidth: BusWidth.Value) extends Component {
   val handlerOutput = DmaReadRespHandler(
     io.cachedWorkReq,
     io.dmaReadResp,
+    // TODO: why flush by retry?
     io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush,
     busWidth,
+    reqQueueLen = PENDING_REQ_FIFO_DEPTH,
     isReqZeroDmaLen = (req: CachedWorkReq) => req.workReq.lenBytes === 0
   )
   io.cachedWorkReqAndDmaReadResp <-/< handlerOutput
@@ -245,7 +248,7 @@ class SendWriteReqSegment(busWidth: BusWidth.Value) extends Component {
     assert(
       assertion = isSendWorkReq || isWriteWorkReq,
       message =
-        L"${REPORT_TIME} time: the WR for retry here should be send/write, but WR opcode=${cachedWorkReq.workReq.opcode}",
+        L"${REPORT_TIME} time: the WR for retry here should be send/write, but WR opcode=${cachedWorkReq.workReq.opcode}".toSeq,
       severity = FAILURE
     )
   }
@@ -295,7 +298,7 @@ abstract class SendWriteReqGenerator(busWidth: BusWidth.Value)
       assertion =
         input.cachedWorkReq.workReq.lenBytes === input.dmaReadResp.lenBytes,
       message =
-        L"${REPORT_TIME} time: input.cachedWorkReq.workReq.lenBytes=${input.cachedWorkReq.workReq.lenBytes} should equal input.dmaReadResp.lenBytes=${input.dmaReadResp.lenBytes}",
+        L"${REPORT_TIME} time: input.cachedWorkReq.workReq.lenBytes=${input.cachedWorkReq.workReq.lenBytes} should equal input.dmaReadResp.lenBytes=${input.dmaReadResp.lenBytes}".toSeq,
       severity = FAILURE
     )
   }
@@ -337,7 +340,7 @@ class SendReqGenerator(busWidth: BusWidth.Value)
     assert(
       assertion = isSendWorkReq,
       message =
-        L"${REPORT_TIME} time: the WR opcode=${io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode} should be send request",
+        L"${REPORT_TIME} time: the WR opcode=${io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode} should be send request".toSeq,
       severity = FAILURE
     )
   }
@@ -474,7 +477,7 @@ class WriteReqGenerator(busWidth: BusWidth.Value)
     assert(
       assertion = isWriteWorkReq,
       message =
-        L"${REPORT_TIME} time: the WR opcode=${io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode} should be write request",
+        L"${REPORT_TIME} time: the WR opcode=${io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode} should be write request".toSeq,
       severity = FAILURE
     )
   }

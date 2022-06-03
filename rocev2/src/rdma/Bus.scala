@@ -2,10 +2,11 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-
 import RdmaConstants._
 import ConstantSettings._
 import StreamVec._
+
+import scala.language.postfixOps
 
 sealed abstract class ReqRespBus[Req <: Data, Resp <: Data](
     reqType: HardType[Req],
@@ -28,7 +29,7 @@ case class DevMetaData() extends Bundle {
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
-    maxPendingReqNum := PENDING_REQ_NUM
+    maxPendingReqNum := MAX_PENDING_REQ_NUM
     maxPendingReadAtomicReqNum := MAX_PENDING_READ_ATOMIC_REQ_NUM
     minRnrTimeOut := MIN_RNR_TIMEOUT
     this
@@ -46,7 +47,7 @@ case class SqRetryNotifier() extends Bundle {
       assert(
         assertion = reason =/= RetryReason.NO_RETRY,
         message =
-          L"${REPORT_TIME} time: SqRetryNotifier.pulse=${pulse}, but retry reason=${reason} shows no retry",
+          L"${REPORT_TIME} time: SqRetryNotifier.pulse=${pulse}, but retry reason=${reason} shows no retry".toSeq,
         severity = FAILURE
       )
     }
@@ -77,7 +78,7 @@ case class SqRetryNotifier() extends Bundle {
       assert(
         assertion = this.psnStart =/= that.psnStart,
         message =
-          L"${REPORT_TIME} time: impossible to have two SqRetryNotifier with the same PSN=${this.psnStart}",
+          L"${REPORT_TIME} time: impossible to have two SqRetryNotifier with the same PSN=${this.psnStart}".toSeq,
         severity = FAILURE
       )
     }
@@ -129,7 +130,7 @@ case class SqErrNotifier() extends Bundle {
     } otherwise {
       report(
         message =
-          L"${REPORT_TIME} time: illegal AETH to set SqErrNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}",
+          L"${REPORT_TIME} time: illegal AETH to set SqErrNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}".toSeq,
         severity = FAILURE
       )
       setLocalErr()
@@ -184,7 +185,7 @@ case class SqErrNotifier() extends Bundle {
       assert(
         assertion = errType =/= SqErrType.NO_ERR,
         message =
-          L"${REPORT_TIME} time: SqErrNotifier.pulse=${pulse}, but errType=${errType} shows no error",
+          L"${REPORT_TIME} time: SqErrNotifier.pulse=${pulse}, but errType=${errType} shows no error".toSeq,
         severity = FAILURE
       )
     }
@@ -197,7 +198,7 @@ case class SqErrNotifier() extends Bundle {
     assert(
       assertion = !(this.hasFatalErr() && that.hasFatalErr()),
       message =
-        L"${REPORT_TIME} time: cannot merge two SqErrNotifier both have fatal error, this.pulse=${this.pulse}, this.errType=${this.errType}, that.pulse=${that.pulse}, that.errType=${that.errType}",
+        L"${REPORT_TIME} time: cannot merge two SqErrNotifier both have fatal error, this.pulse=${this.pulse}, this.errType=${this.errType}, that.pulse=${that.pulse}, that.errType=${that.errType}".toSeq,
       severity = FAILURE
     )
     val result = SqErrNotifier()
@@ -226,19 +227,21 @@ case class RqNakNotifier() extends Bundle {
       setRnrNak(pulse, preOpCode, psn)
     } elsewhen (aeth.isSeqNak()) {
       setSeqErr(pulse, preOpCode, psn)
-    } elsewhen (aeth.isInvReqNak() && pulse) {
-      setInvReq()
-    } elsewhen (aeth.isRmtAccNak() && pulse) {
-      setRmtAcc()
-    } elsewhen (aeth.isRmtOpNak() && pulse) {
-      setRmtOp()
-    } otherwise {
-      report(
-        message =
-          L"${REPORT_TIME} time: illegal AETH to set NakNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}",
-        severity = ERROR
-      )
-      this.assignDontCare() // setInvReq()
+    } elsewhen (pulse) {
+      when(aeth.isInvReqNak()) {
+        setInvReq()
+      } elsewhen (aeth.isRmtAccNak()) {
+        setRmtAcc()
+      } elsewhen (aeth.isRmtOpNak()) {
+        setRmtOp()
+      } otherwise {
+        report(
+          message =
+            L"${REPORT_TIME} time: illegal AETH to set NakNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}".toSeq,
+          severity = FAILURE
+        )
+        this.assignDontCare() // To avoid latch
+      }
     }
     this
   }
@@ -896,7 +899,7 @@ case class DmaReadBus(busWidth: BusWidth.Value)
 
   def arbitReq(dmaRdReqVec: Vec[Stream[DmaReadReq]]) = new Area {
     val dmaRdReqSel =
-      StreamArbiterFactory.roundRobin.transactionLock.on(dmaRdReqVec)
+      StreamArbiterFactory().roundRobin.transactionLock.on(dmaRdReqVec)
     req <-/< dmaRdReqSel
   }
 
@@ -907,40 +910,6 @@ case class DmaReadBus(busWidth: BusWidth.Value)
       sqRead: Stream[Fragment[DmaReadResp]]
 //      sqDup: Stream[Fragment[DmaReadResp]]
   ) = new Area {
-    /*
-    val txSel = UInt(3 bits)
-    val (rqReadIdx, rqAtomicReadIdx, sqReadIdx, sqDupIdx, otherIdx) =
-      (0, 1, 2, 3, 4)
-
-    switch(resp.initiator) {
-//      is(DmaInitiator.RQ_RD) {
-//        txSel := rqReadIdx
-//      }
-//      is(DmaInitiator.RQ_DUP) {
-//        txSel := rqDupIdx
-//      }
-      is(DmaInitiator.RQ_RD, DmaInitiator.RQ_DUP) {
-        txSel := rqReadIdx
-      }
-      is(DmaInitiator.RQ_ATOMIC_RD) {
-        txSel := rqAtomicReadIdx
-      }
-      is(DmaInitiator.SQ_RD) {
-        txSel := sqReadIdx
-      }
-      is(DmaInitiator.SQ_DUP) {
-        txSel := sqDupIdx
-      }
-      default {
-        report(
-          message =
-            L"${REPORT_TIME} time: invalid DMA initiator=${resp.initiator}, should be RQ_RD, RQ_DUP, RQ_ATOMIC_RD, SQ_RD, SQ_DUP",
-          severity = FAILURE
-        )
-        txSel := otherIdx
-      }
-    }
-     */
     val readRespDeMuxOH = Vec(
       resp.initiator === DmaInitiator.RQ_RD || resp.initiator === DmaInitiator.RQ_DUP,
       resp.initiator === DmaInitiator.RQ_ATOMIC_RD,
@@ -962,7 +931,7 @@ case class DmaReadBus(busWidth: BusWidth.Value)
       qpAttrVec: Vec[QpAttrData]
   ) = new Area {
     val dmaRdReqSel =
-      StreamArbiterFactory.roundRobin.transactionLock.on(dmaRdReqVec)
+      StreamArbiterFactory().roundRobin.transactionLock.on(dmaRdReqVec)
     req <-/< dmaRdReqSel
 
     val dmaRdRespOH = qpAttrVec.map(_.sqpn === resp.sqpn)
@@ -971,7 +940,7 @@ case class DmaReadBus(busWidth: BusWidth.Value)
       assert(
         assertion = foundRespTargetQp,
         message =
-          L"${REPORT_TIME} time: failed to find DMA read response target QP with QPN=${resp.sqpn}",
+          L"${REPORT_TIME} time: failed to find DMA read response target QP with QPN=${resp.sqpn}".toSeq,
         severity = FAILURE
       )
     }
@@ -1103,7 +1072,7 @@ case class DmaWriteBus(busWidth: BusWidth.Value)
       assert(
         assertion = foundRespTargetQp,
         message =
-          L"${REPORT_TIME} time: failed to find DMA write response target QP with QPN=${resp.sqpn}",
+          L"${REPORT_TIME} time: failed to find DMA write response target QP with QPN=${resp.sqpn}".toSeq,
         severity = FAILURE
       )
     }
@@ -1113,7 +1082,7 @@ case class DmaWriteBus(busWidth: BusWidth.Value)
   def arbitReq(dmaWrReqVec: Vec[Stream[Fragment[DmaWriteReq]]]) =
     new Area {
       val dmaWrReqSel =
-        StreamArbiterFactory.roundRobin.fragmentLock.on(dmaWrReqVec)
+        StreamArbiterFactory().roundRobin.fragmentLock.on(dmaWrReqVec)
       req <-/< dmaWrReqSel
     }
 
@@ -1143,7 +1112,7 @@ case class DmaWriteBus(busWidth: BusWidth.Value)
       default {
         report(
           message =
-            L"${REPORT_TIME} time: invalid DMA initiator=${resp.initiator}, should be RQ_WR, RQ_ATOMIC_WR, RQ_WR, SQ_ATOMIC_WR",
+            L"${REPORT_TIME} time: invalid DMA initiator=${resp.initiator}, should be RQ_WR, RQ_ATOMIC_WR, RQ_WR, SQ_ATOMIC_WR".toSeq,
           severity = FAILURE
         )
         txSel := otherIdx
@@ -1467,7 +1436,7 @@ case class ReadAtomicRstCacheData() extends Bundle {
   val swap = Bits(LONG_WIDTH bits)
   val comp = Bits(LONG_WIDTH bits)
   val atomicRst = Bits(LONG_WIDTH bits)
-  val duplicate = Bool()
+  val dupReq = Bool()
 
   def setInitVal(): this.type = {
     psnStart := 0
@@ -1480,7 +1449,7 @@ case class ReadAtomicRstCacheData() extends Bundle {
     swap := 0
     comp := 0
     atomicRst := 0
-    duplicate := False
+    dupReq := False
     this
   }
 }
@@ -1744,8 +1713,8 @@ case class WorkComp() extends Bundle {
     } otherwise {
       report(
         message =
-          L"${REPORT_TIME} time: unmatched WC opcode at RQ side for request opcode=${reqOpCode}",
-        severity = ERROR
+          L"${REPORT_TIME} time: unmatched WC opcode at RQ side for request opcode=${reqOpCode}".toSeq,
+        severity = FAILURE
       )
       opcode.assignDontCare()
     }
@@ -1814,6 +1783,7 @@ case class WorkComp() extends Bundle {
     sqpn := 0
     dqpn := 0
     flags := WorkCompFlags.NO_FLAGS
+    status := WorkCompStatus.FATAL_ERR
     immDtOrRmtKeyToInv := 0
     this
   }
@@ -2244,7 +2214,7 @@ case class RqReqWithRxBuf(busWidth: BusWidth.Value) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
-  val nakAeth = AETH()
+  val ackAeth = AETH()
   // RxWorkReq is only valid at the first or only fragment for send,
   // or valid at the last or only fragment for write imm
   val rxBufValid = Bool()
@@ -2274,7 +2244,7 @@ case class RqReqCheckStageOutput(busWidth: BusWidth.Value) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
-  val nakAeth = AETH()
+  val ackAeth = AETH()
 }
 
 case class RqReqCommCheckRstBus(busWidth: BusWidth.Value)
@@ -2311,7 +2281,7 @@ case class RqReqWithRxBufAndVirtualAddrInfo(busWidth: BusWidth.Value)
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
-  val nakAeth = AETH()
+  val ackAeth = AETH()
   // RxWorkReq is only valid at the first or only fragment for send,
   // or valid at the last or only fragment for write imm
   val rxBufValid = Bool()
@@ -2355,7 +2325,7 @@ case class RqReqWithRxBufAndDmaInfo(busWidth: BusWidth.Value) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
-  val nakAeth = AETH()
+  val ackAeth = AETH()
   // RxWorkReq is only valid at the first or only fragment for send,
   // or valid at the last or only fragment for write imm
   val rxBufValid = Bool()
@@ -2385,7 +2355,7 @@ case class RqReqWithRxBufAndDmaInfoWithLenCheck(busWidth: BusWidth.Value)
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
-  val nakAeth = AETH()
+  val ackAeth = AETH()
   // reqTotalLenValid is only for the last fragment of send/write request packet
   val reqTotalLenValid = Bool()
   val reqTotalLenBytes = UInt(RDMA_MAX_LEN_WIDTH bits)
@@ -2395,6 +2365,15 @@ case class RqReqWithRxBufAndDmaInfoWithLenCheck(busWidth: BusWidth.Value)
   val rxBuf = RxWorkReq()
   // DmaInfo is always valid for send/write/read/atomic requests
   val dmaInfo = DmaInfo()
+
+  def isEmptyReq(): Bool =
+    new Composite(this, "RqReqWithRxBufAndDmaInfoWithLenCheck_isEmptyReq") {
+      val result =
+        // Check empty write request
+        dmaInfo.dlen === 0 ||
+          // Check empty send request
+          (reqTotalLenValid && reqTotalLenBytes === 0)
+    }.result
 }
 
 case class RqReqWithRxBufAndDmaInfoWithLenCheckBus(busWidth: BusWidth.Value)
@@ -2422,6 +2401,11 @@ case class RqDupReadReqAndRstCacheData(busWidth: BusWidth.Value)
 case class RqDmaReadReqAndRstCacheData() extends Bundle {
   val dmaReadReq = DmaReadReq()
   val rstCacheData = ReadAtomicRstCacheData()
+
+  def isEmptyReq(): Bool =
+    new Composite(this, "RqDmaReadReqAndRstCacheData_isEmptyReq") {
+      val result = dmaReadReq.lenBytes === 0
+    }.result
 }
 
 sealed abstract class RdmaBasePacket extends Bundle {
@@ -2483,7 +2467,7 @@ sealed class RdmaDataPkt(busWidth: BusWidth.Value) extends RdmaBasePacket {
     val rethWidth = widthOf(RETH())
     require(
       busWidth.id >= bthWidth + rethWidth,
-      f"${REPORT_TIME} time: busWidth=${busWidth.id} should >= bthWidth=${bthWidth} + rethWidth=${rethWidth}"
+      L"${REPORT_TIME} time: busWidth=${busWidth.id} should >= bthWidth=${bthWidth} + rethWidth=${rethWidth}"
     )
     val result = RETH()
     result.va.assignFromBits(
@@ -2505,7 +2489,7 @@ sealed class RdmaDataPkt(busWidth: BusWidth.Value) extends RdmaBasePacket {
     val atomicEthWidth = widthOf(AtomicEth())
     require(
       busWidth.id >= bthWidth + atomicEthWidth,
-      f"${REPORT_TIME} time: busWidth=${busWidth.id} should >= bthWidth=${bthWidth} + atomicEthWidth=${atomicEthWidth}"
+      L"${REPORT_TIME} time: busWidth=${busWidth.id} should >= bthWidth=${bthWidth} + atomicEthWidth=${atomicEthWidth}"
     )
     val result = AtomicEth()
     result.va.assignFromBits(
@@ -2532,7 +2516,7 @@ sealed class RdmaDataPkt(busWidth: BusWidth.Value) extends RdmaBasePacket {
     val aethWidth = widthOf(AETH())
     require(
       busWidth.id >= bthWidth + aethWidth,
-      f"${REPORT_TIME} time: busWidth=${busWidth.id} should >= bthWidth=${bthWidth} + aethWidth=${aethWidth}"
+      L"${REPORT_TIME} time: busWidth=${busWidth.id} should >= bthWidth=${bthWidth} + aethWidth=${aethWidth}"
     )
     val result = AETH()
     result.rsvd.assignFromBits(

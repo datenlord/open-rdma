@@ -1,6 +1,7 @@
 package rdma
 
 import spinal.core._
+import spinal.core.formal._
 import spinal.lib._
 import spinal.lib.fsm._
 
@@ -112,10 +113,14 @@ class QpCtrl extends Component {
 
     when(io.qpCreateOrModify.req.modifyMask.include(QpAttrMaskEnum.QP_RQ_PSN)) {
       qpAttr.epsn := io.qpCreateOrModify.req.qpAttr.epsn
+      // TODO: check rqOutPsn set logic is correct
+      qpAttr.rqOutPsn := io.qpCreateOrModify.req.qpAttr.epsn
     }
 
     when(io.qpCreateOrModify.req.modifyMask.include(QpAttrMaskEnum.QP_SQ_PSN)) {
       qpAttr.npsn := io.qpCreateOrModify.req.qpAttr.npsn
+      // TODO: check sqOutPsn set logic is correct
+      qpAttr.sqOutPsn := io.qpCreateOrModify.req.qpAttr.npsn
     }
   }
 
@@ -382,7 +387,7 @@ class QpCtrl extends Component {
       assert(
         assertion = !io.rqNotifier.nak.rnr.pulse,
         message =
-          L"${REPORT_TIME} time: there's already a NAK SQK sent PSN=${qpAttr.epsn}, but there's another RNR NAK to send: io.rqNotifier.nak.rnr.pulse=${io.rqNotifier.nak.rnr.pulse}, io.rqNotifier.nak.rnr.psn=${io.rqNotifier.nak.rnr.psn}",
+          L"${REPORT_TIME} time: there's already a NAK SQK sent PSN=${qpAttr.epsn}, but there's another RNR NAK to send: io.rqNotifier.nak.rnr.pulse=${io.rqNotifier.nak.rnr.pulse}, io.rqNotifier.nak.rnr.psn=${io.rqNotifier.nak.rnr.psn}".toSeq,
         severity = FAILURE
       )
     }
@@ -390,15 +395,15 @@ class QpCtrl extends Component {
       assert(
         assertion = !io.rqNotifier.nak.rnr.pulse,
         message =
-          L"${REPORT_TIME} time: there's already a RNR NAK sent PSN=${qpAttr.epsn}, but there's another RNR NAK to send: io.rqNotifier.nak.rnr.pulse=${io.rqNotifier.nak.rnr.pulse}, io.rqNotifier.nak.rnr.psn=${io.rqNotifier.nak.rnr.psn}",
+          L"${REPORT_TIME} time: there's already a RNR NAK sent PSN=${qpAttr.epsn}, but there's another RNR NAK to send: io.rqNotifier.nak.rnr.pulse=${io.rqNotifier.nak.rnr.pulse}, io.rqNotifier.nak.rnr.psn=${io.rqNotifier.nak.rnr.psn}".toSeq,
         severity = FAILURE
       )
     }
     when(this.isActive(RNR_TIMEOUT) && !isRnrTimeOut) {
       assert(
-        assertion = Formal.stable(io.rqNotifier.clearRnrOrNakSeq.pulse),
+        assertion = stable(io.rqNotifier.clearRnrOrNakSeq.pulse),
         message =
-          L"${REPORT_TIME} time: rnr timer is not timeout but receive RNR clear signal, rnrTimer.state=${rnrTimer.state}, io.rqNotifier.clearRnrOrNakSeq.pulse=${io.rqNotifier.clearRnrOrNakSeq.pulse}",
+          L"${REPORT_TIME} time: rnr timer is not timeout but receive RNR clear signal, rnrTimer.state=${rnrTimer.state}, io.rqNotifier.clearRnrOrNakSeq.pulse=${io.rqNotifier.clearRnrOrNakSeq.pulse}".toSeq,
         severity = FAILURE
       )
     }
@@ -531,8 +536,7 @@ class QpCtrl extends Component {
   // RQ flush
   io.rxQCtrl.stateErrFlush := isQpStateWrong
   io.rxQCtrl.nakSeqTrigger := rqFsm.isActive(rqFsm.NAK_SEQ)
-  io.rxQCtrl.rnrFlush := rqFsm.isActive(rqFsm.RNR) ||
-    rqFsm.isActive(rqFsm.RNR)
+  io.rxQCtrl.rnrFlush := rqFsm.isActive(rqFsm.RNR)
   io.rxQCtrl.rnrTimeOut := rqFsm.isActive(rqFsm.RNR_TIMEOUT)
   io.rxQCtrl.flush := io.rxQCtrl.stateErrFlush || io.rxQCtrl.rnrFlush || io.rxQCtrl.nakSeqTrigger
 }
@@ -584,7 +588,7 @@ class QP(busWidth: BusWidth.Value) extends Component {
 
   // TODO: QpAddrCacheAgent should not be per QP structure
   val addrCacheAgent = new QpAddrCacheAgent()
-  addrCacheAgent.io.qpAttr := io.qpAttr
+//  addrCacheAgent.io.qpAttr := io.qpAttr
   addrCacheAgent.io.rqCacheRead << rq.io.addrCacheRead
   addrCacheAgent.io.sqReqCacheRead << sq.io.addrCacheRead4Req
   addrCacheAgent.io.sqRespCacheRead << sq.io.addrCacheRead4Resp
@@ -612,7 +616,7 @@ class QP(busWidth: BusWidth.Value) extends Component {
   flowCtrl.io.qpAttr := io.qpAttr
   flowCtrl.io.resp := reqRespSplitter.io.txResp.pktFrag.asFlow
   val txVec = Vec(sq.io.tx.pktFrag, rq.io.tx.pktFrag)
-  val txSel = StreamArbiterFactory.roundRobin.fragmentLock.on(txVec)
+  val txSel = StreamArbiterFactory().roundRobin.fragmentLock.on(txVec)
   flowCtrl.io.rx.pktFrag <-/< txSel
 
   io.tx.pktFrag <-/< flowCtrl.io.tx.pktFrag

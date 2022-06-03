@@ -78,50 +78,60 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
       dut.clockDomain.waitSampling()
 
       // Input to DUT
-      val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
+      val (totalFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
         SendWriteReqReadRespInputGen.getItr(pmtuLen, busWidth)
-      pktFragStreamMasterDriver(
+
+      DmaReadRespSim.pktFragStreamMasterDriver(
         dut.io.cachedWorkReqAndDmaReadResp,
-        dut.clockDomain
+        dut.clockDomain,
+        getDmaReadRespPktDataFunc =
+          (cachedWorkReqAndDmaReadResp: CachedWorkReqAndDmaReadResp) =>
+            cachedWorkReqAndDmaReadResp.dmaReadResp,
+        segmentRespByPmtu = true
       ) {
         val totalFragNum = totalFragNumItr.next()
         val pktNum = pktNumItr.next()
         val psnStart = psnStartItr.next()
-        val totalLenBytes = totalLenItr.next()
+        val payloadLenBytes = payloadLenItr.next()
 
-        (psnStart, totalFragNum, pktNum, pmtuLen, busWidth, totalLenBytes)
+        (
+          psnStart,
+          totalFragNum,
+          pktNum,
+          pmtuLen,
+          busWidth,
+          payloadLenBytes.toLong
+        )
       } {
         (
-            _,
+            _, // psn,
             psnStart,
-            fragLast,
-            fragIdx,
-            totalFragNum,
-            _,
+            _, // fragLast,
+            _, // fragIdx,
+            _, // totalFragNum,
+            _, // pktIdx,
             pktNum,
-            totalLenBytes
+            payloadLenBytes
         ) =>
-          DmaReadRespSim.setMtyAndLen(
-            dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp,
-            fragIdx,
-            totalFragNum,
-            totalLenBytes.toLong,
-            busWidth
-          )
+//          DmaReadRespSim.setMtyAndLen(
+//            dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp,
+//            fragIdx,
+//            totalFragNum,
+//            payloadLenBytes.toLong,
+//            busWidth
+//          )
+
 //        println(
 //          f"${simTime()} time: fragIdx=${fragIdx}, fragNum=${fragNum}, isLastInputFrag=${isLastInputFrag}, isLastFragPerPkt=${isLastFragPerPkt}, fragLast=${fragLast}, totalLenBytes=${totalLenBytes}, pktNum=${pktNum}, mtyWidth=${mtyWidth}, residue=${totalLenBytes % mtyWidth}, mty=${mty}%X"
 //        )
 
-          dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.psnStart #= psnStart
+//          dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.psnStart #= psnStart
           dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart #= psnStart
-          dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes #= totalLenBytes
+          dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes #= payloadLenBytes
           dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode #= workReqOpCode
           dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.pktNum #= pktNum
-//          dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.lenBytes #= totalLenBytes
-//          dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.mty #= mty
-          dut.io.cachedWorkReqAndDmaReadResp.last #= fragLast
+//          dut.io.cachedWorkReqAndDmaReadResp.last #= fragLast
       }
-
       onStreamFire(dut.io.cachedWorkReqAndDmaReadResp, dut.clockDomain) {
         inputDataQueue.enqueue(
           (

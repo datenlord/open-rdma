@@ -1,9 +1,10 @@
 package rdma
 
 import spinal.core._
-
 import ConstantSettings._
 import RdmaConstants._
+
+import scala.language.postfixOps
 
 //----------RDMA defined headers----------//
 sealed abstract class RdmaHeader extends Bundle {
@@ -124,8 +125,8 @@ case class AETH() extends RdmaHeader {
       } otherwise {
         report(
           message =
-            L"${REPORT_TIME} time: illegal AETH to WC state, code=${code}, value=${value}",
-          severity = ERROR
+            L"${REPORT_TIME} time: illegal AETH to WC state, code=${code}, value=${value}".toSeq,
+          severity = FAILURE
         )
         workCompStatus.assignDontCare()
       }
@@ -197,7 +198,6 @@ case class AETH() extends RdmaHeader {
         code := AethCode.RNR.id
         value := rnrTimeOut
       }
-      // UNREACHABLE DEFAULT STATEMENT
 //      default {
 //        code := AethCode.RSVD.id
 //        value := 0

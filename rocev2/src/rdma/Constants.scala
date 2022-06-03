@@ -2,6 +2,8 @@ package rdma
 
 import spinal.core._
 
+import scala.language.postfixOps
+
 // ibv_device_attr fields definition:
 // https://www.mellanox.com/related-docs/prod_software/RDMA_Aware_Programming_user_manual.pdf
 //
@@ -67,7 +69,7 @@ import spinal.core._
 // phys_port_cnt              Number of physical ports
 object ConstantSettings {
   // Device changeable settings
-  val PENDING_REQ_NUM = 32
+  val MAX_PENDING_REQ_NUM = 32
   val MAX_PENDING_READ_ATOMIC_REQ_NUM = 16
   val MIN_RNR_TIMEOUT = 1 // 0.01ms = 10us
 
@@ -76,18 +78,30 @@ object ConstantSettings {
   val MAX_SG_LEN_WIDTH = 12 // Max SG size is 4K bytes, a page size
 
   require(
-    PENDING_REQ_NUM > MAX_PENDING_READ_ATOMIC_REQ_NUM,
-    f"PENDING_REQ_NUM=${PENDING_REQ_NUM} should > MAX_PENDING_READ_ATOMIC_REQ_NUM=${MAX_PENDING_READ_ATOMIC_REQ_NUM}"
+    MAX_PENDING_REQ_NUM > MAX_PENDING_READ_ATOMIC_REQ_NUM,
+    s"MAX_PENDING_REQ_NUM=${MAX_PENDING_REQ_NUM} should > MAX_PENDING_READ_ATOMIC_REQ_NUM=${MAX_PENDING_READ_ATOMIC_REQ_NUM}"
   )
   // TODO: find out the meaning of this requirement
-  require((2 << MAX_WR_NUM_WIDTH) >= PENDING_REQ_NUM)
+  require((2 << MAX_WR_NUM_WIDTH) >= MAX_PENDING_REQ_NUM)
 
 //  val WORK_REQ_CACHE_QUERY_DELAY_CYCLE = 4
-  val COALESCE_HANDLE_CYCLE = 4
-  val ADDR_CACHE_QUERY_DELAY_CYCLE = 4
-  val READ_ATOMIC_RESULT_CACHE_QUERY_DELAY_CYCLE = 2
-  val DMA_WRITE_DELAY_CYCLE = 128
-  val DMA_READ_DELAY_CYCLE = 128
+//  val COALESCE_HANDLE_CYCLE = 4
+  val ADDR_CACHE_QUERY_DELAY_CYCLES = 8 // TODO: cache size must be small
+  val READ_ATOMIC_RESULT_CACHE_QUERY_DELAY_CYCLES = 8
+  val DMA_WRITE_DELAY_CYCLES = 16
+  val DMA_READ_DELAY_CYCLES = 128
+  val EXTRA_FIFO_DEPTH = 8
+
+  val PENDING_REQ_FIFO_DEPTH = MAX_PENDING_REQ_NUM + EXTRA_FIFO_DEPTH
+  val PENDING_READ_ATOMIC_REQ_FIFO_DEPTH =
+    MAX_PENDING_READ_ATOMIC_REQ_NUM + EXTRA_FIFO_DEPTH
+  val ADDR_CACHE_QUERY_FIFO_DEPTH =
+    ADDR_CACHE_QUERY_DELAY_CYCLES + EXTRA_FIFO_DEPTH
+  val READ_ATOMIC_RESULT_CACHE_QUERY_FIFO_DEPTH =
+    READ_ATOMIC_RESULT_CACHE_QUERY_DELAY_CYCLES + EXTRA_FIFO_DEPTH
+  val DMA_WRITE_FIFO_DEPTH = DMA_WRITE_DELAY_CYCLES + EXTRA_FIFO_DEPTH
+  val DMA_READ_FIFO_DEPTH = DMA_READ_DELAY_CYCLES + EXTRA_FIFO_DEPTH
+  val PSN_OUT_RANGE_FIFO_DEPTH = MAX_PENDING_REQ_NUM + EXTRA_FIFO_DEPTH
 
   val MAX_COALESCE_ACK_NUM = 8
 
@@ -104,7 +118,7 @@ object ConstantSettings {
 
   require(
     DEFAULT_RNR_TIME_OUT >= DEFAULT_MIN_RNR_TIME_OUT,
-    f"DEFAULT_RNR_TIME_OUT=${DEFAULT_RNR_TIME_OUT} should >= DEFAULT_MIN_RNR_TIME_OUT=${DEFAULT_MIN_RNR_TIME_OUT}"
+    s"DEFAULT_RNR_TIME_OUT=${DEFAULT_RNR_TIME_OUT} should >= DEFAULT_MIN_RNR_TIME_OUT=${DEFAULT_MIN_RNR_TIME_OUT}"
   )
 
   // Non-changeable settings
@@ -113,7 +127,7 @@ object ConstantSettings {
   val IPV4_WIDTH = 32
   val IPV6_WIDTH = 128
 
-  val ACK_TYPE_WIDTH = 3
+//  val ACK_TYPE_WIDTH = 3
 
 //  val WR_OPCODE_WIDTH = log2Up(11) // 11 is the max WR opcode
 //  val WR_FLAG_WIDTH = log2Up(16) + 1 // 16 is the max WR flag
@@ -133,13 +147,10 @@ object ConstantSettings {
   val ACCESS_PERMISSION_WIDTH = 21
   require(
     widthOf(AccessPermission()) == ACCESS_PERMISSION_WIDTH,
-    f"widthOf(AccessPermission())=${widthOf(AccessPermission())} should == ACCESS_PERMISSION_WIDTH=${ACCESS_PERMISSION_WIDTH}"
+    s"widthOf(AccessPermission())=${widthOf(AccessPermission())} should == ACCESS_PERMISSION_WIDTH=${ACCESS_PERMISSION_WIDTH}"
   )
 
   //  val PKT_SEQ_TYPE_WIDTH = 3
-
-  val MAX_HEADER_LEN_WIDTH = log2Up(widthOf(BTH()) + widthOf(AtomicEth()))
-
   val INVALID_SG_NEXT_ADDR = 0x0
 
 //  val RETRY_REASON_WIDTH = 2
@@ -259,6 +270,15 @@ object RdmaConstants {
   val TOTAL_PSN = 1 << PSN_WIDTH
   val HALF_MAX_PSN = 1 << (PSN_WIDTH - 1)
   val PSN_MASK = (1 << PSN_WIDTH) - 1
+
+  // Header width
+  val READ_REQ_WIDTH = widthOf(BTH()) + widthOf(RETH())
+  val ATOMIC_REQ_WIDTH = widthOf(BTH()) + widthOf(AtomicEth())
+  val ACKNOWLEDGE_WIDTH = widthOf(BTH()) + widthOf(AETH())
+  val ATOMIC_RESP_WIDTH =
+    widthOf(BTH()) + widthOf(AETH()) + widthOf(AtomicAckEth())
+
+  val MAX_HEADER_WIDTH = log2Up(ATOMIC_REQ_WIDTH)
 
   // RNR timeout settings:
   // 0 - 655.36 milliseconds delay

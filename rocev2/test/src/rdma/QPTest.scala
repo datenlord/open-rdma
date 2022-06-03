@@ -2,16 +2,20 @@ package rdma
 
 import spinal.core._
 import spinal.core.sim._
-
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
 import org.scalatest.AppendedClues._
-import scala.collection.mutable
 
+import scala.collection.mutable
 import ConstantSettings._
+import RdmaConstants._
+import PsnSim._
 import StreamSimUtil._
 import SimSettings._
 import RdmaTypeReDef._
+import WorkReqSim._
+
+import scala.language.postfixOps
 
 class QPTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
@@ -30,10 +34,48 @@ class QPTest extends AnyFunSuite {
       dut
     }
 
-  def testRecvQFunc(): Unit = simCfg.doSim { dut =>
+  test("QP rx only case") {
+    noInput()
+//    testFunc(recvOnly = true, noDmaRead = true, noDmaWrite = false)
+  }
+
+  def noInput(): Unit = simCfg.doSim(127257803) { dut =>
+    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
+
+    dut.io.qpCreateOrModify.req.valid #= false
+    dut.io.qpCreateOrModify.resp.ready #= true
+    dut.io.workReq.valid #= false
+    dut.io.rxWorkReq.valid #= false
+    dut.io.workComp.ready #= true
+    dut.io.rx.pktFrag.valid #= false
+    dut.io.tx.pktFrag.ready #= true
+    dut.io.dma.rd.req.ready #= true
+    dut.io.dma.rd.resp.valid #= false
+    dut.io.dma.wr.req.ready #= true
+    dut.io.dma.wr.resp.valid #= false
+    dut.io.pdAddrCacheQuery.req.ready #= true
+    dut.io.pdAddrCacheQuery.resp.valid #= false
+
+    dut.clockDomain.waitSampling(100)
+  }
+
+  def testFunc(
+      recvOnly: Boolean,
+      noDmaRead: Boolean,
+      noDmaWrite: Boolean
+  ): Unit = simCfg.doSim(127257803) { dut =>
     dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
     val ePsnQueue = mutable.Queue[PSN]()
+    val inputWorkReqQueue = mutable.Queue[
+      (
+          WorkReqId,
+          SpinalEnumElement[WorkReqOpCode.type],
+          VirtualAddr,
+          LRKey,
+          PktLen
+      )
+    ]()
     val inputRecvWorkReqQueue = mutable.Queue[
       (
           WorkReqId,
@@ -54,43 +96,65 @@ class QPTest extends AnyFunSuite {
       )
     ]()
 
+    val expectedAckQueue = mutable.Queue[
+      (
+          PSN,
+          OpCode.Value,
+          SpinalEnumElement[AckType.type],
+          FragLast
+      )
+    ]()
+    val outputAckQueue = mutable.Queue[
+      (
+          PSN,
+          OpCode.Value,
+          SpinalEnumElement[AckType.type],
+          FragLast
+      )
+    ]()
+    val outputReadAtomicRespQueue = mutable.Queue[
+      (
+          PSN,
+          OpCode.Value,
+          PktFragData,
+          MTY,
+          FragLast
+      )
+    ]()
+
     // Input to DUT
-    dut.io.tx.pktFrag.valid #= false
-    dut.io.workReq.valid #= false
-    // No DMA read request and response
-    dut.io.dma.rd.req.ready #= false
-    dut.io.dma.rd.resp.valid #= false
-
-    val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
-      SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
-
-//    val pdAddrCacheRespQueue = PdAddrCacheSim.alwaysStreamFireAndRespSuccess(
-//      dut.io.pdAddrCacheQuery,
-//      dut.clockDomain
-//    )
-
-    fork {
-      while (true) {
-        val payloadFragNum = payloadFragNumItr.next()
-        val pktNum = pktNumItr.next()
-        val psnStart = psnStartItr.next()
-        val payloadLenBytes = payloadLenItr.next()
-        val workReqOpCode = WorkReqSim.randomSendWriteImmOpCode()
-//        println(
-//          f"${simTime()} time: WR opcode=${workReqOpCode}, pktNum=${pktNum}, totalFragNum=${totalFragNum}, psnStart=${psnStart}, totalLenBytes=${totalLenBytes}"
-//        )
-        inputReqQueue.enqueue(
-          (
-            psnStart,
-            payloadFragNum,
-            pktNum,
-            pmtuLen,
-            busWidth,
-            payloadLenBytes.toLong,
-            workReqOpCode
-          )
-        )
+    if (recvOnly) {
+      dut.io.workReq.valid #= false
+    } else {
+      streamMasterDriverAlwaysValid(dut.io.workReq, dut.clockDomain) {
+        // TODO: assign WR
+        val workReqOpCode = if (noDmaWrite) {
+          WorkReqSim.randomSendWriteOpCode()
+        } else if (noDmaRead) {
+          WorkReqSim.randomReadAtomicOpCode()
+        } else {
+          WorkReqSim.randomSendWriteReadAtomicOpCode()
+        }
+        val pktLen = if (workReqOpCode.isAtomicReq()) {
+          ATOMIC_DATA_LEN.toLong
+        } else {
+          WorkReqSim.randomDmaLength()
+        }
+        dut.io.workReq.opcode #= workReqOpCode
+        dut.io.workReq.lenBytes #= pktLen
+//        val pktNum = MiscUtils.computePktNum(pktLen, pmtuLen)
       }
+    }
+    onStreamFire(dut.io.workReq, dut.clockDomain) {
+      inputWorkReqQueue.enqueue(
+        (
+          dut.io.workReq.id.toBigInt,
+          dut.io.workReq.opcode.toEnum,
+          dut.io.workReq.laddr.toBigInt,
+          dut.io.workReq.lkey.toLong,
+          dut.io.workReq.lenBytes.toLong
+        )
+      )
     }
 
     streamMasterDriverAlwaysValid(dut.io.rxWorkReq, dut.clockDomain) {
@@ -112,12 +176,107 @@ class QPTest extends AnyFunSuite {
       dut.clockDomain,
       ePsnQueue,
       payloadAssignFunc = (req: QpCreateOrModifyReq, epsn: PSN) => {
-        req.modifyMask.maskBits #= QpAttrMaskEnum.defaultEncoding
-          .getValue(QpAttrMaskEnum.QP_RQ_PSN)
+        req.modifyMask.maskBits #=
+          QpAttrMaskEnum.defaultEncoding.getValue(QpAttrMaskEnum.QP_RQ_PSN) +
+            QpAttrMaskEnum.defaultEncoding.getValue(QpAttrMaskEnum.QP_PATH_MTU)
         req.qpAttr.epsn #= epsn
+        req.qpAttr.pmtu #= pmtuLen.id
+
+        val respValid = true
+        respValid
       }
     )
 
+    // dmaWriteRespQueue
+    val _ = DmaWriteBusSim.reqStreamAlwaysFireAndRespSuccess(
+      dut.io.dma.wr,
+      dut.clockDomain
+    )
+    // dmaReadRespQueue
+    val _ =
+      DmaReadBusSim(busWidth).reqStreamAlwaysFireAndRespSuccess(
+        dut.io.dma.rd,
+        dut.clockDomain
+      )
+    // pdAddrCacheRespQueue
+    val _ = PdAddrCacheSim.reqStreamAlwaysFireAndRespSuccess(
+      dut.io.pdAddrCacheQuery,
+      dut.clockDomain
+    )
+
+    dut.io.dma.rd.resp.valid #= false
+    sleep(0)
+
+    if (noDmaRead) {
+      // No DMA read request and response
+      dut.io.dma.rd.req.ready.toBoolean shouldBe false withClue
+        f"${simTime()} time: dut.io.dma.rd.req.ready=${dut.io.dma.rd.req.ready.toBoolean} should be false, since noDmaRead=${noDmaRead}"
+      dut.io.dma.rd.resp.valid.toBoolean shouldBe false withClue
+        f"${simTime()} time: dut.io.dma.rd.resp.valid=${dut.io.dma.rd.resp.valid.toBoolean} should be false, since noDmaRead=${noDmaRead}"
+    }
+    if (noDmaWrite) {
+      // No DMA write request and response
+      dut.io.dma.wr.req.ready.toBoolean shouldBe false withClue
+        f"${simTime()} time: dut.io.dma.wr.req.ready=${dut.io.dma.wr.req.ready.toBoolean} should be false, since noDmaWrite=${noDmaWrite}"
+      dut.io.dma.wr.resp.valid.toBoolean shouldBe false withClue
+        f"${simTime()} time: dut.io.dma.wr.resp.valid=${dut.io.dma.wr.resp.valid.toBoolean} should be false, since noDmaWrite=${noDmaWrite}"
+    }
+
+    // Input to RX
+    if (recvOnly) {
+      val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
+        SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
+
+      fork {
+//        var epsn = 0
+        while (true) {
+          dut.clockDomain.waitSampling()
+
+          val payloadFragNum = payloadFragNumItr.next()
+          val pktNum = pktNumItr.next()
+          val psnStart = psnStartItr.next()
+          val payloadLenBytes = payloadLenItr.next()
+//          val payloadFragNum = 4
+//          val pktNum = 1
+//          val psnStart = epsn
+//          val payloadLenBytes = payloadFragNum * busWidth.id / BYTE_WIDTH
+          val workReqOpCode = if (noDmaRead) {
+            val ackPsn = psnStart +% (pktNum - 1)
+            val ackType = AckType.NORMAL
+            val fragLast = true
+            expectedAckQueue.enqueue(
+              (
+                ackPsn,
+                OpCode.ACKNOWLEDGE,
+                ackType,
+                fragLast
+              )
+            )
+
+            WorkReqSim.randomSendWriteImmOpCode()
+          } else if (noDmaWrite) {
+            WorkReqOpCode.RDMA_READ
+          } else {
+            // TODO: check if RQ supports atomic
+            WorkReqSim.randomSendWriteReadAtomicOpCode()
+          }
+//        println(
+//          f"${simTime()} time: WR opcode=${workReqOpCode}, pktNum=${pktNum}, totalFragNum=${totalFragNum}, psnStart=${psnStart}, totalLenBytes=${totalLenBytes}"
+//        )
+          inputReqQueue.enqueue(
+            (
+              psnStart,
+              payloadFragNum,
+              pktNum,
+              pmtuLen,
+              busWidth,
+              payloadLenBytes.toLong,
+              workReqOpCode
+            )
+          )
+        }
+      }
+    }
     RdmaDataPktSim.pktFragStreamMasterDriver(
       dut.io.rx.pktFrag,
       (rdmaDataPkt: RdmaDataPkt) => rdmaDataPkt,
@@ -160,6 +319,41 @@ class QPTest extends AnyFunSuite {
         }
     }
 
+    streamSlaveAlwaysReady(dut.io.tx.pktFrag, dut.clockDomain)
+    onStreamFire(dut.io.tx.pktFrag, dut.clockDomain) {
+      if (noDmaRead) {
+        val (_, aethCode, aethValue, _) =
+          AethSim.extract(dut.io.tx.pktFrag.data.toBigInt, busWidth)
+        val ackType = AckTypeSim.decodeFromCodeAndValue(aethCode, aethValue)
+        outputAckQueue.enqueue(
+          (
+            dut.io.tx.pktFrag.bth.psn.toInt,
+            OpCode(dut.io.tx.pktFrag.bth.opcodeFull.toInt),
+            ackType,
+            dut.io.tx.pktFrag.last.toBoolean
+          )
+        )
+      }
+
+      if (noDmaWrite) {
+        outputReadAtomicRespQueue.enqueue(
+          (
+            dut.io.tx.pktFrag.bth.psn.toInt,
+            OpCode(dut.io.tx.pktFrag.bth.opcodeFull.toInt),
+            dut.io.tx.pktFrag.data.toBigInt,
+            dut.io.tx.pktFrag.mty.toBigInt,
+            dut.io.tx.pktFrag.last.toBoolean
+          )
+        )
+      }
+    }
+
+    MiscUtils.checkInputOutputQueues(
+      dut.clockDomain,
+      expectedAckQueue,
+      outputAckQueue,
+      MATCH_CNT
+    )
   }
 }
 
@@ -229,12 +423,10 @@ class QpCtrlTest extends AnyFunSuite {
         case _ if (mainFsmState == mainFsmStateRTS)   => QpState.RTS
         case _ if (mainFsmState == mainFsmStateSQD)   => QpState.SQD
         case _ if (mainFsmState == mainFsmStateERR)   => QpState.ERR
-        case _ => {
-          println(
-            f"${simTime()} time: invalid QP FSM state=${mainFsmState}, no match QpState"
+        case _ =>
+          SpinalExit(
+            s"${simTime()} time: invalid QP FSM state=${mainFsmState}, no match QpState"
           )
-          ???
-        }
       }
     }
 
@@ -477,7 +669,7 @@ class QpCtrlTest extends AnyFunSuite {
         for (changeAction <- qpStateChangeSeq) {
           stateChangeReqQueue.enqueue(changeAction)
         }
-        waitUntil(stateChangeReqQueue.isEmpty)
+        dut.clockDomain.waitSamplingWhere(stateChangeReqQueue.isEmpty)
       }
     }
 
@@ -506,6 +698,9 @@ class QpCtrlTest extends AnyFunSuite {
         req.qpAttr.state #= qpState
 
         inputQueue.enqueue((mainFsmState, sqFsmState, rqFsmState))
+
+        val respValid = true
+        respValid
       }
     )
 

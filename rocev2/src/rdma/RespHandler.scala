@@ -2,9 +2,10 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-
 import ConstantSettings._
 import RdmaConstants._
+
+import scala.language.postfixOps
 
 class RespHandler(busWidth: BusWidth.Value) extends Component {
   val io = new Bundle {
@@ -92,7 +93,7 @@ class RespVerifier(busWidth: BusWidth.Value) extends Component {
     assert(
       assertion = OpCode.isRespPkt(inputRespPktFrag.bth.opcode),
       message =
-        L"${REPORT_TIME} time: RespVerifier received non-response packet with opcode=${inputRespPktFrag.bth.opcode}, PSN=${inputRespPktFrag.bth.psn}",
+        L"${REPORT_TIME} time: RespVerifier received non-response packet with opcode=${inputRespPktFrag.bth.opcode}, PSN=${inputRespPktFrag.bth.psn}".toSeq,
       severity = FAILURE
     )
   }
@@ -133,7 +134,7 @@ class RespVerifier(busWidth: BusWidth.Value) extends Component {
       assert(
         assertion = isReadResp && isReadRespOpCodeSeqCheckPass,
         message =
-          L"${REPORT_TIME} time: read response opcode sequence error: previous opcode=${preReadRespPktOpCodeReg}, current opcode=${inputRespPktFrag.bth.opcode}",
+          L"${REPORT_TIME} time: read response opcode sequence error: previous opcode=${preReadRespPktOpCodeReg}, current opcode=${inputRespPktFrag.bth.opcode}".toSeq,
         severity = FAILURE
       )
     }
@@ -156,7 +157,7 @@ class RespVerifier(busWidth: BusWidth.Value) extends Component {
     assert(
       assertion = !hasReservedCode,
       message =
-        L"${REPORT_TIME} time: acknowledge has reserved code or value, PSN=${inputRespPktFrag.bth.psn}, aeth.code=${aeth.code}, aeth.value=${aeth.value}",
+        L"${REPORT_TIME} time: acknowledge has reserved code or value, PSN=${inputRespPktFrag.bth.psn}, aeth.code=${aeth.code}, aeth.value=${aeth.value}".toSeq,
       // TODO: change to ERROR, since ACK with reserved code just discard
       severity = FAILURE
     )
@@ -179,7 +180,7 @@ class RespVerifier(busWidth: BusWidth.Value) extends Component {
 
   // If error, discard all incoming response
   // TODO: incoming response stream needs retry flush or not?
-  io.tx <-/< respWithExtractedAeth ~~ { payloadData =>
+  io.tx <-/< respWithExtractedAeth.map { payloadData =>
     val result = cloneOf(io.tx.payloadType)
     result.last := payloadData._1.last
     result.pktFrag := payloadData._1.fragment
@@ -269,7 +270,7 @@ class CoalesceAndNormalAndRetryNakHandler(busWidth: BusWidth.Value)
         fireBothCachedWorkReqAndAck ## fireCachedWorkReqOnly ## fireAckOnly
       ) <= 1,
       message =
-        L"${REPORT_TIME} time: fire CachedWorkReq only, fire ACK only, and fire both should be mutually exclusive, but fireBothCachedWorkReqAndAck=${fireBothCachedWorkReqAndAck}, fireCachedWorkReqOnly=${fireCachedWorkReqOnly}, fireAckOnly=${fireAckOnly}",
+        L"${REPORT_TIME} time: fire CachedWorkReq only, fire ACK only, and fire both should be mutually exclusive, but fireBothCachedWorkReqAndAck=${fireBothCachedWorkReqAndAck}, fireCachedWorkReqOnly=${fireCachedWorkReqOnly}, fireAckOnly=${fireAckOnly}".toSeq,
       severity = FAILURE
     )
   }
@@ -280,7 +281,7 @@ class CoalesceAndNormalAndRetryNakHandler(busWidth: BusWidth.Value)
 //    assert(
 //      assertion = zipRespValid,
 //      message =
-//        L"zipRespValid=${zipRespValid} should be true when zipCachedWorkReqAndAck.valid=${zipCachedWorkReqAndAck.valid} and zipCachedWorkReqValid=${zipCachedWorkReqValid}",
+//        L"${REPORT_TIME} time: zipRespValid=${zipRespValid} should be true when zipCachedWorkReqAndAck.valid=${zipCachedWorkReqAndAck.valid} and zipCachedWorkReqValid=${zipCachedWorkReqValid}",
 //      severity = FAILURE
 //    )
 //  }
@@ -420,7 +421,7 @@ class ReadRespLenCheck(busWidth: BusWidth.Value) extends Component {
     assert(
       assertion = io.cachedWorkReqAndRespWithAethIn.lastFire,
       message =
-        L"totalLenValid=${totalLenValid} should == io.cachedWorkReqAndRespWithAethIn.lastFire=${io.cachedWorkReqAndRespWithAethIn.lastFire}",
+        L"${REPORT_TIME} time: totalLenValid=${totalLenValid} should == io.cachedWorkReqAndRespWithAethIn.lastFire=${io.cachedWorkReqAndRespWithAethIn.lastFire}".toSeq,
       severity = FAILURE
     )
 
@@ -435,8 +436,8 @@ class ReadRespLenCheck(busWidth: BusWidth.Value) extends Component {
     }
   }
 
-  io.cachedWorkReqAndRespWithAethOut <-/< io.cachedWorkReqAndRespWithAethIn ~~ {
-    payloadData =>
+  io.cachedWorkReqAndRespWithAethOut <-/< io.cachedWorkReqAndRespWithAethIn
+    .map { payloadData =>
       val result = cloneOf(io.cachedWorkReqAndRespWithAethOut.payloadType)
       result := payloadData
       when(totalLenValid && (isRespTotalLenCheckErr || isPktLenCheckErr)) {
@@ -445,7 +446,7 @@ class ReadRespLenCheck(busWidth: BusWidth.Value) extends Component {
         }
       }
       result
-  }
+    }
 }
 
 class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth.Value)
@@ -464,17 +465,16 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth.Value)
     )
   }
 
-  when(io.cachedWorkReqAndRespWithAeth.valid) {
-    when(
+  when(
+    io.cachedWorkReqAndRespWithAeth.valid &&
       io.cachedWorkReqAndRespWithAeth.workCompStatus === WorkCompStatus.SUCCESS
-    ) {
-      assert(
-        assertion = io.cachedWorkReqAndRespWithAeth.aeth.isNormalAck(),
-        message =
-          L"${REPORT_TIME} time: illegal io.cachedWorkReqAndRespWithAeth, io.cachedWorkReqAndRespWithAeth.aeth.code=${io.cachedWorkReqAndRespWithAeth.aeth.code} should be normal ACK, when io.cachedWorkReqAndRespWithAeth.workCompStatus=${io.cachedWorkReqAndRespWithAeth.workCompStatus}",
-        severity = FAILURE
-      )
-    }
+  ) {
+    assert(
+      assertion = io.cachedWorkReqAndRespWithAeth.aeth.isNormalAck(),
+      message =
+        L"${REPORT_TIME} time: illegal io.cachedWorkReqAndRespWithAeth, io.cachedWorkReqAndRespWithAeth.aeth.code=${io.cachedWorkReqAndRespWithAeth.aeth.code} should be normal ACK, when io.cachedWorkReqAndRespWithAeth.workCompStatus=${io.cachedWorkReqAndRespWithAeth.workCompStatus}".toSeq,
+      severity = FAILURE
+    )
   }
 
   // Build QpAddrCacheAgentReadReq according to RqReqWithRxBufAndDmaInfo
@@ -555,7 +555,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth.Value)
 //    report(L"${REPORT_TIME} time:  addrCheckErr=${addrCheckErr}, io.txQCtrl.wrongStateFlush=${io.txQCtrl.wrongStateFlush}, io.errNotifier.pulse=${io.errNotifier.pulse}")
   }
 
-  io.cachedWorkReqAndAck <-/< outStreamWithAck ~~ { payloadData =>
+  io.cachedWorkReqAndAck <-/< outStreamWithAck.map { payloadData =>
     val result = cloneOf(io.cachedWorkReqAndAck.payloadType)
     result.workCompStatus := payloadData._1.workCompStatus
 
@@ -579,7 +579,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth.Value)
     result
   }
 
-  io.readAtomicRespWithDmaInfoBus.respWithDmaInfo <-/< outStream4Dma ~~ {
+  io.readAtomicRespWithDmaInfoBus.respWithDmaInfo <-/< outStream4Dma.map {
     payloadData =>
       val result =
         cloneOf(io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.payloadType)
@@ -692,46 +692,46 @@ class WorkCompGen extends Component {
       assert(
         assertion = ackPsn === cachedWorkReqPsnEnd,
         message =
-          L"io.cachedWorkReqAndAck.ack.bth.psn=${ackPsn} should == cachedWorkReqPsnEnd=${cachedWorkReqPsnEnd}, when io.cachedWorkReqAndAck.isLast=${io.cachedWorkReqAndAck.isLast}",
+          L"${REPORT_TIME} time: io.cachedWorkReqAndAck.ack.bth.psn=${ackPsn} should == cachedWorkReqPsnEnd=${cachedWorkReqPsnEnd}, when io.cachedWorkReqAndAck.isLast=${io.cachedWorkReqAndAck.isLast}".toSeq,
         severity = FAILURE
       )
     }
-    //    PsnUtil.gte(
-    //      inputAck.bth.psn,
-    //      inputCachedWorkReq.psnStart,
-    //      io.qpAttr.npsn
-    //    ) &&
-    //      PsnUtil.lte(inputAck.bth.psn, cachedWorkReqPsnEnd, io.qpAttr.npsn)
-    //  val isWholeWorkReqExplicitAck = inputAckValid &&
-    //    PsnUtil.gte(inputAck.bth.psn, cachedWorkReqPsnEnd, io.qpAttr.npsn)
-    //  val isPartialTargetWorkReqAck = isTargetWorkReq && !isWholeWorkReqExplicitAck
-    //  val isWholeTargetWorkReqAck = isTargetWorkReq && isWholeWorkReqExplicitAck
-    //  val isWholeWorkReqAck = isWholeWorkReqExplicitAck || !inputAckValid
 
-    val inputWorkReqAndAckQueue =
-      io.cachedWorkReqAndAck
-        .takeWhen(isWorkReqDone && isWorkCompNeeded)
-        .queueLowLatency(DMA_WRITE_DELAY_CYCLE)
-        .combStage()
+    val inputWorkReqAndAckQueue = StreamFifoLowLatency(
+      io.cachedWorkReqAndAck.payloadType(),
+      DMA_WRITE_FIFO_DEPTH
+    )
+    inputWorkReqAndAckQueue.io.push << io.cachedWorkReqAndAck
+      .takeWhen(isWorkReqDone && isWorkCompNeeded)
+    // DO NOT flush inputWorkReqAndAckQueue even when error
+//    inputWorkReqAndAckQueue.io.flush := io.txQCtrl.errorFlush
+    assert(
+      assertion = inputWorkReqAndAckQueue.io.push.ready,
+      message =
+        L"${REPORT_TIME} time: inputWorkReqAndAckQueue is full, inputWorkReqAndAckQueue.io.push.ready=${inputWorkReqAndAckQueue.io.push.ready}, inputWorkReqAndAckQueue.io.occupancy=${inputWorkReqAndAckQueue.io.occupancy}, which is not allowed in WorkCompGen".toSeq,
+      severity = FAILURE
+    )
+    val inputWorkReqAndAckQueuePop = inputWorkReqAndAckQueue.io.pop.combStage()
+//        .queueLowLatency(DMA_WRITE_FIFO_DEPTH)
   }
 
   val joinWithDmaResp = new Area {
-    val workReqInQueueValid = insertIntoQueue.inputWorkReqAndAckQueue.valid
-    val inputDmaWriteRespValid = io.readRespDmaWriteResp.resp.valid
+//    val workReqInQueueValid = insertIntoQueue.inputWorkReqAndAckQueuePop.valid
+//    val inputDmaWriteRespValid = io.readRespDmaWriteResp.resp.valid
     val inputHasNak =
-      insertIntoQueue.inputWorkReqAndAckQueue.ackValid && !insertIntoQueue.inputWorkReqAndAckQueue.ack.aeth
+      insertIntoQueue.inputWorkReqAndAckQueuePop.ackValid && !insertIntoQueue.inputWorkReqAndAckQueuePop.ack.aeth
         .isNormalAck()
 
     val isReadWorkReq = WorkReqOpCode.isReadReq(
-      insertIntoQueue.inputWorkReqAndAckQueue.cachedWorkReq.workReq.opcode
+      insertIntoQueue.inputWorkReqAndAckQueuePop.cachedWorkReq.workReq.opcode
     )
     val isAtomicWorkReq = WorkReqOpCode.isAtomicReq(
-      insertIntoQueue.inputWorkReqAndAckQueue.cachedWorkReq.workReq.opcode
+      insertIntoQueue.inputWorkReqAndAckQueuePop.cachedWorkReq.workReq.opcode
     )
 
     val joinDmaRespCond = (isReadWorkReq || isAtomicWorkReq) && !inputHasNak
     val joinStream = StreamConditionalJoin(
-      insertIntoQueue.inputWorkReqAndAckQueue,
+      insertIntoQueue.inputWorkReqAndAckQueuePop,
       io.readRespDmaWriteResp.resp,
       joinCond = joinDmaRespCond
     )
@@ -740,7 +740,7 @@ class WorkCompGen extends Component {
         assertion =
           joinStream._1.cachedWorkReq.workReq.id === joinStream._2.workReqId,
         message =
-          L"${REPORT_TIME} time: inputWorkReqAndAckQueue.cachedWorkReq.workReq.id=${joinStream._1.cachedWorkReq.workReq.id} should == io.readRespDmaWriteResp.resp.workReqId=${joinStream._2.workReqId}, when WR opcode=${insertIntoQueue.inputWorkReqAndAckQueue.cachedWorkReq.workReq.opcode}, joinStream.fire=${joinStream.fire}, joinDmaRespCond=${joinDmaRespCond}, io.readRespDmaWriteResp.resp.fire=${io.readRespDmaWriteResp.resp.fire}",
+          L"${REPORT_TIME} time: inputWorkReqAndAckQueuePop.cachedWorkReq.workReq.id=${joinStream._1.cachedWorkReq.workReq.id} should == io.readRespDmaWriteResp.resp.workReqId=${joinStream._2.workReqId}, when WR opcode=${insertIntoQueue.inputWorkReqAndAckQueuePop.cachedWorkReq.workReq.opcode}, joinStream.fire=${joinStream.fire}, joinDmaRespCond=${joinDmaRespCond}, io.readRespDmaWriteResp.resp.fire=${io.readRespDmaWriteResp.resp.fire}".toSeq,
         severity = FAILURE
       )
     }
@@ -749,7 +749,8 @@ class WorkCompGen extends Component {
   val workCompFlushStatus = WorkCompStatus()
   // TODO: what status should the read/atomic requests before error ACK have?
   workCompFlushStatus := WorkCompStatus.WR_FLUSH_ERR
-  io.workCompPush <-/< joinWithDmaResp.joinStream ~~ { payloadData =>
+  // TODO: only explicit ACK generate WC
+  io.workCompPush <-/< joinWithDmaResp.joinStream.map { payloadData =>
     val isExplicitAck = payloadData._1.ackValid
     val isErrAck = payloadData._1.ack.aeth.isErrAck()
     val result = cloneOf(io.workCompPush.payloadType)
