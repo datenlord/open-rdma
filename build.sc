@@ -4,7 +4,7 @@ import com.goyeau.mill.scalafix.ScalafixModule
 import mill._, scalalib._, scalafmt._
 // import mill.scalalib.bsp.ScalaMetalsSupport
 
-val spinalVersion = "1.6.4"
+val spinalVersion = "1.7.0"
 val scalaTestVersion = "3.2.11"
 val scalafixVersion = "0.10.0"
 val semanticDbVersion = "4.4.33"

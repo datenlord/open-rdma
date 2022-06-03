@@ -2,10 +2,11 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-
 import ConstantSettings._
 import RdmaConstants._
 import StreamVec._
+
+import scala.language.postfixOps
 
 // Table 40, pp. 296, spec 1.4
 // Silently drop illegal incoming packets
@@ -42,7 +43,7 @@ class HeadVerifier(numMaxQPs: Int, busWidth: BusWidth.Value) extends Component {
     val dqpAttr = io.qpAttrVec.oneHotAccess(dqpIdxOH)
     val dqpState = dqpAttr.state
     report(
-      L"${REPORT_TIME} time: HeadVerifier dropped one packet, PSN=${rdmaData.bth.psn}, opcode=${rdmaData.bth.opcode}, dqpn=${rdmaData.bth.dqpn}, dqpIdxOH=${dqpIdxOH}, dqpState=${dqpState}"
+      L"${REPORT_TIME} time: HeadVerifier dropped one packet, PSN=${rdmaData.bth.psn}, opcode=${rdmaData.bth.opcode}, dqpn=${rdmaData.bth.dqpn}, dqpIdxOH=${dqpIdxOH}, dqpState=${dqpState}".toSeq
     )
   }
   io.tx.pktFrag <-/< io.rx.pktFrag.throwWhen(cond).translateWith(rdmaData)
@@ -75,14 +76,15 @@ class AllQpCtrl(numMaxQPs: Int) extends Component {
     when(isQpCreation) {
       assert(
         assertion = foundQpAvailable,
-        message = L"${REPORT_TIME} time: failed to create QP, no QP available",
+        message =
+          L"${REPORT_TIME} time: failed to create QP, no QP available".toSeq,
         severity = FAILURE
       )
     } otherwise {
       assert(
         assertion = foundQpModify,
         message =
-          L"${REPORT_TIME} time: failed to find QP with QPN=${io.qpCreateOrModify.req.qpAttr.sqpn} to modify",
+          L"${REPORT_TIME} time: failed to find QP with QPN=${io.qpCreateOrModify.req.qpAttr.sqpn} to modify".toSeq,
         severity = FAILURE
       )
     }
@@ -109,7 +111,7 @@ class AllQpCtrl(numMaxQPs: Int) extends Component {
     select = qpSelIdxOH.asBits
   )
 
-  io.qpCreateOrModify.resp <-/< StreamArbiterFactory.roundRobin.transactionLock
+  io.qpCreateOrModify.resp <-/< StreamArbiterFactory().roundRobin.transactionLock
     .on(Vec(io.qpCreateOrModifyVec.map(_.resp)))
 }
 
@@ -151,7 +153,7 @@ class AllAddrCache(numMaxPDs: Int, numMaxMRsPerPD: Int) extends Component {
       assert(
         assertion = foundPdAddrCreateOrDeleteIdx,
         message =
-          L"${REPORT_TIME} time: failed to find PD with ID=${io.pdAddrCreateOrDelete.req.pdId}",
+          L"${REPORT_TIME} time: failed to find PD with ID=${io.pdAddrCreateOrDelete.req.pdId}".toSeq,
         severity = FAILURE
       )
     }
@@ -161,7 +163,7 @@ class AllAddrCache(numMaxPDs: Int, numMaxMRsPerPD: Int) extends Component {
       select = pdAddrCreateOrDeleteIdxOH.asBits
     )
 
-    io.pdAddrCreateOrDelete.resp <-/< StreamArbiterFactory.roundRobin.transactionLock
+    io.pdAddrCreateOrDelete.resp <-/< StreamArbiterFactory().roundRobin.transactionLock
       .on(Vec(pdAddrCacheVec.map(_.io.addrCreateOrDelete.resp)))
   }
 
@@ -172,7 +174,7 @@ class AllAddrCache(numMaxPDs: Int, numMaxMRsPerPD: Int) extends Component {
       assert(
         assertion = foundPdAddrCacheQueryIdx,
         message =
-          L"${REPORT_TIME} time: failed to find PD with ID=${io.query.req.pdId}",
+          L"${REPORT_TIME} time: failed to find PD with ID=${io.query.req.pdId}".toSeq,
         severity = FAILURE
       )
     }
@@ -182,7 +184,7 @@ class AllAddrCache(numMaxPDs: Int, numMaxMRsPerPD: Int) extends Component {
       select = pdAddrCacheQueryIdxOH.asBits
     )
 
-    io.query.resp <-/< StreamArbiterFactory.roundRobin.transactionLock
+    io.query.resp <-/< StreamArbiterFactory().roundRobin.transactionLock
       .on(Vec(pdAddrCacheVec.map(_.io.query.resp)))
   }
 
@@ -262,7 +264,7 @@ class AllQpModules(numMaxQPs: Int, busWidth: BusWidth.Value) extends Component {
   Vec(qpVec.map(_.io.rx.pktFrag)) <-/< StreamDemux(rdmaRx, rqSelIdx, numMaxQPs)
 
   val txVec = qpVec.map(_.io.tx.pktFrag)
-  val txSel = StreamArbiterFactory.roundRobin.transactionLock.on(txVec)
+  val txSel = StreamArbiterFactory().roundRobin.transactionLock.on(txVec)
   udpRdmaPktConverter.io.rdmaTx.pktFrag <-/< txSel
 
   val dmaWrReqVec = Vec(qpVec.map(_.io.dma.wr.req))
@@ -285,7 +287,7 @@ class AllQpModules(numMaxQPs: Int, busWidth: BusWidth.Value) extends Component {
   val allAddrCache = new AllAddrCache(MAX_PD, MAX_MR_PER_PD)
   allAddrCache.io.pdCreateOrDelete << io.pdCreateOrDelete
   allAddrCache.io.pdAddrCreateOrDelete << io.pdAddrCreateOrDelete
-  allAddrCache.io.query.req <-/< StreamArbiterFactory.roundRobin.transactionLock
+  allAddrCache.io.query.req <-/< StreamArbiterFactory().roundRobin.transactionLock
     .on(qpVec.map(_.io.pdAddrCacheQuery.req))
   val addrCacheRespTargetQpIdxOH =
     qpVec.map(_.io.qpAttr.sqpn === allAddrCache.io.query.resp.sqpn)
@@ -333,9 +335,9 @@ object RoCEv2 {
       mode = SystemVerilog,
       oneFilePerComponent = true,
       targetDirectory = "./rtl",
-//      romReuse = true, // TODO: turn on once 1.6.5 is released
+      romReuse = true,
       verbose = true
-    ).generate(new RoCEv2(numMaxQPs = 4, BusWidth.W512))
+    ).withoutEnumString().generate(new RoCEv2(numMaxQPs = 4, BusWidth.W512))
 //      .printPruned()
 //      .printPrunedIo()
 //      .printZeroWidth()

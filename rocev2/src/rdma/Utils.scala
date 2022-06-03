@@ -2,9 +2,10 @@ package rdma
 
 import spinal.core._
 import spinal.lib._
-
 import ConstantSettings._
 import RdmaConstants._
+
+import scala.language.postfixOps
 
 object timeNumToCycleNum {
   def apply(timeNumber: TimeNumber): BigInt = {
@@ -18,7 +19,7 @@ object rnrTimeOutOptionToTimeNum {
   def apply(rnrTimeOutOption: Int): TimeNumber = {
     require(
       0 <= rnrTimeOutOption && rnrTimeOutOption < maxRnrTimeOutOption,
-      f"illegal rnrTimeOutOption=${rnrTimeOutOption}, should be 0 <= rnrTimeOutOption < ${maxRnrTimeOutOption}"
+      s"illegal rnrTimeOutOption=${rnrTimeOutOption}, should be 0 <= rnrTimeOutOption < ${maxRnrTimeOutOption}"
     )
 
     RNR_TIMEOUT(rnrTimeOutOption)
@@ -64,7 +65,7 @@ object respTimeOutOptionToTimeNum {
   def apply(timeOutOption: Int): TimeNumber = {
     require(
       0 <= timeOutOption && timeOutOption < maxTimeOutOption,
-      f"illegal timeOutOption=${timeOutOption}, should be 0 <= timeOutOption < ${maxTimeOutOption}"
+      s"illegal timeOutOption=${timeOutOption}, should be 0 <= timeOutOption < ${maxTimeOutOption}"
     )
 
     timeOutOption match {
@@ -82,10 +83,16 @@ object DmaReadRespHandler {
       dmaReadResp: DmaReadRespBus,
       flush: Bool,
       busWidth: BusWidth.Value,
+      reqQueueLen: Int,
       isReqZeroDmaLen: T => Bool
   ): Stream[Fragment[ReqAndDmaReadResp[T]]] = {
     val result =
-      new DmaReadRespHandler(inputReq.payloadType, busWidth, isReqZeroDmaLen)
+      new DmaReadRespHandler(
+        inputReq.payloadType,
+        busWidth,
+        reqQueueLen,
+        isReqZeroDmaLen
+      )
     result.io.flush := flush
     result.io.inputReq << inputReq
     result.io.dmaReadResp << dmaReadResp
@@ -96,6 +103,7 @@ object DmaReadRespHandler {
 class DmaReadRespHandler[T <: Data](
     reqType: HardType[T],
     busWidth: BusWidth.Value,
+    reqQueueLen: Int,
     isReqZeroDmaLen: T => Bool
 ) extends Component {
   val io = new Bundle {
@@ -112,9 +120,15 @@ class DmaReadRespHandler[T <: Data](
   val isLastDmaReadResp = io.dmaReadResp.resp.isLast
 
   val inputReqQueue =
-    StreamFifoLowLatency(io.inputReq.payloadType(), DMA_READ_DELAY_CYCLE)
+    StreamFifoLowLatency(io.inputReq.payloadType(), reqQueueLen)
   inputReqQueue.io.push << io.inputReq.throwWhen(io.flush)
   inputReqQueue.io.flush := io.flush
+  assert(
+    assertion = inputReqQueue.io.push.ready,
+    message =
+      L"${REPORT_TIME} time: inputReqQueue is full, inputReqQueue.io.push.ready=${inputReqQueue.io.push.ready}, inputReqQueue.io.occupancy=${inputReqQueue.io.occupancy}, which is not allowed in DmaReadRespHandler".toSeq,
+    severity = FAILURE
+  )
   val isEmptyReadReq = isReqZeroDmaLen(inputReqQueue.io.pop.payload)
 
   val txSel = UInt(1 bits)
@@ -124,12 +138,11 @@ class DmaReadRespHandler[T <: Data](
   } otherwise {
     txSel := nonEmptyReadIdx
   }
-  val twoStreams =
-    StreamDemux(
-      select = txSel,
-      input = inputReqQueue.io.pop.throwWhen(io.flush),
-      portCount = 2
-    )
+  val twoStreams = StreamDemux(
+    select = txSel,
+    input = inputReqQueue.io.pop.throwWhen(io.flush),
+    portCount = 2
+  )
 
   // Join inputReq with DmaReadResp
   val joinStream = FragmentStreamJoinStream(
@@ -140,7 +153,7 @@ class DmaReadRespHandler[T <: Data](
   val outputStream = StreamMux(
     select = txSel,
     inputs = Vec(
-      twoStreams(emptyReadIdx) ~~ { payloadData =>
+      twoStreams(emptyReadIdx).map { payloadData =>
         val result =
           cloneOf(io.reqAndDmaReadResp.payloadType)
         result.dmaReadResp
@@ -149,7 +162,7 @@ class DmaReadRespHandler[T <: Data](
         result.last := True
         result
       },
-      joinStream ~~ { payloadData =>
+      joinStream.map { payloadData =>
         val result =
           cloneOf(io.reqAndDmaReadResp.payloadType)
         result.dmaReadResp := payloadData._1
@@ -165,14 +178,14 @@ class DmaReadRespHandler[T <: Data](
     assert(
       assertion = !joinStream.valid,
       message =
-        L"${REPORT_TIME} time: when request has zero DMA length, it should not handle DMA read response, that joinStream.valid should be false, but joinStream.valid=${joinStream.valid}",
+        L"${REPORT_TIME} time: when request has zero DMA length, it should not handle DMA read response, that joinStream.valid should be false, but joinStream.valid=${joinStream.valid}".toSeq,
       severity = FAILURE
     )
   } elsewhen (txSel === nonEmptyReadIdx) {
     assert(
       assertion = !twoStreams(emptyReadIdx).valid,
       message =
-        L"${REPORT_TIME} time: when request has non-zero DMA length, twoStreams(emptyReadIdx).valid should be false, but twoStreams(emptyReadIdx).valid=${twoStreams(emptyReadIdx).valid}",
+        L"${REPORT_TIME} time: when request has non-zero DMA length, twoStreams(emptyReadIdx).valid should be false, but twoStreams(emptyReadIdx).valid=${twoStreams(emptyReadIdx).valid}".toSeq,
       severity = FAILURE
     )
   }
@@ -316,7 +329,7 @@ class CombineHeaderAndDmaResponse[T <: Data](
   val addHeaderStream = StreamAddHeader(
     input
       .throwWhen(io.flush)
-      ~~ { payloadData =>
+      .map { payloadData =>
         val result = Fragment(DataAndMty(busWidth))
         result.data := payloadData.dmaReadResp.data
         result.mty := payloadData.dmaReadResp.mty
@@ -326,7 +339,7 @@ class CombineHeaderAndDmaResponse[T <: Data](
     headerStream,
     busWidth
   )
-  io.tx.pktFrag << addHeaderStream ~~ { payloadData =>
+  io.tx.pktFrag << addHeaderStream.map { payloadData =>
     val result = Fragment(RdmaDataPkt(busWidth))
     result.bth := payloadData.header
     result.data := payloadData.data
@@ -401,7 +414,7 @@ class StreamZipByCondition[T1 <: Data, T2 <: Data](
         io.leftFireCond ## io.rightFireCond ## io.bothFireCond
       ) === 1,
       message =
-        L"${REPORT_TIME} time: bothFireCond=${io.bothFireCond}, leftFireCond=${io.leftFireCond}, rightFireCond=${io.rightFireCond} should be mutually exclusive",
+        L"${REPORT_TIME} time: bothFireCond=${io.bothFireCond}, leftFireCond=${io.leftFireCond}, rightFireCond=${io.rightFireCond} should be mutually exclusive".toSeq,
       severity = FAILURE
     )
   }
@@ -427,7 +440,7 @@ class StreamZipByCondition[T1 <: Data, T2 <: Data](
       assertion =
         io.zipOutputStream.fire === io.leftInputStream.fire && io.leftInputStream.fire === io.rightInputStream.fire,
       message =
-        L"${REPORT_TIME} time: zipOutputStream.fire=${io.zipOutputStream.fire} should fire with leftInputStream.fire=${io.leftInputStream.fire} and rightInputStream.fire=${io.rightInputStream.fire}",
+        L"${REPORT_TIME} time: zipOutputStream.fire=${io.zipOutputStream.fire} should fire with leftInputStream.fire=${io.leftInputStream.fire} and rightInputStream.fire=${io.rightInputStream.fire}".toSeq,
       severity = FAILURE
     )
   } otherwise {
@@ -439,7 +452,7 @@ class StreamZipByCondition[T1 <: Data, T2 <: Data](
       assert(
         assertion = io.zipOutputStream.fire === io.leftInputStream.fire,
         message =
-          L"${REPORT_TIME} time: zipOutputStream.fire=${io.zipOutputStream.fire} should fire with leftInputStream.fire=${io.leftInputStream.fire}",
+          L"${REPORT_TIME} time: zipOutputStream.fire=${io.zipOutputStream.fire} should fire with leftInputStream.fire=${io.leftInputStream.fire}".toSeq,
         severity = FAILURE
       )
     }
@@ -452,7 +465,7 @@ class StreamZipByCondition[T1 <: Data, T2 <: Data](
       assert(
         assertion = io.zipOutputStream.fire === io.rightInputStream.fire,
         message =
-          L"${REPORT_TIME} time: zipOutputStream.fire=${io.zipOutputStream.fire} should fire with rightInputStream.fire=${io.rightInputStream.fire}",
+          L"${REPORT_TIME} time: zipOutputStream.fire=${io.zipOutputStream.fire} should fire with rightInputStream.fire=${io.rightInputStream.fire}".toSeq,
         severity = FAILURE
       )
     }
@@ -532,7 +545,7 @@ class StreamSegment[T <: Data](dataType: HardType[T]) extends Component {
     assert(
       assertion = CountOne(io.segmentFragNum) > 0,
       message =
-        L"${REPORT_TIME} time: segmentFragNum=${io.segmentFragNum} should be larger than 0",
+        L"${REPORT_TIME} time: segmentFragNum=${io.segmentFragNum} should be larger than 0".toSeq,
       severity = FAILURE
     )
   }
@@ -548,7 +561,7 @@ class StreamSegment[T <: Data](dataType: HardType[T]) extends Component {
     inputFragCnt.clear()
   }
 
-  io.outputStream << io.inputStream ~~ { payloadData =>
+  io.outputStream << io.inputStream.map { payloadData =>
     val result = cloneOf(io.outputStream.payloadType) // Fragment(dataType())
     result.fragment := payloadData.fragment
     result.last := setLast
@@ -622,7 +635,7 @@ class StreamAddHeader[T <: Data](
     assert(
       assertion = inputHeaderMty === headerMtyComp.resize(inputMtyWidth),
       message =
-        L"${REPORT_TIME} time: invalid inputHeaderMty=${inputHeaderMty} with headerMtyWidth=${inputHeaderMtyWidth}, should be ${headerMtyComp}",
+        L"${REPORT_TIME} time: invalid inputHeaderMty=${inputHeaderMty} with headerMtyWidth=${inputHeaderMtyWidth}, should be ${headerMtyComp}".toSeq,
       severity = FAILURE
     )
     when(inputHeaderMty.orR) {
@@ -630,7 +643,7 @@ class StreamAddHeader[T <: Data](
         // OHMasking.first() return an OH indicate the right most 1 bit.
         assertion = OHMasking.first(inputHeaderMty) === 1,
         message =
-          L"${REPORT_TIME} time: the inputHeaderMty=${inputHeaderMty} should have consecutive valid bits from LSB side",
+          L"${REPORT_TIME} time: the inputHeaderMty=${inputHeaderMty} should have consecutive valid bits from LSB side".toSeq,
         severity = FAILURE
       )
     }
@@ -639,7 +652,7 @@ class StreamAddHeader[T <: Data](
       assert(
         assertion = inputMty.andR,
         message =
-          L"${REPORT_TIME} time: the first or middle fragment should have MTY all set, but MTY=${inputMty}",
+          L"${REPORT_TIME} time: the first or middle fragment should have MTY all set, but MTY=${inputMty}".toSeq,
         severity = FAILURE
       )
     } otherwise { // Last fragment
@@ -648,7 +661,7 @@ class StreamAddHeader[T <: Data](
         assert(
           assertion = inputMty.orR,
           message =
-            L"${REPORT_TIME} time: the last fragment should have MTY=/=0, but MTY=${inputMty}",
+            L"${REPORT_TIME} time: the last fragment should have MTY=/=0, but MTY=${inputMty}".toSeq,
           severity = FAILURE
         )
       }
@@ -725,7 +738,7 @@ class StreamAddHeader[T <: Data](
       when(inputValid) {
         report(
           message =
-            L"${REPORT_TIME} time: invalid inputHeaderMty=${inputHeaderMty} with MTY width=${inputHeaderMtyWidth} and inputHeaderData=${inputHeaderData}",
+            L"${REPORT_TIME} time: invalid inputHeaderMty=${inputHeaderMty} with MTY width=${inputHeaderMtyWidth} and inputHeaderData=${inputHeaderData}".toSeq,
           severity = FAILURE
         )
       }
@@ -807,7 +820,7 @@ class StreamRemoveHeader(busWidth: BusWidth.Value) extends Component {
   assert(
     assertion = 0 < io.headerLenBytes && io.headerLenBytes < inputWidthBytes,
     message =
-      L"${REPORT_TIME} time: must have 0 < headerLenBytes=${io.headerLenBytes} < inputWidthBytes=${U(inputWidthBytes, widthOf(io.headerLenBytes) bits)}",
+      L"${REPORT_TIME} time: must have 0 < headerLenBytes=${io.headerLenBytes} < inputWidthBytes=${U(inputWidthBytes, widthOf(io.headerLenBytes) bits)}".toSeq,
     severity = FAILURE
   )
 
@@ -886,7 +899,7 @@ object StreamConditionalJoin {
       assert(
         assertion = inputA.fire === inputB.fire,
         message =
-          L"${REPORT_TIME} time, inputA.fire=${inputA.fire} should fire with inputB.fire=${inputB.fire} when joinCond=${joinCond}",
+          L"${REPORT_TIME} time, inputA.fire=${inputA.fire} should fire with inputB.fire=${inputB.fire} when joinCond=${joinCond}".toSeq,
         severity = FAILURE
       )
     }
@@ -899,10 +912,17 @@ object StreamConditionalJoin {
   */
 object FragmentStreamJoinStream {
   def apply[T1 <: Data, T2 <: Data](
-      inputFragmentStream: Stream[Fragment[T1]],
+      inputFragStream: Stream[Fragment[T1]],
       inputStream: Stream[T2]
-  ): Stream[Fragment[TupleBundle2[T1, T2]]] = {
-    val joinStream = FragmentStreamConditionalJoinStream(
+  ): Stream[Fragment[TupleBundle2[T1, T2]]] =
+    new Composite(inputFragStream, "FragmentStreamJoinStream") {
+      val resultStream = FragmentStreamConditionalJoinStream(
+        inputFragStream,
+        inputStream,
+        joinCond = True
+      )
+      /*
+    val joinStream = FragmentStreamJoinStreamOnCondition(
       inputFragmentStream,
       inputStream,
       joinCond = True
@@ -916,21 +936,57 @@ object FragmentStreamJoinStream {
       result.last := joinStream.last
       result
     }
-    returnStream.combStage()
-  }
+       */
+    }.resultStream.combStage()
+}
+
+/** Join a fragment stream A of fragments with a stream B, that B will fire only
+  * when the join condition is satisfied and last fragment of A fires; when the
+  * join condition is not satisfied, A will continue fire.
+  */
+object FragmentStreamConditionalJoinStream {
+  def apply[T1 <: Data, T2 <: Data](
+      inputFragStream: Stream[Fragment[T1]],
+      inputStream: Stream[T2],
+      joinCond: Bool
+  ): Stream[Fragment[TupleBundle2[T1, T2]]] =
+    new Composite(inputFragStream, "FragmentStreamConditionalJoinStream") {
+      inputStream.ready := inputFragStream.lastFire && inputStream.valid && joinCond
+      when(inputStream.valid && joinCond) {
+        assert(
+          assertion = inputFragStream.lastFire === inputStream.fire,
+          message =
+            L"${REPORT_TIME} time: when joinCond=${joinCond} is true, during each last beat, inputFragStream and inputStream should fire together in FragmentStreamConditionalJoinStream".toSeq,
+          severity = FAILURE
+        )
+      }
+
+      val resultStream = inputFragStream
+        .haltWhen(joinCond && !inputStream.valid)
+        .map { payloadData =>
+          val result = Fragment(
+            TupleBundle2(inputFragStream.fragmentType, inputStream.payloadType)
+          )
+          result._1 := payloadData.fragment
+          result._2 := inputStream.payload
+          result.last := payloadData.last
+          result
+        }
+    }.resultStream.combStage()
 }
 
 /** Join a stream A of fragments with a stream B, and only fire B when condition
   * is satisfied. When B fires if condition satisfied, it only fires at the same
-  * time when the last fragment of A fires.
+  * time when the last fragment of A fires. If join condition is not satisfied,
+  * stream A will be halted.
   */
-object FragmentStreamConditionalJoinStream {
+object FragmentStreamJoinStreamOnCondition {
   def apply[T1 <: Data, T2 <: Data](
       inputFragmentStream: Stream[Fragment[T1]],
       inputStream: Stream[T2],
       joinCond: Bool
   ): Stream[Fragment[TupleBundle2[T1, T2]]] = {
-    val join = new FragmentStreamConditionalJoinStream(
+    val join = new FragmentStreamJoinStreamOnCondition(
       inputFragmentStream.fragmentType,
       inputStream.payloadType
     )
@@ -941,7 +997,7 @@ object FragmentStreamConditionalJoinStream {
   }
 }
 
-class FragmentStreamConditionalJoinStream[T1 <: Data, T2 <: Data](
+class FragmentStreamJoinStreamOnCondition[T1 <: Data, T2 <: Data](
     dataType1: HardType[T1],
     dataType2: HardType[T2]
 ) extends Component {
@@ -959,19 +1015,20 @@ class FragmentStreamConditionalJoinStream[T1 <: Data, T2 <: Data](
     assert(
       assertion = io.inputFragmentStream.lastFire === io.inputStream.fire,
       message =
-        L"${REPORT_TIME} time: when joinCond=${io.joinCond} is true, during each last beat, inputFragmentStream and inputStream should fire together",
+        L"${REPORT_TIME} time: when joinCond=${io.joinCond} is true, during each last beat, inputFragmentStream and inputStream should fire together".toSeq,
       severity = FAILURE
     )
   }
 
   io.outputJoinStream << io.inputFragmentStream
-    .continueWhen(io.inputStream.valid) ~~ { payloadData =>
-    val result = cloneOf(io.outputJoinStream.payloadType)
-    result._1 := payloadData.fragment
-    result._2 := io.inputStream.payload
-    result.last := payloadData.last
-    result
-  }
+    .continueWhen(io.inputStream.valid)
+    .map { payloadData =>
+      val result = cloneOf(io.outputJoinStream.payloadType)
+      result._1 := payloadData.fragment
+      result._2 := io.inputStream.payload
+      result.last := payloadData.last
+      result
+    }
 }
 
 /** StreamConditionalFork will fork the input based on the condition. If
@@ -1047,14 +1104,84 @@ object FragmentStreamForkQueryJoinResp {
       queryCond: Stream[Fragment[Tin]] => Bool,
       expectResp: Stream[Fragment[Tin]] => Bool,
       joinRespCond: Stream[Fragment[Tin]] => Bool
-  ): Stream[Fragment[TupleBundle3[Tin, Bool, Tresp]]] = {
+  ): Stream[Fragment[TupleBundle3[Tin, Bool, Tresp]]] =
+    new Composite(inputFragStream, "FragmentStreamForkQueryJoinResp") {
+
+      val (input4QueryStream, input4Queue) =
+        StreamConditionalFork2(
+          inputFragStream,
+          forkCond = queryCond(inputFragStream)
+        )
+      queryStream <-/< input4QueryStream
+        .takeWhen(expectResp(input4QueryStream))
+        .translateWith(buildQuery(input4QueryStream))
+
+      val inputFragQueue =
+        StreamFifoLowLatency(inputFragStream.payloadType(), waitQueueDepth)
+//    inputFragQueue.setName("inputFragQueue", weak = true)
+      inputFragQueue.io.push << input4Queue
+      assert(
+        assertion = inputFragQueue.io.push.ready,
+        message =
+          L"${REPORT_TIME} time: inputFragQueue is full, inputFragQueue.io.push.ready=${inputFragQueue.io.push.ready}, inputFragQueue.io.occupancy=${inputFragQueue.io.occupancy}, which is not allowed in FragmentStreamForkQueryJoinResp".toSeq,
+        severity = FAILURE
+      )
+      // TODO: enable queue flush
+//    inputFragQueue.io.flush :=
+      val inputFragQueuePop = inputFragQueue.io.pop.combStage()
+
+      val emptyStream = StreamSource().translateWith(
+        cloneOf(respStream.payloadType).assignDontCare()
+      )
+      // When not expect query response, join with StreamSource()
+      val selectedStreamValid = expectResp(inputFragQueuePop)
+      val selectedStream = StreamMux(
+        select = selectedStreamValid.asUInt,
+        inputs = Vec(emptyStream, respStream)
+      )
+      val stream4Join = selectedStream.translateWith {
+        val result = TupleBundle(selectedStreamValid, selectedStream.payload)
+        result
+      }
+
+      val joinStream = FragmentStreamJoinStreamOnCondition(
+        inputFragQueuePop,
+        stream4Join,
+        joinCond = joinRespCond(inputFragQueuePop)
+      )
+      val resultStream = joinStream
+        .translateWith {
+          val result = Fragment(
+            TupleBundle3(
+              inputFragStream.fragmentType,
+              Bool,
+              respStream.payloadType
+            )
+          )
+          result._1 := joinStream._1
+          result._2 := joinStream._2._1
+          result._3 := joinStream._2._2
+          result.last := joinStream.last
+          result
+        }
+        .combStage()
+      /*
     val (input4QueryStream, originalInputStream) =
       StreamConditionalFork2(
         inputFragStream,
         forkCond = queryCond(inputFragStream)
       )
-    val originalInputQueue =
-      originalInputStream.queueLowLatency(waitQueueDepth)
+//    val originalInputQueue =
+//      originalInputStream.queueLowLatency(waitQueueDepth)
+    val inputFragQueue = new StreamFifoLowLatency(inputFragStream.payloadType, waitQueueDepth)
+    inputFragQueue.io.push << originalInputStream
+    assert(
+      assertion = inputFragQueue.io.push.ready,
+      message = L"inputFragQueue is full, inputFragQueue.io.push.ready=${inputFragQueue.io.push.ready}, inputFragQueue.io.occupancy=${inputFragQueue.io.occupancy}, which is not allowed in FragmentStreamForkQueryJoinResp".toSeq,
+      severity = FAILURE
+    )
+    val originalInputQueue = inputFragQueue.io.pop
+
     queryStream <-/< input4QueryStream
       .takeWhen(expectResp(input4QueryStream))
       .translateWith(buildQuery(input4QueryStream))
@@ -1073,12 +1200,12 @@ object FragmentStreamForkQueryJoinResp {
       result
     }
 
-    val joinStream = FragmentStreamConditionalJoinStream(
+    val joinStream = FragmentStreamJoinStreamOnCondition(
       originalInputQueue,
       stream4Join,
       joinCond = joinRespCond(originalInputQueue)
     )
-    joinStream
+    val resultStream = joinStream
       .translateWith {
         val result = Fragment(
           TupleBundle3(
@@ -1094,7 +1221,8 @@ object FragmentStreamForkQueryJoinResp {
         result
       }
       .combStage()
-  }
+       */
+    }.resultStream
 }
 
 /** Build an arbiter tree to arbitrate on many inputs.
@@ -1145,11 +1273,11 @@ class StreamArbiterTree[T <: Data](
   private def buildArbiterTree(inputVec: Seq[Stream[T]]): Stream[T] = {
     if (inputVec.size <= arbiterPortCount) {
       if (fragmentLockOn) {
-        StreamArbiterFactory.roundRobin.fragmentLock
+        StreamArbiterFactory().roundRobin.fragmentLock
           .on(inputVec)
           .pipelined(m2s = streamPipelined, s2m = streamPipelined)
       } else {
-        StreamArbiterFactory.roundRobin.transactionLock
+        StreamArbiterFactory().roundRobin.transactionLock
           .on(inputVec)
           .pipelined(m2s = streamPipelined, s2m = streamPipelined)
       }
@@ -1157,11 +1285,11 @@ class StreamArbiterTree[T <: Data](
       val segmentList = inputVec.grouped(arbiterPortCount).toList
       val nextTreeLayer = for (segment <- segmentList) yield {
         if (fragmentLockOn) {
-          StreamArbiterFactory.roundRobin.fragmentLock
+          StreamArbiterFactory().roundRobin.fragmentLock
             .on(segment)
             .pipelined(m2s = streamPipelined, s2m = streamPipelined)
         } else {
-          StreamArbiterFactory.roundRobin.transactionLock
+          StreamArbiterFactory().roundRobin.transactionLock
             .on(segment)
             .pipelined(m2s = streamPipelined, s2m = streamPipelined)
         }
@@ -1200,7 +1328,7 @@ class StreamOneHotDeMux[T <: Data](dataType: HardType[T], portCount: Int)
     assert(
       assertion = CountOne(io.select) <= 1,
       message =
-        L"${REPORT_TIME} time: io.select=${io.select} is not one hot, io.select should have no more than one bit as true, when io.input is valid",
+        L"${REPORT_TIME} time: io.select=${io.select} is not one hot, io.select should have no more than one bit as true, when io.input is valid".toSeq,
       severity = FAILURE
     )
   }
@@ -1251,7 +1379,7 @@ class StreamOneHotMux[T <: Data](dataType: HardType[T], portCount: Int)
     assert(
       assertion = CountOne(io.select) <= 1,
       message =
-        L"${REPORT_TIME} time: de-mux conditions io.select=${io.select} should have no more than one true condition when input streams have valid input",
+        L"${REPORT_TIME} time: de-mux conditions io.select=${io.select} should have no more than one true condition when input streams have valid input".toSeq,
       severity = FAILURE
     )
   }
@@ -1275,7 +1403,7 @@ object StreamDeMuxByConditions {
       assert(
         assertion = CountOne(oneHot) === 1,
         message =
-          L"${REPORT_TIME} time: de-mux conditions=${oneHot} should have exact one true condition when input stream is valid",
+          L"${REPORT_TIME} time: de-mux conditions=${oneHot} should have exact one true condition when input stream is valid".toSeq,
         severity = FAILURE
       )
     }
@@ -1394,15 +1522,15 @@ class StreamVec[T <: Data](val strmVec: Vec[Stream[T]]) {
     }
   }
 
-  //  def >-/>(that: Vec[Stream[T]]) = new Area {
-  //    require(
-  //      strmVec.length == that.length,
-  //      s"StreamVec size not match, this.len=${strmVec.length} != that.len=${that.length}"
-  //    )
-  //    for (idx <- 0 until that.length) {
-  //      that(idx) <-/< strmVec(idx)
-  //    }
-  //  }
+//  def >-/>(that: Vec[Stream[T]]) = new Area {
+//    require(
+//      strmVec.length == that.length,
+//      s"StreamVec size not match, this.len=${strmVec.length} != that.len=${that.length}"
+//    )
+//    for (idx <- 0 until that.length) {
+//      that(idx) <-/< strmVec(idx)
+//    }
+//  }
 }
 
 /** StreamCounterSource generates a stream of counter value, from startValue to
@@ -1566,6 +1694,7 @@ object SeqOut {
       flush: Bool,
       outPsnRangeFifoPush: Stream[TPsnRange],
       outDataStreamVec: Vec[Stream[Fragment[RdmaDataPkt]]],
+//      psnOutRangeFifoDepth: Int,
       outputValidateFunc: (TPsnRange, RdmaDataPkt) => Unit,
       // Outputs:
       hasPktToOutput: Bool,
@@ -1574,21 +1703,28 @@ object SeqOut {
     // TODO: set max pending request number using QpAttrData
     val psnOutRangeFifo = StreamFifoLowLatency(
       outPsnRangeFifoPush.payloadType(),
-      depth = PENDING_REQ_NUM
+      depth = PSN_OUT_RANGE_FIFO_DEPTH
     )
     psnOutRangeFifo.io.flush := flush
     psnOutRangeFifo.io.push << outPsnRangeFifoPush
+    assert(
+      assertion = psnOutRangeFifo.io.push.ready,
+      message =
+        L"${REPORT_TIME} time: psnOutRangeFifo is full, psnOutRangeFifo.io.push.ready=${psnOutRangeFifo.io.push.ready}, psnOutRangeFifo.io.occupancy=${psnOutRangeFifo.io.occupancy}, which is not allowed in SeqOut".toSeq,
+      severity = FAILURE
+    )
 
     val outStreamVec = Vec(outDataStreamVec.map(_.throwWhen(flush)))
-    val outSelOH = outStreamVec.map(resp => {
-      val psnRangeMatch = resp.valid && psnOutRangeFifo.io.pop.valid &&
-        PsnUtil.lte(psnOutRangeFifo.io.pop.start, resp.bth.psn, curPsn) &&
-        PsnUtil.lte(resp.bth.psn, psnOutRangeFifo.io.pop.end, curPsn)
-      when(psnRangeMatch) {
-        outputValidateFunc(psnOutRangeFifo.io.pop, resp)
-      }
-      psnRangeMatch
-    })
+    val outSelOH = outStreamVec.map(resp =>
+      new Composite(resp, "outSelOH") {
+        val psnRangeMatch = resp.valid && psnOutRangeFifo.io.pop.valid &&
+          PsnUtil.lte(psnOutRangeFifo.io.pop.start, resp.bth.psn, curPsn) &&
+          PsnUtil.lte(resp.bth.psn, psnOutRangeFifo.io.pop.end, curPsn)
+        when(psnRangeMatch) {
+          outputValidateFunc(psnOutRangeFifo.io.pop, resp)
+        }
+      }.psnRangeMatch
+    )
 
     hasPktToOutput := outSelOH.orR
     val outStreamSel = StreamOneHotMux(
@@ -1596,10 +1732,12 @@ object SeqOut {
       inputs = outStreamVec
     )
 
-    val outJoinStream = FragmentStreamConditionalJoinStream(
+    val joinCond =
+      outStreamSel.bth.psn === psnOutRangeFifo.io.pop.end && outStreamSel.isLast
+    val outJoinStream = FragmentStreamJoinStreamOnCondition(
       inputFragmentStream = outStreamSel,
       inputStream = psnOutRangeFifo.io.pop,
-      joinCond = outStreamSel.bth.psn === psnOutRangeFifo.io.pop.end
+      joinCond = joinCond
     )
     val outStream = outJoinStream.translateWith {
       val result = cloneOf(outDataStreamVec(0).payloadType)
@@ -1611,7 +1749,7 @@ object SeqOut {
     opsnInc.inc := outStreamSel.lastFire
     opsnInc.psnVal := outStreamSel.bth.psn
 
-    val result = (outStream, psnOutRangeFifo)
+    val result = (outStream.combStage(), psnOutRangeFifo)
   }.result
 }
 
@@ -1620,28 +1758,32 @@ object IPv4Addr {
     ipv4Str match {
       case s"$a.$b.$c.$d" => {
         val parts = List(a, b, c, d).map(_.toInt)
-        assert(!parts.exists(_ > 255), s"invalid IPv4 addr=$ipv4Str")
+        require(!parts.exists(_ > 255), s"invalid IPv4 addr=$ipv4Str")
         parts.map(i => B(i & 0xff, 8 bits)).reduce(_ ## _)
       }
       case _ => {
-        assert(False, s"illegal IPv4 string=${ipv4Str}")
+        assert(
+          assertion = False,
+          message = s"illegal IPv4 string=${ipv4Str}",
+          severity = FAILURE
+        )
         B(0, 32 bits)
       }
     }
 
-    //    val strParts = ipv4Str.split('.')
-    //    assert(
-    //      strParts.length == 4,
-    //      s"string split parts length=${strParts.length}, invalid IPv4 addr=$ipv4Str"
-    //    )
-    //    val intParts = strParts.map(_.toInt)
-    //    intParts.foreach(i =>
-    //      assert(i < 256 && i >= 0, s"invalid IPv4 addr=$ipv4Str")
-    //    )
-    //    val ipBits = intParts.map(a => B(a & 0xff, 8 bits)).reduce(_ ## _)
-    //    assert(ipBits.getWidth == 32, s"invalid IPv4 addr=$ipv4Str")
-    //
-    //    ipBits
+//    val strParts = ipv4Str.split('.')
+//    assert(
+//      strParts.length == 4,
+//      s"string split parts length=${strParts.length}, invalid IPv4 addr=$ipv4Str"
+//    )
+//    val intParts = strParts.map(_.toInt)
+//    intParts.foreach(i =>
+//      assert(i < 256 && i >= 0, s"invalid IPv4 addr=$ipv4Str")
+//    )
+//    val ipBits = intParts.map(a => B(a & 0xff, 8 bits)).reduce(_ ## _)
+//    assert(ipBits.getWidth == 32, s"invalid IPv4 addr=$ipv4Str")
+//
+//    ipBits
   }
 }
 
@@ -1868,6 +2010,11 @@ object reqPadCountCheck {
       busWidth: BusWidth.Value
   ): Bool =
     new Composite(padCount, "reqPadCountCheck") {
+      require(
+        busWidth.id >= MAX_HEADER_WIDTH,
+        s"busWidth=${busWidth.id} should >= MAX_HEADER_WIDTH=${MAX_HEADER_WIDTH}, in reqPadCountCheck"
+      )
+
       val paddingCheck = True
       val mtyCheck = Bool()
       val pktFragLen = CountOne(pktMty)
@@ -1883,14 +2030,12 @@ object reqPadCountCheck {
         when(OpCode.isAtomicReqPkt(opcode)) {
           // Atomic request has BTH and AtomicEth, total 48 + 28 = 76 bytes
           // BTH is not included in packet payload
-          mtyCheck := pktFragLen ===
-            ((widthOf(BTH()) + widthOf(AtomicEth())) % busWidth.id)
+          mtyCheck := pktFragLen === (ATOMIC_REQ_WIDTH / BYTE_WIDTH)
         } elsewhen (OpCode.isReadReqPkt(opcode)) {
           // Read request has BTH and RETH, total 48 + 16 = 64 bytes
           // BTH is not included in packet payload
           // Assume RETH fits in bus width
-          mtyCheck := pktFragLen ===
-            ((widthOf(BTH()) + widthOf(RETH())) % busWidth.id)
+          mtyCheck := pktFragLen === (READ_REQ_WIDTH / BYTE_WIDTH)
         }
       }
       val result = mtyCheck && paddingCheck
@@ -1906,9 +2051,14 @@ object respPadCountCheck {
       busWidth: BusWidth.Value
   ): Bool =
     new Composite(padCount, "respPadCountCheck") {
+      require(
+        busWidth.id >= MAX_HEADER_WIDTH,
+        s"busWidth=${busWidth.id} should >= MAX_HEADER_WIDTH=${MAX_HEADER_WIDTH}, in respPadCountCheck"
+      )
+
       val paddingCheck = True
       val mtyCheck = Bool()
-      val pktFragLen = CountOne(pktMty)
+      val pktFragLenBytes = CountOne(pktMty)
       when(
         OpCode.isFirstReadRespPkt(opcode) ||
           OpCode.isMidReadRespPkt(opcode) ||
@@ -1927,20 +2077,17 @@ object respPadCountCheck {
           // Atomic response has BTH and AtomicAckEth, total 48 + 8 = 56 bytes
           // BTH is included in packet payload
           // Assume AtomicAckEth fits in bus width
-          mtyCheck := pktFragLen ===
-            (widthOf(BTH()) + widthOf(AtomicAckEth()) % busWidth.id)
+          mtyCheck := pktFragLenBytes === (ATOMIC_RESP_WIDTH / BYTE_WIDTH)
         } elsewhen (OpCode.isNonReadAtomicRespPkt(opcode)) {
           // Acknowledge has BTH and AETH, total 48 + 4 = 52 bytes
           // BTH is included in packet payload
           // Assume AETH fits in bus width
-          mtyCheck := pktFragLen ===
-            (widthOf(BTH()) + widthOf(AETH()) % busWidth.id)
+          mtyCheck := pktFragLenBytes === (ACKNOWLEDGE_WIDTH / BYTE_WIDTH)
         } elsewhen (OpCode.isLastOrOnlyReadRespPkt(opcode)) {
           // Last or Only read response has BTH and AETH and possible read data, at least 48 + 4 = 52 bytes
           // BTH is included in packet payload
           // Assume AETH fits in bus width
-          mtyCheck := pktFragLen >=
-            (widthOf(BTH()) + widthOf(AETH()) % busWidth.id)
+          mtyCheck := pktFragLenBytes >= (ACKNOWLEDGE_WIDTH / BYTE_WIDTH)
         }
       }
       val result = mtyCheck && paddingCheck
@@ -2008,7 +2155,7 @@ object computePktNum {
 
           report(
             message =
-              L"${REPORT_TIME} time: computePktNum encounters invalid PMTU=${pmtu}",
+              L"${REPORT_TIME} time: computePktNum encounters invalid PMTU=${pmtu}".toSeq,
             severity = FAILURE
           )
         }
@@ -2077,7 +2224,7 @@ object pmtuPktLenBytes {
         result := 0
         report(
           message =
-            L"${REPORT_TIME} time: pmtuPktLenBytes encounters invalid PMTU=${pmtu}",
+            L"${REPORT_TIME} time: pmtuPktLenBytes encounters invalid PMTU=${pmtu}".toSeq,
           severity = FAILURE
         )
       }
@@ -2109,7 +2256,7 @@ object pmtuLenMask {
         result := 0
         report(
           message =
-            L"${REPORT_TIME} time: pmtuLenMask encounters invalid PMTU=${pmtu}",
+            L"${REPORT_TIME} time: pmtuLenMask encounters invalid PMTU=${pmtu}".toSeq,
           severity = FAILURE
         )
       }
@@ -2138,7 +2285,7 @@ object divideByPmtuUp {
       assert(
         assertion = checkPmtu(pmtu),
         message =
-          L"${REPORT_TIME} time: divideByPmtuUp encounters invalid PMTU=${pmtu}",
+          L"${REPORT_TIME} time: divideByPmtuUp encounters invalid PMTU=${pmtu}".toSeq,
         severity = FAILURE
       )
 
@@ -2200,7 +2347,7 @@ object checkRespOpCodeMatch {
       } otherwise {
         report(
           message =
-            L"${REPORT_TIME} time: reqOpCode=${reqOpCode} should be request opcode, respOpCode=${respOpCode}",
+            L"${REPORT_TIME} time: reqOpCode=${reqOpCode} should be request opcode, respOpCode=${respOpCode}".toSeq,
           severity = FAILURE
         )
         result := False
@@ -2227,7 +2374,7 @@ object PartialRetry {
         assert(
           assertion = qpAttr.retryReason === RetryReason.SEQ_ERR,
           message =
-            L"only NAK SEQ ERR can result in partial retry, but qpAttr.retryReason=${qpAttr.retryReason}",
+            L"only NAK SEQ ERR can result in partial retry, but qpAttr.retryReason=${qpAttr.retryReason}".toSeq,
           severity = FAILURE
         )
       }
@@ -2342,7 +2489,7 @@ object PartialRetry {
           curPsn
         ),
         message =
-          L"${REPORT_TIME} time: retryReqPsn=${retryReqPsn} should < origReqPsnStart=${origReqPsnStart} + origReqPktNum=${origReqPktNum} = ${origReqPsnEndExclusive} in PSN order, curPsn=${curPsn}",
+          L"${REPORT_TIME} time: retryReqPsn=${retryReqPsn} should < origReqPsnStart=${origReqPsnStart} + origReqPktNum=${origReqPktNum} = ${origReqPsnEndExclusive} in PSN order, curPsn=${curPsn}".toSeq,
         severity = FAILURE
       )
       val retryDmaReadOffset =
@@ -2359,7 +2506,7 @@ object PartialRetry {
       assert(
         assertion = psnDiff < origReqPktNum,
         message =
-          L"${REPORT_TIME} time: psnDiff=${psnDiff} should < origReqPktNum=${origReqPktNum}, retryReqPsn=${retryReqPsn}, origReqPsnStart=${origReqPsnStart}, curPsn=${curPsn}",
+          L"${REPORT_TIME} time: psnDiff=${psnDiff} should < origReqPktNum=${origReqPktNum}, retryReqPsn=${retryReqPsn}, origReqPsnStart=${origReqPsnStart}, curPsn=${curPsn}".toSeq,
         severity = FAILURE
       )
 //      report(
@@ -2389,7 +2536,7 @@ object reqRespOpCodeHeaderLen {
       val aethLenBytes = widthOf(AETH()) / BYTE_WIDTH
       val atomicAckEthLenBytes = widthOf(AtomicAckEth()) / BYTE_WIDTH
 
-      val result = UInt(MAX_HEADER_LEN_WIDTH bits)
+      val result = UInt(MAX_HEADER_WIDTH bits)
       switch(opcode) {
         is(
           OpCode.SEND_FIRST.id,
@@ -2454,7 +2601,7 @@ object reqRespOpCodeHeaderLen {
         default {
           report(
             message =
-              L"${REPORT_TIME} time: illegal opcode=${opcode}, must be send/write/read/atomic request or response",
+              L"${REPORT_TIME} time: illegal opcode=${opcode}, must be send/write/read/atomic request or response".toSeq,
             severity = ERROR
           )
           result := 0
@@ -2490,7 +2637,7 @@ object ReqRespTotalLenCalculator {
       assert(
         assertion = CountOne(concat) === 1,
         message =
-          L"${REPORT_TIME} time: illegal opcode=${opcode}, isFirstPkt=${isFirstPkt}, isMidPkt=${isMidPkt}, isLastPkt=${isLastPkt}, isOnlyPkt=${isOnlyPkt}, should be first/middle/last/only request/response",
+          L"${REPORT_TIME} time: illegal opcode=${opcode}, isFirstPkt=${isFirstPkt}, isMidPkt=${isMidPkt}, isLastPkt=${isLastPkt}, isOnlyPkt=${isOnlyPkt}, should be first/middle/last/only request/response".toSeq,
         severity = FAILURE
       )
 
@@ -2564,7 +2711,7 @@ object ReqRespTotalLenCalculator {
             default {
               report(
                 message =
-                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}",
+                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
                 severity = FAILURE
               )
             }
@@ -2614,7 +2761,7 @@ object ReqRespTotalLenCalculator {
             default {
               report(
                 message =
-                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}",
+                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
                 severity = FAILURE
               )
             }
@@ -2647,7 +2794,7 @@ object ReqRespTotalLenCalculator {
             is(firstPkt, midPkt) {
               report(
                 message =
-                  L"${REPORT_TIME} time: first or middle request/response packet length check failed, opcode=${opcode}, when isFirstFrag=${isFirstFrag} and isLastFrag=${isLastFrag}",
+                  L"${REPORT_TIME} time: first or middle request/response packet length check failed, opcode=${opcode}, when isFirstFrag=${isFirstFrag} and isLastFrag=${isLastFrag}".toSeq,
                 severity = FAILURE // TODO: change to NOTE
               )
 
@@ -2656,7 +2803,7 @@ object ReqRespTotalLenCalculator {
             default {
               report(
                 message =
-                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}",
+                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
                 severity = FAILURE
               )
             }
@@ -2675,219 +2822,7 @@ object ReqRespTotalLenCalculator {
     }
   }.result
 }
-/*
-object ReqRespTotalLenCalculator {
-  def apply(
-      flush: Bool,
-      pktFireFlow: Flow[Fragment[LenCheckElements]],
-      pmtuLenBytes: UInt,
-      isFirstPkt: Bool,
-      isMidPkt: Bool,
-      isLastPkt: Bool,
-      isOnlyPkt: Bool,
-      firstPktHeaderLenFunc: Bits => UInt,
-      midPktHeaderLenFunc: Bits => UInt,
-      lastPktHeaderLenFunc: Bits => UInt,
-      onlyPktHeaderLenFunc: Bits => UInt
-  ) = new Composite(pktFireFlow, "ReqTotalLenCalculator") {
-    val fire = pktFireFlow.valid
-    val opcode = pktFireFlow.opcode
-    val padCnt = pktFireFlow.padCnt
-    val mty = pktFireFlow.mty
-    val isFirstFrag = pktFireFlow.isFirst
-    val isLastFrag = pktFireFlow.isLast
 
-    val concat = isFirstPkt ## isMidPkt ## isLastPkt ## isOnlyPkt
-    val width = log2Up(widthOf(concat) + 1)
-    when(fire) {
-      assert(
-        assertion = CountOne(concat) === 1,
-        message =
-          L"${REPORT_TIME} time: illegal opcode=${opcode}, should be first/middle/last/only request/response",
-        severity = FAILURE
-      )
-
-//      report(
-//        L"${REPORT_TIME} time: opcode=${pktFireFlow.opcode}, PSN=${pktFireFlow.psn}, mty=${pktFireFlow.mty}, padCnt=${pktFireFlow.padCnt}"
-//      )
-    }
-
-    val firstPkt = U(0, width bits)
-    val midPkt = U(1, width bits)
-    val lastPkt = U(2, width bits)
-    val onlyPkt = U(3, width bits)
-    val illegalPkt = U(4, width bits)
-    val isFirstMidLastOnlyPkt = concat.mux(
-      8 -> firstPkt,
-      4 -> midPkt,
-      2 -> lastPkt,
-      1 -> onlyPkt,
-      default -> illegalPkt
-    )
-
-    val firstPktLenAdjust = firstPktHeaderLenFunc(opcode)
-    val midPktLenAdjust = midPktHeaderLenFunc(opcode)
-    val lastPktLenAdjust = lastPktHeaderLenFunc(opcode)
-    val onlyPktLenAdjust = onlyPktHeaderLenFunc(opcode)
-
-    val pktLenBytesReg = RegInit(U(0, RDMA_MAX_LEN_WIDTH bits))
-    val totalLenBytesReg = RegInit(U(0, RDMA_MAX_LEN_WIDTH bits))
-
-    val pktFragLenBytes = CountOne(mty).resize(RDMA_MAX_LEN_WIDTH)
-    val isPktLenCheckErr = False
-
-    val totalLenValid = False
-    val totalLenOutput = UInt(RDMA_MAX_LEN_WIDTH bits)
-    totalLenOutput := totalLenBytesReg
-    val totalLenOutFlow = Flow(LenCheckResult())
-    totalLenOutFlow.valid := totalLenValid
-    totalLenOutFlow.totalLenOutput := totalLenOutput
-    totalLenOutFlow.isPktLenCheckErr := isPktLenCheckErr
-
-    def checkPmtuAndPadCnt4FirstOrMidPkt(pktLenBytes: UInt, padCnt: UInt) = {
-      pktLenBytes === pmtuLenBytes &&
-      padCnt === 0
-    }
-    def checkPadCnt4LastOrOnlyPkt(totalLenBytes: UInt, padCnt: UInt) = {
-      totalLenBytes((PAD_COUNT_WIDTH - 1) downto 0) ===
-        (PAD_COUNT_FULL - padCnt).resize(PAD_COUNT_WIDTH)
-    }
-    // Calculate request/response total length
-    when(fire) {
-      switch(isFirstFrag ## isLastFrag) {
-        is(True ## False) { // First fragment
-          switch(isFirstMidLastOnlyPkt) {
-            is(firstPkt) {
-              totalLenBytesReg := 0
-
-              pktLenBytesReg := pktFragLenBytes - firstPktLenAdjust
-            }
-            is(midPkt) {
-              pktLenBytesReg := pktFragLenBytes - midPktLenAdjust
-            }
-            is(lastPkt) {
-              pktLenBytesReg := pktFragLenBytes - lastPktLenAdjust - padCnt
-            }
-            is(onlyPkt) {
-              totalLenBytesReg := 0
-
-              pktLenBytesReg := pktFragLenBytes - onlyPktLenAdjust - padCnt
-            }
-            default {
-              report(
-                message =
-                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}",
-                severity = FAILURE
-              )
-            }
-          }
-        }
-        is(False ## True) { // Last fragment
-          pktLenBytesReg := 0
-
-          switch(isFirstMidLastOnlyPkt) {
-            is(firstPkt) {
-              val pktLenBytes = pktLenBytesReg + pktFragLenBytes
-              totalLenBytesReg := pktLenBytes
-              isPktLenCheckErr := !checkPmtuAndPadCnt4FirstOrMidPkt(
-                pktLenBytes,
-                padCnt
-              )
-            }
-            is(midPkt) {
-              val pktLenBytes = pktLenBytesReg + pktFragLenBytes
-              totalLenBytesReg := totalLenBytesReg + pktLenBytes
-              isPktLenCheckErr := !checkPmtuAndPadCnt4FirstOrMidPkt(
-                pktLenBytes,
-                padCnt
-              )
-            }
-            is(lastPkt) {
-              totalLenBytesReg := 0
-              val totalLenBytes =
-                totalLenBytesReg + pktLenBytesReg + pktFragLenBytes
-              isPktLenCheckErr := !checkPadCnt4LastOrOnlyPkt(
-                totalLenBytes,
-                padCnt
-              )
-              totalLenValid := True
-              totalLenOutput := totalLenBytes
-            }
-            is(onlyPkt) {
-              totalLenBytesReg := 0
-              val totalLenBytes = pktLenBytesReg + pktFragLenBytes
-              isPktLenCheckErr := !checkPadCnt4LastOrOnlyPkt(
-                totalLenBytes,
-                padCnt
-              )
-              totalLenValid := True
-              totalLenOutput := totalLenBytes
-            }
-            default {
-              report(
-                message =
-                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}",
-                severity = FAILURE
-              )
-            }
-          }
-        }
-        is(True ## True) { // Single fragment, both first and last
-          totalLenBytesReg := 0
-          pktLenBytesReg := 0
-
-          switch(isFirstMidLastOnlyPkt) {
-            is(onlyPkt) {
-              val totalLenBytes = pktFragLenBytes - onlyPktLenAdjust - padCnt
-              isPktLenCheckErr := !checkPadCnt4LastOrOnlyPkt(
-                totalLenBytes,
-                padCnt
-              )
-              totalLenValid := True
-              totalLenOutput := totalLenBytes
-            }
-            is(lastPkt) {
-              val totalLenBytes =
-                totalLenBytesReg + pktFragLenBytes - lastPktLenAdjust - padCnt
-              isPktLenCheckErr := !checkPadCnt4LastOrOnlyPkt(
-                totalLenBytes,
-                padCnt
-              )
-              totalLenValid := True
-              totalLenOutput := totalLenBytes
-            }
-            is(firstPkt, midPkt) {
-              report(
-                message =
-                  L"${REPORT_TIME} time: first or middle request/response packet length check failed, opcode=${opcode}, when isFirstFrag=${isFirstFrag} and isLastFrag=${isLastFrag}",
-                severity = FAILURE // TODO: change to NOTE
-              )
-
-              isPktLenCheckErr := True
-            }
-            default {
-              report(
-                message =
-                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}",
-                severity = FAILURE
-              )
-            }
-          }
-        }
-        is(False ## False) { // Middle fragment
-          pktLenBytesReg := pktLenBytesReg + pktFragLenBytes
-        }
-      }
-    }
-    val result = totalLenOutFlow
-
-    when(flush) {
-      pktLenBytesReg := 0
-      totalLenBytesReg := 0
-    }
-  }.result
-}
- */
 object AddrCacheQueryAndRespHandler {
   def apply[Tin <: Data](
       inputFragStream: Stream[Fragment[Tin]],
@@ -2902,7 +2837,7 @@ object AddrCacheQueryAndRespHandler {
       inputFragStream,
       addrCacheRead.req,
       addrCacheRead.resp,
-      waitQueueDepth = ADDR_CACHE_QUERY_DELAY_CYCLE,
+      waitQueueDepth = ADDR_CACHE_QUERY_FIFO_DEPTH,
       buildQuery = buildAddrCacheQuery,
       queryCond = addrCacheQueryCond,
       expectResp = expectAddrCacheResp,
@@ -2924,7 +2859,7 @@ object AddrCacheQueryAndRespHandler {
       assert(
         assertion = inputPktFrag.bth.psn === addrCacheQueryResp.psn,
         message =
-          L"${REPORT_TIME} time: addrCacheReadResp.resp has PSN=${addrCacheQueryResp.psn} not match RQ query PSN=${inputPktFrag.bth.psn}",
+          L"${REPORT_TIME} time: addrCacheReadResp.resp has PSN=${addrCacheQueryResp.psn} not match query PSN=${inputPktFrag.bth.psn}".toSeq,
         severity = FAILURE
       )
     }

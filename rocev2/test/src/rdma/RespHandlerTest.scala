@@ -2,6 +2,8 @@ package rdma
 
 import spinal.core._
 import spinal.core.sim._
+import spinal.lib._
+
 import ConstantSettings._
 import RdmaConstants._
 import StreamSimUtil._
@@ -16,7 +18,9 @@ import SimSettings._
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
 import org.scalatest.AppendedClues._
+
 import scala.collection.mutable
+import scala.language.postfixOps
 
 class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
@@ -50,7 +54,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
       val dupOrGhostAckQueue = mutable.Queue[(PktNum, PsnStart, PktLen)]()
       val inputAckQueue = mutable.Queue[PSN]()
 
-      val pendingReqNum = PENDING_REQ_NUM
+      val pendingReqNum = MAX_PENDING_REQ_NUM
       val matchCnt = MATCH_CNT
 
       for (_ <- 0 until pendingReqNum) {
@@ -61,7 +65,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
       }
       fork {
         while (true) {
-          waitUntil(dupOrGhostAckQueue.isEmpty)
+          dut.clockDomain.waitSamplingWhere(dupOrGhostAckQueue.isEmpty)
 
           for (_ <- 0 until pendingReqNum) {
             val pktNum = pktNumItr.next()
@@ -74,9 +78,10 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
 
       // io.cachedWorkReqPop never fire
       MiscUtils.checkConditionAlwaysHold(dut.clockDomain)(
-        !dut.io.cachedWorkReqPop.ready.toBoolean,
+        cond = !dut.io.cachedWorkReqPop.ready.toBoolean,
 //        !(dut.io.cachedWorkReqPop.valid.toBoolean && dut.io.cachedWorkReqPop.ready.toBoolean),
-        f"${simTime()} time: dut.io.cachedWorkReqPop.ready=${dut.io.cachedWorkReqPop.ready.toBoolean} should be false for duplicate or ghost ACK"
+        clue =
+          f"${simTime()} time: dut.io.cachedWorkReqPop.ready=${dut.io.cachedWorkReqPop.ready.toBoolean} should be false for duplicate or ghost ACK"
       )
 
       streamMasterDriver(dut.io.rx, dut.clockDomain) {
@@ -164,7 +169,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
         ]()
       val matchQueue = mutable.Queue[Int]()
 
-      val pendingReqNum = PENDING_REQ_NUM
+      val pendingReqNum = MAX_PENDING_REQ_NUM
       val matchCnt = MATCH_CNT
       for (idx <- 0 until pendingReqNum) {
         val pktNum = pktNumItr.next()
@@ -188,7 +193,7 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
       }
       fork {
         while (true) {
-          waitUntil(explicitAckQueue.isEmpty)
+          dut.clockDomain.waitSamplingWhere(explicitAckQueue.isEmpty)
 
           for (idx <- 0 until pendingReqNum) {
             val pktNum = pktNumItr.next()
@@ -254,10 +259,8 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
       onStreamFire(dut.io.rx, dut.clockDomain) {
         val ackType = AckTypeSim.decodeFromAeth(dut.io.rx.aeth)
         if (AckTypeSim.isRetryNak(ackType)) {
-          assert(
-            dut.io.retryNotifier.pulse.toBoolean,
+          dut.io.retryNotifier.pulse.toBoolean shouldBe true withClue
             f"${simTime()} time: dut.io.retryNotifier.pulse=${dut.io.retryNotifier.pulse.toBoolean} should be true when ackType=${ackType}"
-          )
         }
         inputAckQueue.enqueue((dut.io.rx.pktFrag.bth.psn.toInt, ackType))
       }
@@ -289,16 +292,13 @@ class CoalesceAndNormalAndRetryNakHandlerTest extends AnyFunSuite {
           retryNakPsnIn shouldBe ackPsnIn withClue
             f"${simTime()} time: retryNakPsnIn=${retryNakPsnIn} == ackPsnIn=${ackPsnIn}"
 
-          assert(
-            AckTypeSim.isRetryNak(retryNakTypeIn),
+          AckTypeSim.isRetryNak(retryNakTypeIn) shouldBe true withClue
             f"${simTime()} time: retryNakTypeIn=${retryNakTypeIn} should be retry NAK"
-          )
-          assert(
-            AckTypeSim.isFatalNak(ackTypeIn) || AckTypeSim.isNormalAck(
-              ackTypeIn
-            ),
+
+          AckTypeSim.isFatalNak(ackTypeIn) || AckTypeSim.isNormalAck(
+            ackTypeIn
+          ) shouldBe true withClue
             f"${simTime()} time: ackTypeIn=${ackTypeIn} should be normal ACK or fatal NAK"
-          )
 //          println(
 //            f"${simTime()} time: ACK psnIn=${ackPsnIn}=${ackPsnIn}%X, ackTypeIn=${ackTypeIn}"
 //          )
@@ -480,28 +480,8 @@ class ReadRespLenCheckTest extends AnyFunSuite {
             cachedWorkReqAndRespWithAethIn.pktFrag,
         pmtuLen = pmtuLen,
         busWidth = busWidth,
-        maxFragNum = maxFragNum
-      )
-//      {
-//        val totalFragNum = totalFragNumItr.next()
-//        val pktNum = pktNumItr.next()
-//        val psnStart = psnStartItr.next()
-//        val totalLenBytes = totalLenItr.next()
-//
-//        println(
-//          f"${simTime()} time: pktNum=${pktNum}%X, totalFragNum=${totalFragNum}%X, psnStart=${psnStart}%X, totalLenBytes=${totalLenBytes}%X"
-//        )
-//        (
-//          psnStart,
-//          totalFragNum,
-//          pktNum,
-//          pmtuLen,
-//          busWidth,
-//          totalLenBytes.toLong
-//        )
-//      }
-      {
-        (
+        maxFragNum = maxFragNum,
+        innerLoopFunc = (
             _, // psn,
             psnStart,
             _, // fragLast,
@@ -512,7 +492,7 @@ class ReadRespLenCheckTest extends AnyFunSuite {
             payloadLenBytes,
             _, // headerLenBytes,
             _ // opcode
-        ) =>
+        ) => {
           dut.io.cachedWorkReqAndRespWithAethIn.cachedWorkReq.psnStart #= psnStart
           dut.io.cachedWorkReqAndRespWithAethIn.workCompStatus #= WorkCompStatus.SUCCESS
           if (lenCheckPass) {
@@ -524,7 +504,8 @@ class ReadRespLenCheckTest extends AnyFunSuite {
 //        println(
 //          f"${simTime()} time: fragIdx=${fragIdx}, fragNum=${fragNum}, isLastInputFrag=${isLastInputFrag}, isLastFragPerPkt=${isLastFragPerPkt}, fragLast=${fragLast}, totalLenBytes=${totalLenBytes}, pktNum=${pktNum}, mtyWidth=${mtyWidth}, residue=${totalLenBytes % mtyWidth}, mty=${mty}%X"
 //        )
-      }
+        }
+      )
       onStreamFire(dut.io.cachedWorkReqAndRespWithAethIn, dut.clockDomain) {
         val expectedWorkCompStatus = if (lenCheckPass) {
           WorkCompStatus.SUCCESS
@@ -623,7 +604,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
       val outputReadResp4DmaQueue =
         mutable.Queue[(PSN, PhysicalAddr, WorkReqId, PktFragData, FragLast)]()
 
-      RdmaDataPktSim.readRespPktFragStreamMasterDriver(
+      RdmaDataPktSim.readRespPktFragStreamMasterDriverAlwaysValid(
         dut.clockDomain,
         dut.io.cachedWorkReqAndRespWithAeth,
         getRdmaPktDataFunc =
@@ -668,14 +649,16 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
       }
 
       val addrCacheRespQueue = if (addrCacheQuerySuccess) {
-        AddrCacheSim.alwaysStreamFireAndRespSuccess(
+        AddrCacheSim.reqStreamFixedDelayAndRespSuccess(
           dut.io.addrCacheRead,
-          dut.clockDomain
+          dut.clockDomain,
+          fixedRespDelayCycles = ADDR_CACHE_QUERY_DELAY_CYCLES
         )
       } else {
-        AddrCacheSim.alwaysStreamFireAndRespFailure(
+        AddrCacheSim.reqStreamFixedDelayAndRespFailure(
           dut.io.addrCacheRead,
-          dut.clockDomain
+          dut.clockDomain,
+          fixedRespDelayCycles = ADDR_CACHE_QUERY_DELAY_CYCLES
         )
       }
       fork {
@@ -736,7 +719,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
         }
       }
 
-      streamSlaveRandomizer(dut.io.cachedWorkReqAndAck, dut.clockDomain)
+      streamSlaveAlwaysReady(dut.io.cachedWorkReqAndAck, dut.clockDomain)
       onStreamFire(dut.io.cachedWorkReqAndAck, dut.clockDomain) {
         outputWorkReqAndAckQueue.enqueue(
           (
@@ -749,7 +732,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
 //        println(f"${simTime()} time: outputWorkReqAndAckQueue.size=${outputWorkReqAndAckQueue.size}")
       }
 
-      streamSlaveRandomizer(
+      streamSlaveAlwaysReady(
         dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo,
         dut.clockDomain
       )
@@ -769,7 +752,27 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
 //        println(f"${simTime()} time: outputReadResp4DmaQueue.size=${outputReadResp4DmaQueue.size}")
       }
 
+      MiscUtils.checkCondChangeOnceAndHoldAfterwards(
+        dut.clockDomain,
+        cond =
+          dut.io.cachedWorkReqAndRespWithAeth.valid.toBoolean && dut.io.cachedWorkReqAndRespWithAeth.ready.toBoolean,
+        clue =
+          f"${simTime()} time: dut.io.cachedWorkReqAndRespWithAeth.fire=${dut.io.cachedWorkReqAndRespWithAeth.valid.toBoolean && dut.io.cachedWorkReqAndRespWithAeth.ready.toBoolean} should be true always"
+      )
+      MiscUtils.checkCondChangeOnceAndHoldAfterwards(
+        dut.clockDomain,
+        cond = dut.io.cachedWorkReqAndAck.valid.toBoolean,
+        clue =
+          f"${simTime()} time: dut.io.cachedWorkReqAndAck.valid=${dut.io.cachedWorkReqAndAck.valid.toBoolean} should be true always"
+      )
       if (addrCacheQuerySuccess) {
+        MiscUtils.checkCondChangeOnceAndHoldAfterwards(
+          dut.clockDomain,
+          cond =
+            dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.valid.toBoolean,
+          clue =
+            f"${simTime()} time: dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.valid=${dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.valid.toBoolean} should be true always when addrCacheQuerySuccess=${addrCacheQuerySuccess}"
+        )
         MiscUtils.checkInputOutputQueues(
           dut.clockDomain,
           inputReadResp4DmaQueue,
@@ -830,14 +833,41 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
       dut.io.txQCtrl.retryFlush #= false
 
       // Input to DUT
-      val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
-        SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
+//      val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
+//        SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
 
       val rxReadRespQueue =
         mutable.Queue[(PSN, PhysicalAddr, WorkReqId, PktFragData, FragLast)]()
       val readRespDmaWriteReqQueue =
         mutable.Queue[(PSN, PhysicalAddr, WorkReqId, PktFragData, FragLast)]()
 
+      RdmaDataPktSim.readRespPktFragStreamMasterDriver(
+        dut.clockDomain,
+        dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo,
+        getRdmaPktDataFunc =
+          (readAtomicRespWithDmaInfo: SqReadAtomicRespWithDmaInfo) =>
+            readAtomicRespWithDmaInfo.pktFrag,
+        pmtuLen,
+        busWidth,
+        maxFragNum,
+        innerLoopFunc = (
+            _, // psn,
+            _, // psnStart,
+            _, // fragLast,
+            _, // fragIdx,
+            _, // pktFragNum,
+            _, // pktIdx,
+            _, // pktNum,
+            _, // payloadLenBytes,
+            _, // headerLenBytes,
+            _ // opcode
+        ) => {
+//        println(
+//          f"${simTime()} time: fragIdx=${fragIdx}, fragNum=${fragNum}, isLastInputFrag=${isLastInputFrag}, isLastFragPerPkt=${isLastFragPerPkt}, fragLast=${fragLast}, totalLenBytes=${totalLenBytes}, pktNum=${pktNum}, mtyWidth=${mtyWidth}, residue=${totalLenBytes % mtyWidth}, mty=${mty}%X"
+//        )
+        }
+      )
+      /*
       pktFragStreamMasterDriver(
         dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo,
         dut.clockDomain
@@ -868,6 +898,7 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
 //          f"${simTime()} time: fragIdx=${fragIdx}, fragNum=${fragNum}, isLastInputFrag=${isLastInputFrag}, isLastFragPerPkt=${isLastFragPerPkt}, fragLast=${fragLast}, totalLenBytes=${totalLenBytes}, pktNum=${pktNum}, mtyWidth=${mtyWidth}, residue=${totalLenBytes % mtyWidth}, mty=${mty}%X"
 //        )
       }
+       */
       onStreamFire(
         dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo,
         dut.clockDomain
@@ -928,7 +959,10 @@ class WorkCompGenTest extends AnyFunSuite {
     .withConfig(SpinalConfig(anonymSignalPrefix = "tmp"))
     .compile(new WorkCompGen)
 
-  def testFunc(ackType: SpinalEnumElement[AckType.type]): Unit =
+  def testFunc(
+      ackType: SpinalEnumElement[AckType.type],
+      needDmaWriteResp: Boolean
+  ): Unit =
     simCfg.doSim { dut =>
       dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
@@ -942,13 +976,13 @@ class WorkCompGenTest extends AnyFunSuite {
       dut.io.txQCtrl.errorFlush #= false
       dut.io.txQCtrl.retryFlush #= false
 
-      val workReqQueue = mutable.Queue[
+      val readWorkReqMetaDataQueue = DelayedQueue[
         (
             WorkReqId,
             PsnStart,
             PktLen
         )
-      ]()
+      ](dut.clockDomain, DMA_WRITE_DELAY_CYCLES)
       val inputQueue = mutable.Queue[
         (
             WorkReqId,
@@ -959,7 +993,6 @@ class WorkCompGenTest extends AnyFunSuite {
             SQPN
         )
       ]()
-
       val outputQueue = mutable.Queue[
         (
             WorkReqId,
@@ -970,47 +1003,104 @@ class WorkCompGenTest extends AnyFunSuite {
             SQPN
         )
       ]()
+      val workReqMetaDataQueue = mutable.Queue[
+        (
+            SpinalEnumElement[WorkReqOpCode.type],
+            FragNum,
+            PktNum,
+            PsnStart,
+            PktLen
+        )
+      ]()
 
       // Input to DUT
-      val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
-        SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
+      fork {
+        val (totalFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
+          SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
 
-      streamMasterDriver(dut.io.cachedWorkReqAndAck, dut.clockDomain) {
-        val _ = totalFragNumItr.next()
-        val pktNum = pktNumItr.next()
-        val psnStart = psnStartItr.next()
-        val totalLenBytes = totalLenItr.next()
+        while (true) {
+          dut.clockDomain.waitSampling()
 
-        dut.io.qpAttr.npsn #= psnStart +% pktNum
+          val totalFragNum = totalFragNumItr.next()
+          val pktNum = pktNumItr.next()
+          val psnStart = psnStartItr.next()
+          val payloadLenBytes = payloadLenItr.next()
 
-        dut.io.cachedWorkReqAndAck.cachedWorkReq.workReq.sqpn #= sqpn
-        dut.io.cachedWorkReqAndAck.cachedWorkReq.psnStart #= psnStart
-        dut.io.cachedWorkReqAndAck.cachedWorkReq.pktNum #= pktNum
-        dut.io.cachedWorkReqAndAck.cachedWorkReq.workReq.lenBytes #= totalLenBytes
-        dut.io.cachedWorkReqAndAck.cachedWorkReq.workReq.flags.flagBits #= WorkReqSim
-          .assignFlagBits(WorkReqSendFlagEnum.SIGNALED)
-        dut.io.cachedWorkReqAndAck.last #= true
-        dut.io.cachedWorkReqAndAck.ackValid #= true
-
-        val workReqOpCode = WorkReqSim.randomSendWriteReadOpCode()
-        dut.io.cachedWorkReqAndAck.cachedWorkReq.workReq.opcode #= workReqOpCode
-        if (workReqOpCode.isReadReq()) {
-          val workReqId =
-            dut.io.cachedWorkReqAndAck.cachedWorkReq.workReq.id.toBigInt
-          workReqQueue.enqueue(
+          // TODO: support atomic request
+          val workReqOpCode = if (needDmaWriteResp) {
+            WorkReqOpCode.RDMA_READ
+          } else {
+            WorkReqSim.randomSendWriteOpCode()
+          }
+          workReqMetaDataQueue.enqueue(
             (
-              workReqId,
+              workReqOpCode,
+              totalFragNum,
+              pktNum,
               psnStart,
-              totalLenBytes.toLong
+              payloadLenBytes.toLong
             )
           )
-//        println(f"${simTime()} time: workReqId=${workReqId}%X, psnStart=${psnStart}%X, totalLenBytes=${totalLenBytes}%X")
-        }
 
-        dut.io.cachedWorkReqAndAck.ack.bth.psn #= psnStart +% (pktNum - 1)
-        dut.io.cachedWorkReqAndAck.ack.aeth.setAs(ackType)
-        dut.io.cachedWorkReqAndAck.workCompStatus #= workCompStatus
+          if (workReqOpCode.isReadReq()) {
+            val workReqId = psnStart
+//              cachedWorkReqAndAck.cachedWorkReq.workReq.id.toBigInt
+            readWorkReqMetaDataQueue.enqueue(
+              (
+                BigInt(workReqId),
+                psnStart,
+                payloadLenBytes.toLong
+              )
+            )
+//        println(f"${simTime()} time: workReqId=${workReqId}%X, psnStart=${psnStart}%X, totalLenBytes=${totalLenBytes}%X")
+          }
+        }
       }
+
+      streamMasterPayloadFromQueueAlwaysValid(
+        dut.io.cachedWorkReqAndAck,
+        dut.clockDomain,
+        workReqMetaDataQueue,
+        payloadAssignFunc = (
+            cachedWorkReqAndAck: Fragment[CachedWorkReqAndAck],
+            payloadData: (
+                SpinalEnumElement[WorkReqOpCode.type],
+                FragNum,
+                PktNum,
+                PsnStart,
+                PktLen
+            )
+        ) => {
+          val (
+            workReqOpCode,
+            _, // totalFragNum,
+            pktNum,
+            psnStart,
+            payloadLenBytes
+          ) = payloadData
+
+          dut.io.qpAttr.npsn #= psnStart +% pktNum
+
+          cachedWorkReqAndAck.cachedWorkReq.workReq.id #= psnStart
+          cachedWorkReqAndAck.cachedWorkReq.workReq.sqpn #= sqpn
+          cachedWorkReqAndAck.cachedWorkReq.psnStart #= psnStart
+          cachedWorkReqAndAck.cachedWorkReq.pktNum #= pktNum
+          cachedWorkReqAndAck.cachedWorkReq.workReq.lenBytes #= payloadLenBytes
+          cachedWorkReqAndAck.cachedWorkReq.workReq.flags.flagBits #=
+            WorkReqSim.assignFlagBits(WorkReqSendFlagEnum.SIGNALED)
+          cachedWorkReqAndAck.last #= true
+          cachedWorkReqAndAck.ackValid #= true
+
+          cachedWorkReqAndAck.cachedWorkReq.workReq.opcode #= workReqOpCode
+
+          cachedWorkReqAndAck.ack.bth.psn #= psnStart +% (pktNum - 1)
+          cachedWorkReqAndAck.ack.aeth.setAs(ackType)
+          cachedWorkReqAndAck.workCompStatus #= workCompStatus
+
+          val reqValid = true
+          reqValid
+        }
+      )
       onStreamFire(dut.io.cachedWorkReqAndAck, dut.clockDomain) {
         val workReqOpCode =
           dut.io.cachedWorkReqAndAck.cachedWorkReq.workReq.opcode.toEnum
@@ -1027,11 +1117,11 @@ class WorkCompGenTest extends AnyFunSuite {
         )
       }
 
-      streamMasterPayloadFromQueueRandomInterval(
+      streamMasterPayloadFromQueueAlwaysValid(
         dut.io.readRespDmaWriteResp.resp,
         dut.clockDomain,
-        workReqQueue,
-        maxIntervalCycles = DMA_WRITE_DELAY_CYCLE,
+        readWorkReqMetaDataQueue.toMutableQueue(),
+//        maxIntervalCycles = DMA_WRITE_DELAY_CYCLES,
         payloadAssignFunc = (
             dmaWriteResp: DmaWriteResp,
             workReqData: (
@@ -1046,10 +1136,13 @@ class WorkCompGenTest extends AnyFunSuite {
           dmaWriteResp.psn #= psnStart
           dmaWriteResp.lenBytes #= pktLen
           dmaWriteResp.sqpn #= dut.io.qpAttr.sqpn.toInt
+
+          val respValid = true
+          respValid
         }
       )
 
-      streamSlaveRandomizer(dut.io.workCompPush, dut.clockDomain)
+      streamSlaveAlwaysReady(dut.io.workCompPush, dut.clockDomain)
       onStreamFire(dut.io.workCompPush, dut.clockDomain) {
         outputQueue.enqueue(
           (
@@ -1063,6 +1156,18 @@ class WorkCompGenTest extends AnyFunSuite {
         )
       }
 
+      MiscUtils.checkCondChangeOnceAndHoldAfterwards(
+        dut.clockDomain,
+        dut.io.cachedWorkReqAndAck.valid.toBoolean && dut.io.cachedWorkReqAndAck.ready.toBoolean,
+        clue =
+          f"${simTime()} time: dut.io.cachedWorkReqAndAck.fire=${dut.io.cachedWorkReqAndAck.valid.toBoolean && dut.io.cachedWorkReqAndAck.ready.toBoolean} should be true always"
+      )
+      MiscUtils.checkCondChangeOnceAndHoldAfterwards(
+        dut.clockDomain,
+        dut.io.workCompPush.valid.toBoolean,
+        clue =
+          f"${simTime()} time: dut.io.workCompPush.valid=${dut.io.workCompPush.valid.toBoolean} should be true always"
+      )
       MiscUtils.checkInputOutputQueues(
         dut.clockDomain,
         inputQueue,
@@ -1071,15 +1176,19 @@ class WorkCompGenTest extends AnyFunSuite {
       )
     }
 
-  test("WorkCompGen normal case") {
-    testFunc(AckType.NORMAL)
+  test("WorkCompGen send/write WR case") {
+    testFunc(AckType.NORMAL, needDmaWriteResp = false)
+  }
+
+  test("WorkCompGen read/atomic WR case") {
+    testFunc(AckType.NORMAL, needDmaWriteResp = true)
   }
 
   test("WorkCompGen fatal error case") {
-    testFunc(AckType.NAK_INV)
+    testFunc(AckType.NAK_INV, needDmaWriteResp = false)
   }
 
   test("WorkCompGen retry limit exceed case") {
-    testFunc(AckType.NAK_RNR)
+    testFunc(AckType.NAK_RNR, needDmaWriteResp = false)
   }
 }

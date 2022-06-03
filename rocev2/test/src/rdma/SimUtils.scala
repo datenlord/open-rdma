@@ -42,9 +42,10 @@ case class PktNumItr(pktNumItr: Iterator[PktNum]) {
   def next(): Int = {
     val pktNum = pktNumItr.next()
 
-    withClue(
+    assert(
+      pktNum < HALF_MAX_PSN,
       f"${simTime()} time: pktNum=${pktNum} should < HALF_MAX_PSN=${HALF_MAX_PSN}"
-    )(pktNum should be < HALF_MAX_PSN)
+    )
 
     pktNum
   }
@@ -77,10 +78,7 @@ object SendWriteReqReadRespInputGen {
       case PMTU.U1024 => 1024
       case PMTU.U2048 => 2048
       case PMTU.U4096 => 4096
-      case _ => {
-        println(f"${simTime()} time: invalid PMTU=${pmtu}")
-        ???
-      }
+      case _          => SpinalExit(s"${simTime()} time: invalid PMTU=${pmtu}")
     }
   }
 
@@ -97,7 +95,7 @@ object SendWriteReqReadRespInputGen {
   }
 
   private def genPayloadLen() = {
-    val avgReqRespLen = maxReqRespLen / PENDING_REQ_NUM
+    val avgReqRespLen = maxReqRespLen / MAX_PENDING_REQ_NUM
     val dmaRespIdxGen = NaturalNumber.from(0)
 
     // The total request/response length is from 1 byte to 2G=2^31 bytes
@@ -120,20 +118,20 @@ object SendWriteReqReadRespInputGen {
     val mtyWidth = busWidthBytes(busWidth)
     require(
       mtyWidth > 0,
-      f"${simTime()} time: mtyWidth=${mtyWidth} should be positive"
+      s"${simTime()} time: mtyWidth=${mtyWidth} should be positive"
     )
 
     val fragNumLimit = maxReqRespLen / mtyWidth
     require(
       maxFragNum <= fragNumLimit,
-      f"input maxFragNum=${maxFragNum} is too large, should <= fragNumLimit=${fragNumLimit}"
+      s"${simTime()} time: input maxFragNum=${maxFragNum} is too large, should <= fragNumLimit=${fragNumLimit}"
     )
 
     val reqRespLenUnderMaxFragNUm = mtyWidth *
       (Random.nextInt(maxFragNum - 1) + 1)
     require(
       reqRespLenUnderMaxFragNUm >= mtyWidth,
-      f"${simTime()} time: reqRespLenUnderMaxFragNUm=${reqRespLenUnderMaxFragNUm} should >= mtyWidth=${mtyWidth}"
+      s"${simTime()} time: reqRespLenUnderMaxFragNUm=${reqRespLenUnderMaxFragNUm} should >= mtyWidth=${mtyWidth}"
     )
     val dmaRespIdxGen = NaturalNumber.from(0)
 
@@ -151,13 +149,13 @@ object SendWriteReqReadRespInputGen {
     val mtyWidth = busWidthBytes(busWidth)
     require(
       mtyWidth > 0,
-      f"${simTime()} time: mtyWidth=${mtyWidth} should be positive"
+      s"${simTime()} time: mtyWidth=${mtyWidth} should be positive"
     )
 
     val fragNumLimit = maxReqRespLen / mtyWidth
     require(
       maxFragNum <= fragNumLimit,
-      f"input maxFragNum=${maxFragNum} is too large, should <= fragNumLimit=${fragNumLimit}"
+      s"${simTime()} time: input maxFragNum=${maxFragNum} is too large, should <= fragNumLimit=${fragNumLimit}"
     )
 
     val randomGen = new Random(randSeed)
@@ -165,7 +163,7 @@ object SendWriteReqReadRespInputGen {
       (randomGen.nextInt(maxFragNum - 1) + 1)
     require(
       reqRespLenUnderMaxFragNUm >= mtyWidth,
-      f"${simTime()} time: reqRespLenUnderMaxFragNUm=${reqRespLenUnderMaxFragNUm} should >= mtyWidth=${mtyWidth}"
+      s"${simTime()} time: reqRespLenUnderMaxFragNUm=${reqRespLenUnderMaxFragNUm} should >= mtyWidth=${mtyWidth}"
     )
     val dmaRespIdxGen = NaturalNumber.from(0)
 
@@ -285,6 +283,7 @@ object StreamSimUtil {
 
     stream.valid #= true
     stream.payload.randomize()
+    sleep(0)
     assignments
     clockDomain.waitSamplingWhere(
       stream.valid.toBoolean && stream.ready.toBoolean
@@ -336,214 +335,36 @@ object StreamSimUtil {
     }
   }
 
-  def onReceiveStreamReqAndThenResponseAlways[T1 <: Data, T2 <: Data](
-      reqStream: Stream[T1],
-      respStream: Stream[T2],
-      clockDomain: ClockDomain
-  )(reqFireBody: => Unit)(respBody: => Unit): Unit = fork {
-    reqStream.ready #= false
-    respStream.valid #= false
-    clockDomain.waitSampling()
-
-    while (true) {
-      if (reqStream.valid.toBoolean) {
-        reqStream.ready #= true
-        reqFireBody
-        clockDomain.waitSampling()
-        reqStream.ready #= false
-
-        respStream.valid #= true
-        respBody
-        clockDomain.waitSamplingWhere(
-          respStream.valid.toBoolean && respStream.ready.toBoolean
-        )
-        respStream.valid #= false
-      } else {
-        respStream.valid #= false
-        clockDomain.waitSampling()
-      }
-    }
-  }
-
-  def onReceiveStreamReqAndThenResponseRandom[T1 <: Data, T2 <: Data](
-      reqStream: Stream[T1],
-      respStream: Stream[T2],
-      clockDomain: ClockDomain
-  )(reqFireBody: => Unit)(respBody: => Unit): Unit = fork {
-    reqStream.ready #= false
-    respStream.valid #= false
-    clockDomain.waitSampling()
-
-    val fixedLatencyBetweenReqAndResp = 2
-    while (true) {
-      if (reqStream.valid.toBoolean) {
-//        reqStream.ready #= true
-        do {
-          reqStream.ready.randomize()
-          clockDomain.waitSampling()
-        } while (!reqStream.ready.toBoolean)
-        reqFireBody
-        reqStream.ready #= false
-
-        clockDomain.waitSampling(fixedLatencyBetweenReqAndResp)
-
-        respStream.valid #= true
-        respBody
-        clockDomain.waitSamplingWhere(
-          respStream.valid.toBoolean && respStream.ready.toBoolean
-        )
-        respStream.valid #= false
-      } else {
-        respStream.valid #= false
-        clockDomain.waitSampling()
-      }
-    }
-  }
-  /*
-  def onReceiveStreamReqAndThenResponseOneShot[T1 <: Data, T2 <: Data](
-      reqStream: Stream[T1],
-      respStream: Stream[T2],
-      clockDomain: ClockDomain
-  )(reqFireBody: => Unit)(respBody: => Unit): Unit = fork {
-    reqStream.ready #= false
-    respStream.valid #= false
-    clockDomain.waitSampling()
-
-    clockDomain.waitSamplingWhere(reqStream.valid.toBoolean)
-    reqStream.ready #= true
-    reqFireBody
-    clockDomain.waitSampling()
-    reqStream.ready #= false
-
-    respStream.valid #= true
-    respBody
-    clockDomain.waitSamplingWhere(
-      respStream.valid.toBoolean && respStream.ready.toBoolean
-    )
-    respStream.valid #= false
-    clockDomain.waitSampling()
-  }
-
-  def queryCacheHelper[Treq <: Data, Tresp <: Data, ReqData, RespData](
-      reqStream: Stream[Treq],
-      respStream: Stream[Tresp],
-      onReqFire: (Treq, mutable.Queue[ReqData]) => Unit,
-      buildResp: (Tresp, mutable.Queue[ReqData]) => Unit,
-      onRespFire: (Tresp, mutable.Queue[RespData]) => Unit,
-      clockDomain: ClockDomain,
-      alwaysValid: Boolean
-  ): mutable.Queue[RespData] = {
-    val reqQueue = mutable.Queue[ReqData]()
-    val respQueue = mutable.Queue[RespData]()
-
-    if (alwaysValid) {
-      onReceiveStreamReqAndThenResponseAlways(
-        reqStream = reqStream,
-        respStream = respStream,
-        clockDomain
-      ) {
-        onReqFire(reqStream.payload, reqQueue)
-      } {
-        buildResp(respStream.payload, reqQueue)
-      }
-    } else {
-      onReceiveStreamReqAndThenResponseRandom(
-        reqStream = reqStream,
-        respStream = respStream,
-        clockDomain
-      ) {
-        onReqFire(reqStream.payload, reqQueue)
-      } {
-        buildResp(respStream.payload, reqQueue)
-      }
-    }
-
-    onStreamFire(respStream, clockDomain) {
-      onRespFire(respStream.payload, respQueue)
-    }
-
-    respQueue
-  }
-   */
-  def streamMasterPayloadFromQueueRandomInterval[T <: Data, PayloadData](
-      stream: Stream[T],
-      clockDomain: ClockDomain,
-      payloadQueue: mutable.Queue[PayloadData],
-      maxIntervalCycles: Int,
-      payloadAssignFunc: (T, PayloadData) => Unit
-  ): Unit =
-    fork {
-      stream.valid #= false
-      clockDomain.waitSampling()
-
-      while (true) {
-        val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
-        val randomWaitingCycles =
-          scala.util.Random.nextInt(maxIntervalCycles - 1) + 1
-        clockDomain.waitSampling(randomWaitingCycles)
-        stream.valid #= true
-        payloadAssignFunc(stream.payload, payloadData)
-//        do {
-//          clockDomain.waitSampling()
-//          stream.valid.randomize()
-//          sleep(0)
-//        } while (!stream.valid.toBoolean)
-
-        clockDomain.waitSamplingWhere(
-          stream.valid.toBoolean && stream.ready.toBoolean
-        )
-        stream.valid #= false
-      }
-    }
-
-  def streamMasterPayloadFromQueueFixedInterval[T <: Data, PayloadData](
-      stream: Stream[T],
-      clockDomain: ClockDomain,
-      payloadQueue: mutable.Queue[PayloadData],
-      maxIntervalCycles: Int,
-      payloadAssignFunc: (T, PayloadData) => Unit
-  ): Unit =
-    fork {
-      stream.valid #= false
-      clockDomain.waitSampling()
-
-      while (true) {
-        val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
-        clockDomain.waitSampling(maxIntervalCycles)
-        stream.valid #= true
-        payloadAssignFunc(stream.payload, payloadData)
-
-        clockDomain.waitSamplingWhere(
-          stream.valid.toBoolean && stream.ready.toBoolean
-        )
-        stream.valid #= false
-      }
-    }
-
+  // TODO: refactor streamMasterPayloadFromQueue related functions
   def streamMasterPayloadFromQueue[T <: Data, PayloadData](
       stream: Stream[T],
       clockDomain: ClockDomain,
       payloadQueue: mutable.Queue[PayloadData],
-      payloadAssignFunc: (T, PayloadData) => Unit
+      payloadAssignFunc: (T, PayloadData) => Boolean
   ): Unit =
     fork {
       stream.valid #= false
       clockDomain.waitSampling()
 
       while (true) {
+        stream.payload.randomize()
+        sleep(0)
         val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
-        do {
-          clockDomain.waitSampling()
-          stream.valid.randomize()
-          stream.payload.randomize()
-          sleep(0)
-        } while (!stream.valid.toBoolean)
-        payloadAssignFunc(stream.payload, payloadData)
+        val payloadValid = payloadAssignFunc(stream.payload, payloadData)
+        if (payloadValid) {
+          do {
+            clockDomain.waitSampling()
+            stream.valid.randomize()
+            sleep(0)
+          } while (!stream.valid.toBoolean)
 
-        clockDomain.waitSamplingWhere(
-          stream.valid.toBoolean && stream.ready.toBoolean
-        )
-        stream.valid #= false
+          clockDomain.waitSamplingWhere(
+            stream.valid.toBoolean && stream.ready.toBoolean
+          )
+          stream.valid #= false
+        } else {
+          clockDomain.waitSampling()
+        }
       }
     }
 
@@ -551,26 +372,190 @@ object StreamSimUtil {
       stream: Stream[T],
       clockDomain: ClockDomain,
       payloadQueue: mutable.Queue[PayloadData],
-      payloadAssignFunc: (T, PayloadData) => Unit
+      payloadAssignFunc: (T, PayloadData) => Boolean
   ): Unit =
     fork {
       stream.valid #= false
       clockDomain.waitSampling()
 
       while (true) {
-        val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
-        stream.valid #= true
         stream.payload.randomize()
-        payloadAssignFunc(stream.payload, payloadData)
+        sleep(0)
 
+//        println(
+//          f"${simTime()} time: payloadQueue.isEmpty=${payloadQueue.isEmpty}"
+//        )
+        val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
+//        println(
+//          f"${simTime()} time: after payloadQueue safe pop, payloadQueue.isEmpty=${payloadQueue.isEmpty}"
+//        )
+
+        val payloadValid = payloadAssignFunc(stream.payload, payloadData)
+        payloadValid shouldBe true withClue
+          f"${simTime()} time: payloadValid=${payloadValid} should be true always in streamMasterPayloadFromQueueAlwaysValid"
+
+        if (payloadValid) {
+          stream.valid #= true
+
+//          println(f"${simTime()} time: stream.valid=${stream.valid.toBoolean}")
+
+          clockDomain.waitSamplingWhere(
+            stream.valid.toBoolean && stream.ready.toBoolean
+          )
+          stream.valid #= false
+        } else {
+          clockDomain.waitSampling()
+        }
+      }
+    }
+  /*
+  def streamMasterPayloadFromQueueRandomInterval[T <: Data, PayloadData](
+      stream: Stream[T],
+      clockDomain: ClockDomain,
+      payloadQueue: mutable.Queue[PayloadData],
+      maxIntervalCycles: Int,
+      payloadAssignFunc: (T, PayloadData) => Boolean
+  ): Unit = {
+    require(
+      maxIntervalCycles > 0,
+      s"${simTime()} time: maxIntervalCycles=${maxIntervalCycles} should > 0 in streamMasterPayloadFromQueueRandomInterval"
+    )
+
+    fork {
+      stream.valid #= false
+      clockDomain.waitSampling()
+
+      while (true) {
+        stream.payload.randomize()
+        sleep(0)
+        val randomWaitingCycles =
+          scala.util.Random.nextInt(maxIntervalCycles - 1) + 1
+        clockDomain.waitSampling(randomWaitingCycles)
+        val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
+        val payloadValid = payloadAssignFunc(stream.payload, payloadData)
+        if (payloadValid) {
+          stream.valid #= true
+//        do {
+//          clockDomain.waitSampling()
+//          stream.valid.randomize()
+//          sleep(0)
+//        } while (!stream.valid.toBoolean)
+
+          clockDomain.waitSamplingWhere(
+            stream.valid.toBoolean && stream.ready.toBoolean
+          )
+          stream.valid #= false
+        } else {
+          clockDomain.waitSampling()
+        }
+      }
+    }
+  }
+
+    def streamMasterPayloadFromQueueFixedInterval[T <: Data, PayloadData](
+        stream: Stream[T],
+        clockDomain: ClockDomain,
+        payloadQueue: mutable.Queue[PayloadData],
+        fixedIntervalCycles: Int,
+        payloadAssignFunc: (T, PayloadData) => Boolean
+    ): Unit = {
+      require(
+        fixedIntervalCycles > 0,
+        s"${simTime()} time: fixedIntervalCycles=${fixedIntervalCycles} should > 0 in streamMasterPayloadFromQueueFixedInterval"
+      )
+
+      fork {
+        stream.valid #= false
+        clockDomain.waitSampling()
+
+        while (true) {
+          stream.payload.randomize()
+          sleep(0)
+          clockDomain.waitSampling(fixedIntervalCycles)
+          val payloadData = MiscUtils.safeDeQueue(payloadQueue, clockDomain)
+          val payloadValid = payloadAssignFunc(stream.payload, payloadData)
+          if (payloadValid) {
+//            clockDomain.waitSampling(fixedIntervalCycles)
+            stream.valid #= true
+
+            clockDomain.waitSamplingWhere(
+              stream.valid.toBoolean && stream.ready.toBoolean
+            )
+            stream.valid #= false
+          } else {
+            clockDomain.waitSampling()
+          }
+        }
+      }
+    }
+   */
+  def streamSlaveReadyOnCondition[T <: Data](
+      stream: Stream[T],
+      clockDomain: ClockDomain,
+      condition: => Boolean
+  ): Unit = fork {
+    while (true) {
+      stream.ready #= condition
+      if (condition) {
         clockDomain.waitSamplingWhere(
           stream.valid.toBoolean && stream.ready.toBoolean
         )
+      } else {
+        clockDomain.waitSampling()
+      }
+    }
+  }
+  /*
+  def pktFragStreamMasterDriverAlwaysValid[T <: Data, InternalData](
+      stream: Stream[Fragment[T]],
+      clockDomain: ClockDomain
+  )(outerLoopBody: => (FragNum, InternalData))(
+      innerLoopFunc: (
+          Fragment[T],
+          FragLast,
+          FragIdx,
+          FragNum,
+          InternalData
+      ) => Unit
+  ): Unit =
+    fork {
+      stream.valid #= false
+      clockDomain.waitSampling()
+
+      // Outer loop
+      while (true) {
+        val (fragNum, internalData) = outerLoopBody
+
+        // Inner loop
+        for (fragIdx <- 0 until fragNum) {
+          val fragLast = fragIdx == fragNum - 1
+//          do {
+//            stream.valid.randomize()
+          stream.valid #= true
+          stream.payload.randomize()
+          sleep(0)
+//            if (stream.valid.toBoolean) {
+          innerLoopFunc(
+            stream.payload,
+            fragLast,
+            fragIdx,
+            fragNum,
+            internalData
+          )
+
+          clockDomain.waitSamplingWhere(
+            stream.valid.toBoolean && stream.ready.toBoolean
+          )
+//            } else {
+//              clockDomain.waitSampling()
+//            }
+//          } while (!stream.valid.toBoolean)
+        }
+        // Set stream.valid to false, since outerLoopBody might consume simulation time
         stream.valid #= false
       }
     }
 
-  // TODO: remove this
   def pktFragStreamMasterDriver[T <: Data, InternalData](
       stream: Stream[Fragment[T]],
       clockDomain: ClockDomain
@@ -632,9 +617,8 @@ object StreamSimUtil {
                 internalData
               )
               if (fragIdx == totalFragNum - 1) {
-                withClue(
+                pktIdx shouldBe (pktNum - 1) withClue
                   f"${simTime()} time: this fragment with fragIdx=${fragIdx}%X is the last one, pktIdx=${pktIdx}%X should equal pktNum=${pktNum}%X-1"
-                )(pktIdx shouldBe (pktNum - 1))
               }
               clockDomain.waitSamplingWhere(
                 stream.valid.toBoolean && stream.ready.toBoolean
@@ -644,14 +628,18 @@ object StreamSimUtil {
             }
           } while (!stream.valid.toBoolean)
         }
+        // Set stream.valid to false, since outerLoopBody might consume simulation time
+        stream.valid #= false
       }
     }
+   */
 }
 
 object MiscUtils {
   def safeDeQueue[T](queue: mutable.Queue[T], clockDomain: ClockDomain): T = {
     while (queue.isEmpty) {
       clockDomain.waitFallingEdge()
+//      clockDomain.waitSampling()
     }
     queue.dequeue()
   }
@@ -659,7 +647,7 @@ object MiscUtils {
   def computeFragNum(pktLenBytes: Long, busWidth: BusWidth.Value): Int = {
     require(
       pktLenBytes >= 0,
-      f"${simTime()} time: pktLenBytes=${pktLenBytes} should >= 0"
+      s"${simTime()} time: pktLenBytes=${pktLenBytes} should >= 0"
     )
     val mtyWidth = busWidth.id / BYTE_WIDTH
     val remainder = pktLenBytes % mtyWidth
@@ -674,7 +662,7 @@ object MiscUtils {
   def computePktNum(pktLenBytes: Long, pmtu: PMTU.Value): Int = {
     require(
       pktLenBytes >= 0,
-      f"${simTime()} time: pktLenBytes=${pktLenBytes} should >= 0"
+      s"${simTime()} time: pktLenBytes=${pktLenBytes} should >= 0"
     )
     val remainder = pktLenBytes & setAllBits(pmtu.id)
     val quotient = pktLenBytes >> pmtu.id
@@ -693,7 +681,7 @@ object MiscUtils {
   ): Unit = {
     require(
       matchNum > 0,
-      s"the number of matches matchNum=${matchNum} should > 0"
+      s"${simTime()} time: the number of matches matchNum=${matchNum} should > 0"
     )
 
     val outputIdxItr = NaturalNumber.from(0).iterator
@@ -701,20 +689,17 @@ object MiscUtils {
 
     fork {
       while (true) {
-        clockDomain.waitFallingEdge()
-        if (inputQueue.nonEmpty && outputQueue.nonEmpty) {
-          val outputIdx = outputIdxItr.next()
+        val outputIdx = outputIdxItr.next()
 
-          val inputData = inputQueue.dequeue()
-          val outputData = outputQueue.dequeue()
+        val inputData = MiscUtils.safeDeQueue(inputQueue, clockDomain)
+        val outputData = MiscUtils.safeDeQueue(outputQueue, clockDomain)
 
-          withClue(
-            f"${simTime()} time: inputData=${inputData} not match outputData=${outputData} @ outputIdx=${outputIdx}"
-          )(inputData shouldBe outputData)
+        inputData shouldBe outputData withClue
+          f"${simTime()} time: inputData=${inputData} not match outputData=${outputData} @ outputIdx=${outputIdx}"
 
-          matchQueue.enqueue(inputData)
+        matchQueue.enqueue(inputData)
 //          println(f"${simTime()} time: matchQueue.size=${matchQueue.size}")
-        }
+//        }
       }
     }
 
@@ -727,7 +712,10 @@ object MiscUtils {
       outputQueue: mutable.Queue[T],
       showCnt: Int
   ): Unit = {
-    require(showCnt > 0, s"the number of show count=${showCnt} should > 0")
+    require(
+      showCnt > 0,
+      s"${simTime()} time: the number of show count=${showCnt} should > 0"
+    )
 
     val outputIdxItr = NaturalNumber.from(0).iterator
     val matchQueue = mutable.Queue[T]()
@@ -742,7 +730,6 @@ object MiscUtils {
           f"${simTime()} time: inputData=${inputData} not match outputData=${outputData} @ outputIdx=${outputIdx}"
         )
         matchQueue.enqueue(inputData)
-
       }
     }
 
@@ -768,6 +755,20 @@ object MiscUtils {
     }
   }
 
+  def checkCondChangeOnceAndHoldAfterwards(
+      clockDomain: ClockDomain,
+      cond: => Boolean,
+      clue: => Any
+  ) = fork {
+    // Once condition is true, check it to be true always
+    clockDomain.waitSamplingWhere(cond)
+//    waitUntil(cond)
+    while (true) {
+      clockDomain.waitSampling()
+      cond shouldBe true withClue clue
+    }
+  }
+
   def checkSignalWhen(
       clockDomain: ClockDomain,
       when: => Boolean,
@@ -786,14 +787,13 @@ object MiscUtils {
   def checkConditionForSomePeriod(clockDomain: ClockDomain, cycles: Int)(
       cond: => Boolean
   ) = fork {
-    require(cycles > 0, s"cycles=${cycles} should > 0")
+    require(cycles > 0, s"${simTime()} time: cycles=${cycles} should > 0")
 
     for (cycleIdx <- 0 until cycles) {
       clockDomain.waitSampling()
 
-      withClue(
+      cond shouldBe true withClue
         f"${simTime()} time: condition=${cond} not satisfied @ cycleIdx=${cycleIdx}"
-      )(cond shouldBe true)
     }
   }
 
@@ -807,6 +807,8 @@ object MiscUtils {
     val matchPsnQueue = mutable.Queue[Boolean]()
 
     fork {
+//      clockDomain.waitSampling()
+
       var nextPsn = 0
       while (true) {
         var (dataIn, mtyIn, pktNum, psnStart, totalLenBytes, isLastIn) =
@@ -863,9 +865,8 @@ object MiscUtils {
 //          println(
 //            f"${simTime()} time: expected output PSN=${nextPsn} not match output PSN=${psnOut}"
 //          )
-        withClue(
+        psnOut shouldBe nextPsn withClue
           f"${simTime()} time: expected output PSN=${nextPsn} not match output PSN=${psnOut}"
-        )(psnOut shouldBe nextPsn)
         nextPsn += 1
       }
     }
@@ -901,4 +902,45 @@ object MiscUtils {
 object NaturalNumber {
   // Generate natural numbers from input N
   def from(n: Int): LazyList[Int] = n #:: from(n + 1)
+}
+
+case class DelayedQueue[T](
+    clockDomain: ClockDomain,
+    delayCycles: Int
+) {
+  require(
+    delayCycles > 0,
+    s"${simTime()} time: delayCycles=${delayCycles} should > 0"
+  )
+
+  val queue = mutable.Queue[(T, SimTimeStamp)]()
+
+  def enqueue(elem: T): this.type = {
+    val curTimeStamp = simTime()
+    queue.enqueue((elem, curTimeStamp))
+
+//    println(f"${simTime()} time: enqueue, curTimeStamp=${curTimeStamp}")
+    this
+  }
+
+  def toMutableQueue(): mutable.Queue[T] = {
+    val mutableQueue = mutable.Queue[T]()
+    fork {
+      while (true) {
+        val (elem, insertTimeStamp) = MiscUtils.safeDeQueue(queue, clockDomain)
+
+        while (
+          simTime() < SimSettings.SIM_CYCLE_TIME * delayCycles + insertTimeStamp
+        ) {
+//        println(f"${simTime()} time: delayed dequeue, insertTimeStamp=${insertTimeStamp}, delayCycles=${delayCycles}")
+          clockDomain.waitSampling()
+        }
+
+//    println(f"${simTime()} time: success dequeue, insertTimeStamp=${insertTimeStamp}, delayCycles=${delayCycles}")
+
+        mutableQueue.enqueue(elem)
+      }
+    }
+    mutableQueue
+  }
 }

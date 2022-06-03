@@ -38,6 +38,25 @@ fi
 #$MILL rocev2.test.testSim rdma.SetSuite
 # mill test is not compatible with SpinalHDL, use testOnly instead
 
+# RQ Test
+$MILL rocev2.test.testSim rdma.ReqCommCheckTest
+$MILL rocev2.test.testSim rdma.ReqRnrCheckTest
+$MILL rocev2.test.testSim rdma.DupReqHandlerAndReadAtomicRstCacheQueryTest
+$MILL rocev2.test.testSim rdma.DupReadDmaReqBuilderTest
+$MILL rocev2.test.testSim rdma.ReqAddrInfoExtractorTest
+$MILL rocev2.test.testSim rdma.ReqAddrValidatorTest
+$MILL rocev2.test.testSim rdma.ReqPktLenCheckTest
+$MILL rocev2.test.testSim rdma.ReqSplitterAndNakGenTest
+$MILL rocev2.test.testSim rdma.RqSendWriteDmaReqInitiatorTest
+$MILL rocev2.test.testSim rdma.RqReadAtomicDmaReqBuilderTest
+$MILL rocev2.test.testSim rdma.ReadDmaReqInitiatorTest
+$MILL rocev2.test.testSim rdma.RqReadDmaRespHandlerTest
+$MILL rocev2.test.testSim rdma.ReadRespGeneratorTest
+$MILL rocev2.test.testSim rdma.RqOutTest
+# Slow test
+$MILL rocev2.test.testSim rdma.SendWriteRespGeneratorTest
+$MILL rocev2.test.testSim rdma.RqSendWriteWorkCompGeneratorTest
+
 # Cache Test
 $MILL rocev2.test.testSim rdma.FifoTest
 $MILL rocev2.test.testSim rdma.PdAddrCacheTest
@@ -53,6 +72,7 @@ $MILL rocev2.test.testSim rdma.WriteReqGeneratorTest
 $MILL rocev2.test.testSim rdma.WorkReqValidatorTest
 $MILL rocev2.test.testSim rdma.WorkReqCacheAndOutPsnRangeHandlerTest
 $MILL rocev2.test.testSim rdma.SqOutTest # Slow test
+$MILL rocev2.test.testSim rdma.SqDmaReadRespHandlerTest
 
 # Retry Handler Test
 $MILL rocev2.test.testSim rdma.RetryHandlerTest
@@ -64,22 +84,3 @@ $MILL rocev2.test.testSim rdma.ReadAtomicRespVerifierAndFatalNakNotifierTest
 $MILL rocev2.test.testSim rdma.ReadAtomicRespDmaReqInitiatorTest
 $MILL rocev2.test.testSim rdma.WorkCompGenTest
 
-# RQ Test
-$MILL rocev2.test.testSim rdma.ReqCommCheckTest
-$MILL rocev2.test.testSim rdma.ReqRnrCheckTest
-$MILL rocev2.test.testSim rdma.DupReqHandlerAndReadAtomicRstCacheQueryTest
-$MILL rocev2.test.testSim rdma.DupReadDmaReqBuilderTest
-$MILL rocev2.test.testSim rdma.ReqAddrInfoExtractorTest
-$MILL rocev2.test.testSim rdma.ReqAddrValidatorTest
-$MILL rocev2.test.testSim rdma.ReqPktLenCheckTest
-$MILL rocev2.test.testSim rdma.ReqSplitterAndNakGenTest
-$MILL rocev2.test.testSim rdma.RqSendWriteDmaReqInitiatorTest
-$MILL rocev2.test.testSim rdma.RqReadAtomicDmaReqBuilderTest
-$MILL rocev2.test.testSim rdma.ReadDmaReqInitiatorTest
-# Slow test
-$MILL rocev2.test.testSim rdma.SendWriteRespGeneratorTest
-$MILL rocev2.test.testSim rdma.RqSendWriteWorkCompGeneratorTest
-
-$MILL rocev2.test.testSim rdma.RqReadDmaRespHandlerTest
-$MILL rocev2.test.testSim rdma.ReadRespGeneratorTest
-$MILL rocev2.test.testSim rdma.RqOutTest

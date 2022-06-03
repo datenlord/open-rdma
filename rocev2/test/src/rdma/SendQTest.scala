@@ -2,6 +2,7 @@ package rdma
 
 import spinal.core._
 import spinal.core.sim._
+import spinal.lib._
 
 import org.scalatest.AppendedClues._
 import org.scalatest.funsuite.AnyFunSuite
@@ -126,10 +127,17 @@ class WorkReqValidatorTest extends AnyFunSuite {
       }
     }
 
-    if (normalOrErrorCase) {
-      AddrCacheSim.alwaysStreamFireAndRespSuccess(
+    MiscUtils.checkCondChangeOnceAndHoldAfterwards(
+      dut.clockDomain,
+      cond = dut.io.workReq.valid.toBoolean && dut.io.workReq.ready.toBoolean,
+      clue =
+        f"${simTime()} time: dut.io.workReq.fire=${dut.io.workReq.valid.toBoolean && dut.io.workReq.ready.toBoolean} should be true always"
+    )
+    if (normalOrErrorCase) { // Normal case
+      AddrCacheSim.reqStreamFixedDelayAndRespSuccess(
         dut.io.addrCacheRead,
-        dut.clockDomain
+        dut.clockDomain,
+        fixedRespDelayCycles = ADDR_CACHE_QUERY_DELAY_CYCLES
       )
 
       MiscUtils.checkConditionAlways(dut.clockDomain)(
@@ -150,6 +158,17 @@ class WorkReqValidatorTest extends AnyFunSuite {
           )
         )
       }
+      MiscUtils.checkCondChangeOnceAndHoldAfterwards(
+        dut.clockDomain,
+        cond = dut.io.workReqToCache.valid.toBoolean,
+        clue =
+          f"${simTime()} time: dut.io.workReqToCache.valid=${dut.io.workReqToCache.valid.toBoolean} should be true always when normalOrErrorCase=${normalOrErrorCase}"
+      )
+      MiscUtils.checkConditionAlwaysHold(dut.clockDomain)(
+        cond = !dut.io.workCompErr.valid.toBoolean,
+        clue =
+          f"${simTime()} time: dut.io.workCompErr.valid=${dut.io.workCompErr.valid.toBoolean} should be false always when normalOrErrorCase=${normalOrErrorCase}, addrCacheQueryErrOrFlushErr=${addrCacheQueryErrOrFlushErr}"
+      )
       fork {
         while (true) {
           dut.clockDomain.waitSampling()
@@ -174,14 +193,16 @@ class WorkReqValidatorTest extends AnyFunSuite {
     } else { // Error case
       val _ = if (addrCacheQueryErrOrFlushErr) { // addrCacheRespQueue
         // AddrCache query response error
-        AddrCacheSim.alwaysStreamFireAndRespFailure(
+        AddrCacheSim.reqStreamFixedDelayAndRespFailure(
           dut.io.addrCacheRead,
-          dut.clockDomain
+          dut.clockDomain,
+          fixedRespDelayCycles = ADDR_CACHE_QUERY_DELAY_CYCLES
         )
-      } else {
-        // Error flush
-        MiscUtils.checkConditionAlways(dut.clockDomain)(
-          !dut.workReqValidator.addrCacheReadResp.ready.toBoolean
+      } else { // Error flush
+        MiscUtils.checkConditionAlwaysHold(dut.clockDomain)(
+          cond = !dut.workReqValidator.addrCacheReadResp.ready.toBoolean,
+          clue =
+            f"${simTime()} time: dut.workReqValidator.addrCacheReadResp.ready=${dut.workReqValidator.addrCacheReadResp.ready.toBoolean} should be false always when addrCacheQueryErrOrFlushErr=${addrCacheQueryErrOrFlushErr}"
         )
       }
 
@@ -189,12 +210,16 @@ class WorkReqValidatorTest extends AnyFunSuite {
         (dut.workReqValidator.errorStream.valid.toBoolean && dut.workReqValidator.errorStream.ready.toBoolean) withClue
         f"${simTime()} time: dut.io.errNotifier.pulse=${dut.io.errNotifier.pulse.toBoolean} should == (dut.workReqValidator.errorStream.valid=${dut.workReqValidator.errorStream.valid.toBoolean} && dut.workReqValidator.errorStream.ready=${dut.workReqValidator.errorStream.ready.toBoolean})"
 
-      MiscUtils.checkConditionAlways(dut.clockDomain)(
-        !dut.io.workReqToCache.valid.toBoolean
+      MiscUtils.checkConditionAlwaysHold(dut.clockDomain)(
+        cond = !dut.io.workReqToCache.valid.toBoolean,
+        clue =
+          f"${simTime()} time: dut.io.workReqToCache.valid=${dut.io.workReqToCache.valid.toBoolean} should be false always when normalOrErrorCase=${normalOrErrorCase}"
       )
       if (!addrCacheQueryErrOrFlushErr) { // Error flush
-        MiscUtils.checkConditionAlways(dut.clockDomain)(
-          !dut.io.addrCacheRead.req.valid.toBoolean
+        MiscUtils.checkConditionAlwaysHold(dut.clockDomain)(
+          cond = !dut.io.addrCacheRead.req.valid.toBoolean,
+          clue =
+            f"${simTime()} time: dut.io.addrCacheRead.req.valid=${dut.io.addrCacheRead.req.valid.toBoolean} should be false always when normalOrErrorCase=${normalOrErrorCase} and normalOrErrorCase=${normalOrErrorCase}"
         )
 //        MiscUtils.checkConditionAlways(dut.clockDomain)(
 //          !dut.io.sqOutPsnRangeFifoPush.valid.toBoolean
@@ -213,6 +238,20 @@ class WorkReqValidatorTest extends AnyFunSuite {
         )
       }
 
+//      dut.clockDomain.waitSamplingWhere(dut.io.workCompErr.valid.toBoolean)
+//      fork {
+//        while(true) {
+//          println(f"${simTime()} time: dut.io.workCompErr.valid=${dut.io.workCompErr.valid.toBoolean}")
+//          assert(dut.io.workCompErr.valid.toBoolean)
+//          dut.clockDomain.waitSampling()
+//        }
+//      }
+      MiscUtils.checkCondChangeOnceAndHoldAfterwards(
+        dut.clockDomain,
+        cond = dut.io.workCompErr.valid.toBoolean,
+        clue =
+          f"${simTime()} time: dut.io.workCompErr.valid=${dut.io.workCompErr.valid.toBoolean} should be true always when normalOrErrorCase=${normalOrErrorCase}, addrCacheQueryErrOrFlushErr=${addrCacheQueryErrOrFlushErr}"
+      )
       MiscUtils.checkInputOutputQueues(
         dut.clockDomain,
         inputWorkCompErrQueue,
@@ -507,7 +546,7 @@ class SqOutTest extends AnyFunSuite {
       ],
       inputOutPsnQueue: mutable.Queue[PSN]
   ) =
-    for (_ <- 0 until PENDING_REQ_NUM) {
+    for (_ <- 0 until MAX_PENDING_REQ_NUM) {
       val _ = payloadFragNumItr.next()
       val pktNum = pktNumItr.next()
       val psnStart = psnStartItr.next()
@@ -520,10 +559,8 @@ class SqOutTest extends AnyFunSuite {
       val isSendReq = workReqOpCode.isSendReq()
       val isWriteReq = workReqOpCode.isWriteReq()
 
-      assert(
-        isSendReq || isWriteReq || isReadReq || isAtomicReq,
+      isSendReq || isWriteReq || isReadReq || isAtomicReq shouldBe true withClue
         f"${simTime()} time: invalid WR opcode=${workReqOpCode}, must be send/write/read/atomic"
-      )
 
       outPsnRangeQueue.enqueue((workReqOpCode, psnStart, psnEnd))
 
@@ -649,40 +686,56 @@ class SqOutTest extends AnyFunSuite {
       dut.io.rxAtomicReq.valid #= false
 //      }
 
-      insertToOutPsnRangeQueue(
-        payloadFragNumItr,
-        pktNumItr,
-        psnStartItr,
-        payloadLenItr,
-        inputSendReqMetaDataQueue,
-        inputWriteReqMetaDataQueue,
-        inputReadReqMetaDataQueue,
-        inputAtomicReqMetaDataQueue,
-        outPsnRangeQueue,
-        inputOutPsnQueue
-      )
-
       // io.outPsnRangeFifoPush must always be valid when output normal responses
-      streamMasterDriverAlwaysValid(
+      streamMasterPayloadFromQueueAlwaysValid(
         dut.io.outPsnRangeFifoPush,
-        dut.clockDomain
-      ) {
-        val (workReqOpCode, psnStart, psnEnd) = outPsnRangeQueue.dequeue()
-        dut.io.outPsnRangeFifoPush.workReqOpCode #= workReqOpCode
-        dut.io.outPsnRangeFifoPush.start #= psnStart
-        dut.io.outPsnRangeFifoPush.end #= psnEnd
-        dut.io.outPsnRangeFifoPush.isRetryWorkReq #= false
-        dut.io.qpAttr.npsn #= psnEnd
-      }
+        dut.clockDomain,
+        outPsnRangeQueue,
+        payloadAssignFunc = (
+            reqPsnRange: ReqPsnRange,
+            payloadData: (
+                SpinalEnumElement[WorkReqOpCode.type],
+                PsnStart,
+                PsnEnd
+            )
+        ) => {
+          val (workReqOpCode, psnStart, psnEnd) = payloadData
+          reqPsnRange.workReqOpCode #= workReqOpCode
+          reqPsnRange.start #= psnStart
+          reqPsnRange.end #= psnEnd
+          reqPsnRange.isRetryWorkReq #= false
+          dut.io.qpAttr.npsn #= psnEnd
 
+          val reqValid = true
+          reqValid
+        }
+      )
       fork {
+        insertToOutPsnRangeQueue(
+          payloadFragNumItr,
+          pktNumItr,
+          psnStartItr,
+          payloadLenItr,
+          inputSendReqMetaDataQueue,
+          inputWriteReqMetaDataQueue,
+          inputReadReqMetaDataQueue,
+          inputAtomicReqMetaDataQueue,
+          outPsnRangeQueue,
+          inputOutPsnQueue
+        )
+
         while (true) {
+          dut.clockDomain.waitSamplingWhere(
+            inputSendReqMetaDataQueue.isEmpty && inputWriteReqMetaDataQueue.isEmpty &&
+              inputReadReqMetaDataQueue.isEmpty && inputAtomicReqMetaDataQueue.isEmpty
+          )
+          /*
           waitUntil(
             inputSendReqMetaDataQueue.isEmpty || inputWriteReqMetaDataQueue.isEmpty ||
               inputReadReqMetaDataQueue.isEmpty || inputAtomicReqMetaDataQueue.isEmpty ||
               outPsnRangeQueue.isEmpty || inputOutPsnQueue.isEmpty
           )
-
+           */
           insertToOutPsnRangeQueue(
             payloadFragNumItr,
             pktNumItr,
@@ -706,15 +759,23 @@ class SqOutTest extends AnyFunSuite {
         (writeReqIn, inputWriteReqMetaDataQueue, inputWriteReqQueue)
       )
       for ((reqIn, inputMetaDataQueue, inputReqQueue) <- sendWriteReqIn) {
-        streamMasterDriver(
+        streamMasterPayloadFromQueueAlwaysValid(
           reqIn.pktFrag,
-          dut.clockDomain
-        ) {
-          val (psnEnd, opcode, isLastFrag) = inputMetaDataQueue.dequeue()
-          reqIn.pktFrag.bth.psn #= psnEnd
-          reqIn.pktFrag.bth.opcodeFull #= opcode.id
-          reqIn.pktFrag.last #= isLastFrag
-        }
+          dut.clockDomain,
+          inputMetaDataQueue,
+          payloadAssignFunc = (
+              sendWriteReq: Fragment[RdmaDataPkt],
+              payloadData: (PSN, OpCode.Value, FragLast)
+          ) => {
+            val (psnEnd, opcode, isLastFrag) = payloadData
+            sendWriteReq.bth.psn #= psnEnd
+            sendWriteReq.bth.opcodeFull #= opcode.id
+            sendWriteReq.last #= isLastFrag
+
+            val reqValid = true
+            reqValid
+          }
+        )
         onStreamFire(reqIn.pktFrag, dut.clockDomain) {
           val psn = reqIn.pktFrag.bth.psn.toInt
           val opcode = OpCode(reqIn.pktFrag.bth.opcodeFull.toInt)
@@ -732,11 +793,20 @@ class SqOutTest extends AnyFunSuite {
         }
       }
       val readReqIn = dut.io.rxReadReq
-      streamMasterDriver(readReqIn, dut.clockDomain) {
-        val (psnEnd, opcode) = inputReadReqMetaDataQueue.dequeue()
-        readReqIn.bth.psn #= psnEnd
-        readReqIn.bth.opcodeFull #= opcode.id
-      }
+      streamMasterPayloadFromQueueAlwaysValid(
+        readReqIn,
+        dut.clockDomain,
+        inputReadReqMetaDataQueue,
+        payloadAssignFunc =
+          (readReq: ReadReq, payloadData: (PSN, OpCode.Value)) => {
+            val (psnEnd, opcode) = payloadData
+            readReq.bth.psn #= psnEnd
+            readReq.bth.opcodeFull #= opcode.id
+
+            val reqValid = true
+            reqValid
+          }
+      )
       onStreamFire(readReqIn, dut.clockDomain) {
         val psn = readReqIn.bth.psn.toInt
         val opcode = OpCode(readReqIn.bth.opcodeFull.toInt)
@@ -755,11 +825,20 @@ class SqOutTest extends AnyFunSuite {
       }
 
       val atomicReqIn = dut.io.rxAtomicReq
-      streamMasterDriver(atomicReqIn, dut.clockDomain) {
-        val (psnEnd, opcode) = inputAtomicReqMetaDataQueue.dequeue()
-        atomicReqIn.bth.psn #= psnEnd
-        atomicReqIn.bth.opcodeFull #= opcode.id
-      }
+      streamMasterPayloadFromQueueAlwaysValid(
+        atomicReqIn,
+        dut.clockDomain,
+        inputAtomicReqMetaDataQueue,
+        payloadAssignFunc =
+          (atomicReq: AtomicReq, payloadData: (PSN, OpCode.Value)) => {
+            val (psnEnd, opcode) = payloadData
+            atomicReq.bth.psn #= psnEnd
+            atomicReq.bth.opcodeFull #= opcode.id
+
+            val reqValid = true
+            reqValid
+          }
+      )
       onStreamFire(atomicReqIn, dut.clockDomain) {
         val psn = atomicReqIn.bth.psn.toInt
         val opcode = OpCode(atomicReqIn.bth.opcodeFull.toInt)
@@ -779,7 +858,7 @@ class SqOutTest extends AnyFunSuite {
       }
 
       var prePsn = -1
-      streamSlaveRandomizer(dut.io.tx.pktFrag, dut.clockDomain)
+      streamSlaveAlwaysReady(dut.io.tx.pktFrag, dut.clockDomain)
       onStreamFire(dut.io.tx.pktFrag, dut.clockDomain) {
         val psn = dut.io.tx.pktFrag.bth.psn.toInt
         val opcode = OpCode(dut.io.tx.pktFrag.bth.opcodeFull.toInt)
@@ -816,7 +895,12 @@ class SqOutTest extends AnyFunSuite {
 //          f"${simTime()} time: dut.io.tx has opcode=${opcode}, PSN=${psn}, isLastFrag=${isLastFrag}, pktFragData=${pktFragData}%X"
 //        )
       }
-
+      MiscUtils.checkCondChangeOnceAndHoldAfterwards(
+        dut.clockDomain,
+        cond = dut.io.tx.pktFrag.valid.toBoolean,
+        clue =
+          f"${simTime()} time: dut.io.tx.pktFrag.valid=${dut.io.tx.pktFrag.valid.toBoolean} should be true always"
+      )
       fork {
         while (true) {
 //            println(f"${simTime()} time: inputSendWriteReqOrErrRespQueue.size=${inputSendWriteReqOrErrRespQueue.size}")

@@ -1,10 +1,13 @@
 package rdma
 
 import spinal.core._
+import spinal.core.formal._
 import spinal.lib._
+
+import scala.language.postfixOps
 //import ConstantSettings._
 import RdmaConstants._
-import StreamVec._
+//import StreamVec._
 
 case class CamQueryResp[Tk <: Data, Tv <: Data](
     keyType: HardType[Tk],
@@ -70,8 +73,8 @@ case class CachedValue[T <: Data](dataType: HardType[T]) extends Bundle {
 
 class Fifo[T <: Data](valueType: HardType[T], initDataVal: => T, depth: Int)
     extends Component {
-  require(depth >= 4, f"Fifo minimum depth=${depth} is 4")
-  require(isPow2(depth), f"Fifo depth=${depth} must be power of 2")
+  require(depth >= 4, s"Fifo minimum depth=${depth} is 4")
+  require(isPow2(depth), s"Fifo depth=${depth} must be power of 2")
   val depthWidth = log2Up(depth)
   val ptrWidth = depthWidth + 1
   val twiceDepth = depth << 1
@@ -125,7 +128,7 @@ class Fifo[T <: Data](valueType: HardType[T], initDataVal: => T, depth: Int)
   assert(
     assertion = io.push.ready =/= io.full,
     message =
-      L"${REPORT_TIME} time: io.push.ready=${io.push.ready} should =/= io.full=${io.full}",
+      L"${REPORT_TIME} time: io.push.ready=${io.push.ready} should =/= io.full=${io.full}".toSeq,
     severity = FAILURE
   )
 //  }
@@ -133,7 +136,7 @@ class Fifo[T <: Data](valueType: HardType[T], initDataVal: => T, depth: Int)
   assert(
     assertion = io.pop.valid =/= (io.empty && !io.push.valid),
     message =
-      L"${REPORT_TIME} time: io.pop.valid=${io.pop.valid} should =/= (io.empty=${io.empty} and !(io.push.valid=${io.push.valid}))",
+      L"${REPORT_TIME} time: io.pop.valid=${io.pop.valid} should =/= (io.empty=${io.empty} and !(io.push.valid=${io.push.valid}))".toSeq,
     severity = FAILURE
   )
 //  }
@@ -169,8 +172,8 @@ case class RamScanOut[T <: Data](valueType: HardType[T]) extends Bundle {
 }
 
 class RamScan[T <: Data](valueType: HardType[T], depth: Int) extends Component {
-  require(depth >= 4, f"RamScan minimum depth=${depth} is 4")
-  require(isPow2(depth), f"RamScan depth=${depth} must be power of 2")
+  require(depth >= 4, s"RamScan minimum depth=${depth} is 4")
+  require(isPow2(depth), s"RamScan depth=${depth} must be power of 2")
   val depthWidth = log2Up(depth)
   val ptrWidth = depthWidth + 1
   val twiceDepth = depth << 1
@@ -209,8 +212,8 @@ class RamScan[T <: Data](valueType: HardType[T], depth: Int) extends Component {
 
   when(scanRunning) {
     assert(
-      assertion = Formal.stable(io.pushPtr) && !io.pushing,
-      message = L"${REPORT_TIME} time: during scan, no push to FIFO",
+      assertion = stable(io.pushPtr) && !io.pushing,
+      message = L"${REPORT_TIME} time: during scan, no push to FIFO".toSeq,
       severity = FAILURE
     )
   }
@@ -290,7 +293,7 @@ class Cam[Tk <: Data, Tv <: Data](
     depth: Int,
     portCount: Int
 ) extends Component {
-  require(isPow2(depth), f"Cam depth=${depth} must be power of 2")
+  require(isPow2(depth), s"Cam depth=${depth} must be power of 2")
   val depthWidth = log2Up(depth)
 
   val io = new Bundle {
@@ -314,7 +317,7 @@ class Cam[Tk <: Data, Tv <: Data](
         assert(
           assertion = CountOne(itemIdxOH) === found.asUInt,
           message =
-            L"${REPORT_TIME} time: itemIdxOH=${itemIdxOH} is not one hot when found=${found}, itemIdxBinary=${itemIdxBinary}",
+            L"${REPORT_TIME} time: itemIdxOH=${itemIdxOH} is not one hot when found=${found}, itemIdxBinary=${itemIdxBinary}".toSeq,
           severity = ERROR
         )
       }
@@ -349,7 +352,7 @@ class Cam[Tk <: Data, Tv <: Data](
         }
 
     val queryStreamSelected =
-      StreamArbiterFactory.roundRobin.transactionLock.on(queryReqVec)
+      StreamArbiterFactory().roundRobin.transactionLock.on(queryReqVec)
     val queryStreamPiped = cloneOf(queryStreamSelected)
     queryStreamPiped <-/< queryStreamSelected
 
@@ -372,7 +375,7 @@ class Cam[Tk <: Data, Tv <: Data](
     val respStreamPiped = cloneOf(respStream)
     respStreamPiped <-/< respStream
     val queryRespStreamVec = StreamDemux(
-      respStreamPiped ~~ (_._1),
+      respStreamPiped.map(_._1),
       select = respStreamPiped._2,
       portCount = portCount
     )
@@ -491,13 +494,14 @@ class WorkReqCache(depth: Int) extends Component {
     assertion = io.qpAttr.getMaxPendingReadAtomicWorkReqNum() > 0,
     message =
       L"${REPORT_TIME} time: io.qpAttr.getMaxPendingReadAtomicWorkReqNum()=${io.qpAttr
-        .getMaxPendingReadAtomicWorkReqNum()} should > 0",
+        .getMaxPendingReadAtomicWorkReqNum()} should > 0".toSeq,
     severity = FAILURE
   )
   assert(
     assertion = io.qpAttr.getMaxPendingWorkReqNum() > 0,
     message =
-      L"${REPORT_TIME} time: io.qpAttr.getMaxPendingWorkReqNum()=${io.qpAttr.getMaxPendingWorkReqNum()} should > 0",
+      L"${REPORT_TIME} time: io.qpAttr.getMaxPendingWorkReqNum()=${io.qpAttr
+        .getMaxPendingWorkReqNum()} should > 0".toSeq,
     severity = FAILURE
   )
 
@@ -537,8 +541,9 @@ class WorkReqCache(depth: Int) extends Component {
 
   when(io.txQCtrl.retry) {
     assert(
-      assertion = Formal.stable(fifo.io.pushPtr),
-      message = L"${REPORT_TIME} time: during retry, no new WR can be added",
+      assertion = stable(fifo.io.pushPtr),
+      message =
+        L"${REPORT_TIME} time: during retry, no new WR can be added".toSeq,
       severity = FAILURE
     )
   }
@@ -669,7 +674,7 @@ class PdAddrCache(depth: Int) extends Component {
     for ((queryPort, portIdx) <- queryPortVec.zipWithIndex) {
       cam.io.queryBusVec(portIdx).req << queryPort.req
 
-      queryPort.resp << cam.io.queryBusVec(portIdx).resp ~~ { payloadData =>
+      queryPort.resp << cam.io.queryBusVec(portIdx).resp.map { payloadData =>
         val originalReq = payloadData.queryKey
         val cacheResp = payloadData.respValue.data
         val reqSizeValid = cacheResp.va <= originalReq.va &&
@@ -709,14 +714,14 @@ class PdAddrCache(depth: Int) extends Component {
 // TODO: handle zero DMA length key check
 class QpAddrCacheAgent extends Component {
   val io = new Bundle {
-    val qpAttr = in(QpAttrData())
+//    val qpAttr = in(QpAttrData())
     val rqCacheRead = slave(QpAddrCacheAgentReadBus())
     val sqReqCacheRead = slave(QpAddrCacheAgentReadBus())
     val sqRespCacheRead = slave(QpAddrCacheAgentReadBus())
     val pdAddrCacheQuery = master(PdAddrCacheReadBus())
   }
 
-  io.pdAddrCacheQuery.req <-/< StreamArbiterFactory.roundRobin.transactionLock
+  io.pdAddrCacheQuery.req <-/< StreamArbiterFactory().roundRobin.transactionLock
     .on(
       Vec(
         io.rqCacheRead.req.translateWith {
@@ -743,8 +748,9 @@ class QpAddrCacheAgent extends Component {
       )
     )
 
-  val txSel = UInt(2 bits)
   val (rqIdx, sqReqIdx, sqRespIdx) = (0, 1, 2)
+  /*
+  val txSel = UInt(2 bits)
   switch(io.pdAddrCacheQuery.resp.initiator) {
     is(AddrQueryInitiator.RQ) {
       txSel := rqIdx
@@ -755,7 +761,6 @@ class QpAddrCacheAgent extends Component {
     is(AddrQueryInitiator.SQ_RESP) {
       txSel := sqRespIdx
     }
-    // UNREACHABLE DEFAULT STATEMENT
 //    default {
 //      report(
 //        message =
@@ -784,4 +789,31 @@ class QpAddrCacheAgent extends Component {
     select = txSel,
     portCount = 3
   )
+   */
+  val isInitiatorRQ =
+    io.pdAddrCacheQuery.resp.initiator === AddrQueryInitiator.RQ
+  val isInitiatorSqReq =
+    io.pdAddrCacheQuery.resp.initiator === AddrQueryInitiator.SQ_REQ
+  val isInitiatorSqResp =
+    io.pdAddrCacheQuery.resp.initiator === AddrQueryInitiator.SQ_RESP
+  val threeStreams = StreamDeMuxByConditions(
+    io.pdAddrCacheQuery.resp.translateWith {
+      val result = cloneOf(io.rqCacheRead.resp.payloadType)
+      result.assignSomeByName(io.pdAddrCacheQuery.resp.payload)
+//      result.sqpn := io.pdAddrCacheQuery.resp.sqpn
+//      result.psn := io.pdAddrCacheQuery.resp.psn
+//      result.keyValid := io.pdAddrCacheQuery.resp.keyValid
+//      result.sizeValid := io.pdAddrCacheQuery.resp.sizeValid
+//      result.accessValid := io.pdAddrCacheQuery.resp.accessValid
+//      result.pa := io.pdAddrCacheQuery.resp.pa
+      result
+    },
+    isInitiatorRQ,
+    isInitiatorSqReq,
+    isInitiatorSqResp
+  )
+
+  io.rqCacheRead.resp <-/< threeStreams(rqIdx)
+  io.sqReqCacheRead.resp <-/< threeStreams(sqReqIdx)
+  io.sqRespCacheRead.resp <-/< threeStreams(sqRespIdx)
 }

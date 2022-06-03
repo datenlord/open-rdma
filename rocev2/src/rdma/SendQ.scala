@@ -23,7 +23,7 @@ class SendQ(busWidth: BusWidth.Value) extends Component {
     val workCompErr = master(Stream(WorkComp())) // TODO: remove
   }
 
-  val workReqCache = new WorkReqCache(depth = PENDING_REQ_NUM)
+  val workReqCache = new WorkReqCache(depth = MAX_PENDING_REQ_NUM)
   workReqCache.io.qpAttr := io.qpAttr
   workReqCache.io.txQCtrl := io.txQCtrl
   io.notifier.workReqCacheEmpty := workReqCache.io.empty
@@ -136,7 +136,7 @@ class NormalAndRetryWorkReqHandler(busWidth: BusWidth.Value) extends Component {
   io.tx << sqOut.io.tx
 }
 
-// TODO: support PENDING_REQ_NUM limit
+// TODO: support MAX_PENDING_REQ_NUM limit
 // TODO: keep track of pending read/atomic requests
 class WorkReqValidator extends Component {
   val io = new Bundle {
@@ -169,20 +169,25 @@ class WorkReqValidator extends Component {
 
     // To query AddCache, it needs several cycle delay.
     // In order to not block pipeline, use a FIFO to cache incoming data.
-    val inputWorkReqQueue = workReq4Queue
+    val inputWorkReqQueue =
+      StreamFifoLowLatency(WorkReqAndMetaData(), ADDR_CACHE_QUERY_FIFO_DEPTH)
+    inputWorkReqQueue.io.push << workReq4Queue
       .translateWith {
-        val result = WorkReqAndMetaData()
+        val result = cloneOf(inputWorkReqQueue.dataType) // WorkReqAndMetaData()
         result.workReq := workReq
         result.psnStart := io.qpAttr.npsn
         result.pktNum := numReqPkt.resize(PSN_WIDTH)
-        // PA will be updated after QpAddrCacheAgent query
-        // TODO: remove this
-//        result.pa.assignDontCare()
-//        result.rnrCnt := 0 // New WR has no RNR
-//        result.retryCnt := 0 // New WR has no retry
         result
       }
-      .queueLowLatency(ADDR_CACHE_QUERY_DELAY_CYCLE)
+    inputWorkReqQueue.io.flush := io.txQCtrl.wrongStateFlush
+    assert(
+      assertion = inputWorkReqQueue.io.push.ready,
+      message =
+        L"inputWorkReqQueue is full, inputWorkReqQueue.io.push.ready=${inputWorkReqQueue.io.push.ready}, inputWorkReqQueue.io.occupancy=${inputWorkReqQueue.io.occupancy}, which is not allowed in WorkReqValidator".toSeq,
+      severity = FAILURE
+    )
+    val inputWorkReqQueuePop = inputWorkReqQueue.io.pop.combStage()
+//    .queueLowLatency(ADDR_CACHE_QUERY_FIFO_DEPTH)
 
     io.addrCacheRead.req <-/< workReq4AddrCacheQuery
       .throwWhen(io.txQCtrl.wrongStateFlush)
@@ -201,8 +206,8 @@ class WorkReqValidator extends Component {
   }
 
   val workReqValidator = new Area {
-    val inputValid = addrCacheQueryBuilder.inputWorkReqQueue.valid
-    val inputCachedWorkReq = addrCacheQueryBuilder.inputWorkReqQueue.payload
+    val inputValid = addrCacheQueryBuilder.inputWorkReqQueuePop.valid
+    val inputCachedWorkReq = addrCacheQueryBuilder.inputWorkReqQueuePop.payload
 
     val addrCacheRespValid =
       io.addrCacheRead.resp.valid && !io.txQCtrl.wrongStateFlush
@@ -213,7 +218,7 @@ class WorkReqValidator extends Component {
       assert(
         assertion = inputCachedWorkReq.psnStart === io.addrCacheRead.resp.psn,
         message =
-          L"${REPORT_TIME} time: addrCacheReadResp.resp has PSN=${io.addrCacheRead.resp.psn} not match SQ query PSN=${inputCachedWorkReq.psnStart}",
+          L"${REPORT_TIME} time: addrCacheReadResp.resp has PSN=${io.addrCacheRead.resp.psn} not match SQ query PSN=${inputCachedWorkReq.psnStart}".toSeq,
         severity = FAILURE
       )
     }
@@ -227,7 +232,7 @@ class WorkReqValidator extends Component {
     val addrCacheReadResp =
       io.addrCacheRead.resp.throwWhen(io.txQCtrl.wrongStateFlush)
     val joinStream = StreamConditionalJoin(
-      addrCacheQueryBuilder.inputWorkReqQueue,
+      addrCacheQueryBuilder.inputWorkReqQueuePop,
       addrCacheReadResp,
       joinCond = !io.txQCtrl.wrongStateFlush
     )
@@ -268,7 +273,7 @@ class WorkReqValidator extends Component {
       assert(
         assertion = workCompErrStatus =/= WorkCompStatus.SUCCESS,
         message =
-          L"${REPORT_TIME} time: workCompErrStatus=${workCompErrStatus} should not be success, checkPass=${checkPass}, io.txQCtrl.wrongStateFlush=${io.txQCtrl.wrongStateFlush}",
+          L"${REPORT_TIME} time: workCompErrStatus=${workCompErrStatus} should not be success, checkPass=${checkPass}, io.txQCtrl.wrongStateFlush=${io.txQCtrl.wrongStateFlush}".toSeq,
         severity = FAILURE
       )
     }
@@ -341,16 +346,17 @@ class WorkReqCacheAndOutPsnRangeHandler extends Component {
     StreamFork3(selectedWorkReq)
 
   io.sqOutPsnRangeFifoPush <-/< workReq4OutPsnRangeFifoPUsh
-    .throwWhen(io.txQCtrl.wrongStateFlush) ~~ { payloadData =>
-    val psnEnd = payloadData.psnStart + (payloadData.pktNum - 1)
+    .throwWhen(io.txQCtrl.wrongStateFlush)
+    .map { payloadData =>
+      val psnEnd = payloadData.psnStart + (payloadData.pktNum - 1)
 //    report(L"${REPORT_TIME} time: psnStart=${payloadData.psnStart}, pktNum=${payloadData.pktNum}, psnEnd=${psnEnd}")
-    val result = cloneOf(io.sqOutPsnRangeFifoPush.payloadType)
-    result.workReqOpCode := payloadData.workReq.opcode
-    result.start := payloadData.psnStart
-    result.end := psnEnd.resize(PSN_WIDTH)
-    result.isRetryWorkReq := io.txQCtrl.retry
-    result
-  }
+      val result = cloneOf(io.sqOutPsnRangeFifoPush.payloadType)
+      result.workReqOpCode := payloadData.workReq.opcode
+      result.start := payloadData.psnStart
+      result.end := psnEnd.resize(PSN_WIDTH)
+      result.isRetryWorkReq := io.txQCtrl.retry
+      result
+    }
 
   io.workReqCachePush <-/< workReq4CachePush
     // When retry state, no need to push to WR cache
@@ -411,7 +417,7 @@ class SqOut(busWidth: BusWidth.Value) extends Component {
         ),
         message =
           // TODO: check SpinalEnumCraft print bug
-          L"${REPORT_TIME} time: WR opcode does not match request opcode=${req.bth.opcode}, req.bth.psn=${req.bth.psn}, psnOutRangeFifo.io.pop.start=${psnOutRangeFifoPop.start}, psnOutRangeFifo.io.pop.end=${psnOutRangeFifoPop.end}",
+          L"${REPORT_TIME} time: WR opcode does not match request opcode=${req.bth.opcode}, req.bth.psn=${req.bth.psn}, psnOutRangeFifo.io.pop.start=${psnOutRangeFifoPop.start}, psnOutRangeFifo.io.pop.end=${psnOutRangeFifoPop.end}".toSeq,
 //            L"${REPORT_TIME} time: WR opcode=${psnOutRangeFifoPop.workReqOpCode} does not match request opcode=${req.bth.opcode}, req.bth.psn=${req.bth.psn}, psnOutRangeFifo.io.pop.start=${psnOutRangeFifoPop.start}, psnOutRangeFifo.io.pop.end=${psnOutRangeFifoPop.end}",
         severity = FAILURE
       )

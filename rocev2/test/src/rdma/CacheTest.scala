@@ -3,17 +3,18 @@ package rdma
 import spinal.core._
 import spinal.core.sim._
 import spinal.lib._
-
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
 import org.scalatest.AppendedClues._
-import scala.collection.mutable
 
+import scala.collection.mutable
 import ConstantSettings._
 import StreamSimUtil._
 import RdmaTypeReDef._
 import PsnSim._
 import SimSettings._
+
+import scala.language.postfixOps
 
 class ReadAtomicRstCacheTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
@@ -202,6 +203,9 @@ class ReadAtomicRstCacheTest extends AnyFunSuite {
         reqData.opcode #= opcode.id
         reqData.va #= virtualAddr
         reqData.rkey #= rmtKey
+
+        val respValid = true
+        respValid
       }
     )
     onStreamFire(dut.io.push, dut.clockDomain) {
@@ -248,6 +252,8 @@ class ReadAtomicRstCacheTest extends AnyFunSuite {
         queryReq.rkey #= rmtKey
         queryReq.epsn #= nextPsn
 
+        val respValid = true
+        respValid
 //        println(
 //          f"${simTime()} time: CAM query request with queryPsn=${queryPsn}%X, opcode=${opcode}, rkey=${rmtKey}%X, ePSN=${nextPsn}%X"
 //        )
@@ -355,6 +361,7 @@ class FifoTest extends AnyFunSuite {
       fork {
         while (true) {
           dut.io.write.valid #= true
+          dut.clockDomain.waitSampling()
           // Push to FIFO until full
           while (!dut.io.full.toBoolean) {
             dut.io.write.payload.randomize()
@@ -510,7 +517,7 @@ class WorkReqCacheTest extends AnyFunSuite {
         dut.io.pop.ready #= false
         dut.io.retryScanCtrlBus.startPulse #= false
         dut.io.retryScanCtrlBus.retryReason #= retryReason
-//        dut.clockDomain.waitSampling()
+        dut.clockDomain.waitSampling()
 
         while (true) {
           // Push to WorkReqCache until full
@@ -596,6 +603,9 @@ class WorkReqCacheTest extends AnyFunSuite {
           cachedWorkReq.workReq.opcode #= workReqOpCode
           cachedWorkReq.workReq.raddr #= virtualAddr
           cachedWorkReq.workReq.rkey #= rmtKey
+
+          val respValid = true
+          respValid
         }
       )
       onStreamFire(dut.io.push, dut.clockDomain) {
@@ -781,6 +791,7 @@ class PdAddrCacheTest extends AnyFunSuite {
   val depth = 8
 
   val simCfg = SimConfig.allOptimisation.withWave
+    .withConfig(SpinalConfig(anonymSignalPrefix = "tmp"))
     .compile(new PdAddrCache(depth))
 
   def testFunc(querySuccess: Boolean, hasPermissionErr: Boolean): Unit =
@@ -823,21 +834,19 @@ class PdAddrCacheTest extends AnyFunSuite {
             PktLen
         )
       ]()
-      val addrData4DeleteQueue = mutable
-        .Queue[
-          (
-              AccessPermissionType,
-              LRKey,
-              LRKey,
-              VirtualAddr,
-              PhysicalAddr,
-              PktLen
-          )
-        ]()
-      val addrData4QueryReqQueue = mutable
-        .Queue[
-          (AccessPermissionType, LRKey, VirtualAddr, PhysicalAddr, PktLen)
-        ]()
+      val addrData4DeleteQueue = mutable.Queue[
+        (
+            AccessPermissionType,
+            LRKey,
+            LRKey,
+            VirtualAddr,
+            PhysicalAddr,
+            PktLen
+        )
+      ]()
+      val addrData4QueryReqQueue = DelayedQueue[
+        (AccessPermissionType, LRKey, VirtualAddr, PhysicalAddr, PktLen)
+      ](dut.clockDomain, ADDR_CACHE_QUERY_DELAY_CYCLES)
       val queryRespQueue = mutable.Queue[
         (
             KeyValid,
@@ -866,7 +875,7 @@ class PdAddrCacheTest extends AnyFunSuite {
         )
       ]()
 
-      streamMasterPayloadFromQueue(
+      streamMasterPayloadFromQueueAlwaysValid(
         dut.io.addrCreateOrDelete.req,
         dut.clockDomain,
         reqQueue,
@@ -900,10 +909,11 @@ class PdAddrCacheTest extends AnyFunSuite {
           pdAddrDataReq.addrData.pa #= physicalAddr
           pdAddrDataReq.addrData.dataLenBytes #= pktLen
 
+          val respValid = true
+          respValid
 //            println(f"${simTime()} time: dut.io.addrCreateOrDelete.req.createOrDelete=${createOrDelete}, dut.io.addrCreateOrDelete.req.addrData.pa=${physicalAddr}, full=${dut.io.full.toBoolean}")
         }
       )
-
       onStreamFire(dut.io.addrCreateOrDelete.req, dut.clockDomain) {
         val isSuccess = true
         allCreateOrDeleteReqQueue.enqueue(
@@ -920,7 +930,7 @@ class PdAddrCacheTest extends AnyFunSuite {
         )
       }
 
-      streamSlaveRandomizer(dut.io.addrCreateOrDelete.resp, dut.clockDomain)
+      streamSlaveAlwaysReady(dut.io.addrCreateOrDelete.resp, dut.clockDomain)
       onStreamFire(dut.io.addrCreateOrDelete.resp, dut.clockDomain) {
         val createOrDelete =
           dut.io.addrCreateOrDelete.resp.createOrDelete.toEnum
@@ -938,7 +948,7 @@ class PdAddrCacheTest extends AnyFunSuite {
           )
         )
 
-//        println(f"${simTime()} time: createOrDelete=${createOrDelete}, dut.io.addrCreateOrDelete.resp.addrData.pa=${dut.io.addrCreateOrDelete.resp.addrData.pa.toBigInt}, isSuccess=${isSuccess}")
+//        println(f"${simTime()} time: createOrDelete=${createOrDelete}, dut.io.addrCreateOrDelete.resp.addrData.pa=${dut.io.addrCreateOrDelete.resp.addrData.pa.toBigInt}%X, isSuccess=${isSuccess}")
         if (createOrDelete == CRUD.CREATE && isSuccess) {
           addrData4DeleteQueue.enqueue(
             (
@@ -950,6 +960,8 @@ class PdAddrCacheTest extends AnyFunSuite {
               dut.io.addrCreateOrDelete.resp.addrData.dataLenBytes.toLong
             )
           )
+
+//          println(f"${simTime()} time: createOrDelete=${createOrDelete}, dut.io.addrCreateOrDelete.resp.addrData.pa=${dut.io.addrCreateOrDelete.resp.addrData.pa.toBigInt}%X, isSuccess=${isSuccess}")
           addrData4QueryReqQueue.enqueue(
             (
               dut.io.addrCreateOrDelete.resp.addrData.accessType.accessBits.toInt,
@@ -965,6 +977,8 @@ class PdAddrCacheTest extends AnyFunSuite {
 
       fork {
         while (true) {
+          dut.clockDomain.waitSampling()
+
           // Insert until full
           for (_ <- 0 until depth) {
             dut.io.addrCreateOrDelete.req.payload.randomize()
@@ -981,7 +995,7 @@ class PdAddrCacheTest extends AnyFunSuite {
               )
             )
           }
-          waitUntil(addrData4DeleteQueue.size >= depth)
+          dut.clockDomain.waitSamplingWhere(addrData4DeleteQueue.size >= depth)
           dut.io.full.toBoolean shouldBe true withClue
             f"${simTime()} time: dut.io.full=${dut.io.full.toBoolean} should be true"
 //          println(
@@ -989,7 +1003,7 @@ class PdAddrCacheTest extends AnyFunSuite {
 //          )
 
           // Wait until query finish
-          waitUntil(queryRespQueue.size >= depth)
+          dut.clockDomain.waitSamplingWhere(queryRespQueue.size >= depth)
           for (_ <- 0 until depth) {
             val queryResp = queryRespQueue.dequeue()
             allQueryRespQueue.enqueue(queryResp)
@@ -1032,11 +1046,11 @@ class PdAddrCacheTest extends AnyFunSuite {
         }
       }
 
-      streamMasterPayloadFromQueueRandomInterval(
+      streamMasterPayloadFromQueueAlwaysValid(
         dut.io.query.req,
         dut.clockDomain,
-        addrData4QueryReqQueue,
-        maxIntervalCycles = ADDR_CACHE_QUERY_DELAY_CYCLE,
+        addrData4QueryReqQueue.toMutableQueue(),
+//        maxIntervalCycles = ADDR_CACHE_QUERY_DELAY_CYCLES,
         payloadAssignFunc = (
             queryReq: PdAddrCacheReadReq,
             payloadData: (
@@ -1077,11 +1091,20 @@ class PdAddrCacheTest extends AnyFunSuite {
               physicalAddr
             )
           )
+
+          println(
+            f"${simTime()} time: query request PSN=${queryReq.psn.toInt}%X, physicalAddr=${physicalAddr}%X"
+          )
+
+          val respValid = true
+          respValid
         }
       )
 
-      streamSlaveRandomizer(dut.io.query.resp, dut.clockDomain)
+      streamSlaveAlwaysReady(dut.io.query.resp, dut.clockDomain)
       onStreamFire(dut.io.query.resp, dut.clockDomain) {
+//        println(f"${simTime()} time: query response PSN=${dut.io.query.resp.psn.toInt}%X")
+
         queryRespQueue.enqueue(
           (
             dut.io.query.resp.keyValid.toBoolean,
