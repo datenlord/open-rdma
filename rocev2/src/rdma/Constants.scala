@@ -89,7 +89,7 @@ object ConstantSettings {
   val ADDR_CACHE_QUERY_DELAY_CYCLES = 8 // TODO: cache size must be small
   val READ_ATOMIC_RESULT_CACHE_QUERY_DELAY_CYCLES = 8
   val DMA_WRITE_DELAY_CYCLES = 16
-  val DMA_READ_DELAY_CYCLES = 128
+  val DMA_READ_DELAY_CYCLES = 16
   val EXTRA_FIFO_DEPTH = 8
 
   val PENDING_REQ_FIFO_DEPTH = MAX_PENDING_REQ_NUM + EXTRA_FIFO_DEPTH
@@ -244,6 +244,7 @@ object RdmaConstants {
 
   val WR_ID_WIDTH = 64
   val PD_ID_WIDTH = 32
+  val RDMA_MAX_PKT_LEN_BYTES = 1L << 31
   val RDMA_MAX_LEN_WIDTH = 32 // RDMA max request/response length 2GB=2^31
   // RDMA_MAX_LEN_WIDTH - log2Up(256) = RDMA_MAX_LEN_WIDTH - PMTU.U256.id = 24
   // PMTU.U256.id = 8 is the bit width of 256.

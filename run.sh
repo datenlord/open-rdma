@@ -36,7 +36,6 @@ if [ "$TEST_ONLY" = "false" ]; then
 fi
 
 #$MILL rocev2.test.testSim rdma.SetSuite
-# mill test is not compatible with SpinalHDL, use testOnly instead
 
 # RQ Test
 $MILL rocev2.test.testSim rdma.ReqCommCheckTest
@@ -56,6 +55,8 @@ $MILL rocev2.test.testSim rdma.RqOutTest
 # Slow test
 $MILL rocev2.test.testSim rdma.SendWriteRespGeneratorTest
 $MILL rocev2.test.testSim rdma.RqSendWriteWorkCompGeneratorTest
+# E2E test
+$MILL rocev2.test.testSim rdma.RecvQTest
 
 # Cache Test
 $MILL rocev2.test.testSim rdma.FifoTest
@@ -83,4 +84,3 @@ $MILL rocev2.test.testSim rdma.ReadRespLenCheckTest
 $MILL rocev2.test.testSim rdma.ReadAtomicRespVerifierAndFatalNakNotifierTest
 $MILL rocev2.test.testSim rdma.ReadAtomicRespDmaReqInitiatorTest
 $MILL rocev2.test.testSim rdma.WorkCompGenTest
-

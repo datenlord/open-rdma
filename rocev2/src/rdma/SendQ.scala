@@ -169,26 +169,39 @@ class WorkReqValidator extends Component {
 
     // To query AddCache, it needs several cycle delay.
     // In order to not block pipeline, use a FIFO to cache incoming data.
-    val inputWorkReqQueue =
-      StreamFifoLowLatency(WorkReqAndMetaData(), ADDR_CACHE_QUERY_FIFO_DEPTH)
-    inputWorkReqQueue.io.push << workReq4Queue
-      .translateWith {
-        val result = cloneOf(inputWorkReqQueue.dataType) // WorkReqAndMetaData()
+    val inputWorkReqQueuePop = FixedLenQueue(
+      WorkReqAndMetaData(),
+      depth = ADDR_CACHE_QUERY_FIFO_DEPTH,
+      push = workReq4Queue.translateWith {
+        val result = WorkReqAndMetaData()
         result.workReq := workReq
         result.psnStart := io.qpAttr.npsn
         result.pktNum := numReqPkt.resize(PSN_WIDTH)
         result
-      }
-    inputWorkReqQueue.io.flush := io.txQCtrl.wrongStateFlush
-    assert(
-      assertion = inputWorkReqQueue.io.push.ready,
-      message =
-        L"inputWorkReqQueue is full, inputWorkReqQueue.io.push.ready=${inputWorkReqQueue.io.push.ready}, inputWorkReqQueue.io.occupancy=${inputWorkReqQueue.io.occupancy}, which is not allowed in WorkReqValidator".toSeq,
-      severity = FAILURE
+      },
+      flush = io.txQCtrl.wrongStateFlush,
+      queueName = "inputWorkReqQueue"
     )
-    val inputWorkReqQueuePop = inputWorkReqQueue.io.pop.combStage()
-//    .queueLowLatency(ADDR_CACHE_QUERY_FIFO_DEPTH)
-
+    /*
+        val inputWorkReqQueue =
+          StreamFifoLowLatency(WorkReqAndMetaData(), ADDR_CACHE_QUERY_FIFO_DEPTH)
+        inputWorkReqQueue.io.push << workReq4Queue
+          .translateWith {
+            val result = cloneOf(inputWorkReqQueue.dataType) // WorkReqAndMetaData()
+            result.workReq := workReq
+            result.psnStart := io.qpAttr.npsn
+            result.pktNum := numReqPkt.resize(PSN_WIDTH)
+            result
+          }
+        inputWorkReqQueue.io.flush := io.txQCtrl.wrongStateFlush
+        assert(
+          assertion = inputWorkReqQueue.io.push.ready,
+          message =
+            L"inputWorkReqQueue is full, inputWorkReqQueue.io.push.ready=${inputWorkReqQueue.io.push.ready}, inputWorkReqQueue.io.occupancy=${inputWorkReqQueue.io.occupancy}, which is not allowed in WorkReqValidator".toSeq,
+          severity = FAILURE
+        )
+        val inputWorkReqQueuePop = inputWorkReqQueue.io.pop.combStage()
+     */
     io.addrCacheRead.req <-/< workReq4AddrCacheQuery
       .throwWhen(io.txQCtrl.wrongStateFlush)
       .translateWith {
@@ -401,10 +414,10 @@ class SqOut(busWidth: BusWidth.Value) extends Component {
 
   val opsnInc = OPsnInc()
   val hasPktToOutput = Bool()
-  val (normalReqOut, psnOutRangeFifo) = SeqOut(
+  val (normalReqOut, psnOutRangeQueuePop) = SeqOut(
     curPsn = io.qpAttr.npsn,
     flush = io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush,
-    outPsnRangeFifoPush = io.outPsnRangeFifoPush,
+    outPsnRangeQueuePush = io.outPsnRangeFifoPush,
     outDataStreamVec = normalReqVec,
     outputValidateFunc = (
         psnOutRangeFifoPop: ReqPsnRange,
@@ -417,15 +430,14 @@ class SqOut(busWidth: BusWidth.Value) extends Component {
         ),
         message =
           // TODO: check SpinalEnumCraft print bug
-          L"${REPORT_TIME} time: WR opcode does not match request opcode=${req.bth.opcode}, req.bth.psn=${req.bth.psn}, psnOutRangeFifo.io.pop.start=${psnOutRangeFifoPop.start}, psnOutRangeFifo.io.pop.end=${psnOutRangeFifoPop.end}".toSeq,
-//            L"${REPORT_TIME} time: WR opcode=${psnOutRangeFifoPop.workReqOpCode} does not match request opcode=${req.bth.opcode}, req.bth.psn=${req.bth.psn}, psnOutRangeFifo.io.pop.start=${psnOutRangeFifoPop.start}, psnOutRangeFifo.io.pop.end=${psnOutRangeFifoPop.end}",
+          L"${REPORT_TIME} time: WR opcode does not match request opcode=${req.bth.opcode}, req.bth.psn=${req.bth.psn}, psnOutRangeQueuePop.start=${psnOutRangeFifoPop.start}, psnOutRangeQueuePop.end=${psnOutRangeFifoPop.end}".toSeq,
         severity = FAILURE
       )
     },
     hasPktToOutput = hasPktToOutput,
     opsnInc = opsnInc
   )
-  io.opsnInc.inc := opsnInc.inc && !psnOutRangeFifo.io.pop.isRetryWorkReq
+  io.opsnInc.inc := opsnInc.inc && !psnOutRangeQueuePop.isRetryWorkReq
   io.opsnInc.psnVal := opsnInc.psnVal
 
   io.tx.pktFrag <-/< normalReqOut.throwWhen(

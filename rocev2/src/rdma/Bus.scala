@@ -448,10 +448,10 @@ case class QpAttrData() extends Bundle {
     rqOutPsn := 0
     sqOutPsn := 0
     pmtu := PMTU.U512.id
-    maxPendingReadAtomicWorkReqNum := 0
-    maxDstPendingReadAtomicWorkReqNum := 0
-    maxPendingWorkReqNum := 0
-    maxDstPendingWorkReqNum := 0
+    maxPendingReadAtomicWorkReqNum := MAX_PENDING_READ_ATOMIC_REQ_NUM
+    maxDstPendingReadAtomicWorkReqNum := MAX_PENDING_READ_ATOMIC_REQ_NUM
+    maxPendingWorkReqNum := MAX_PENDING_REQ_NUM
+    maxDstPendingWorkReqNum := MAX_PENDING_REQ_NUM
     sqpn := 0
     dqpn := 0
 
@@ -2201,7 +2201,7 @@ case class SqReadAtomicRespWithDmaInfoBus(busWidth: BusWidth.Value)
 }
 
 case class RqReqCheckRst() extends Bundle {
-  val isPsnCheckPass = Bool()
+  val isPsnExpected = Bool()
   val isDupReq = Bool()
   val isOpSeqCheckPass = Bool()
   val isSupportedOpCode = Bool()

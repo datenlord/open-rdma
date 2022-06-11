@@ -3,18 +3,18 @@ package rdma
 import spinal.core._
 import spinal.core.sim._
 import spinal.lib._
+
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
 import org.scalatest.AppendedClues._
-
 import scala.collection.mutable
+import scala.language.postfixOps
+
 import ConstantSettings._
 import StreamSimUtil._
 import RdmaTypeReDef._
 import PsnSim._
 import SimSettings._
-
-import scala.language.postfixOps
 
 class ReadAtomicRstCacheTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
@@ -875,7 +875,7 @@ class PdAddrCacheTest extends AnyFunSuite {
         )
       ]()
 
-      streamMasterPayloadFromQueueAlwaysValid(
+      streamMasterPayloadFromQueueNoRandomDelay(
         dut.io.addrCreateOrDelete.req,
         dut.clockDomain,
         reqQueue,
@@ -1046,7 +1046,7 @@ class PdAddrCacheTest extends AnyFunSuite {
         }
       }
 
-      streamMasterPayloadFromQueueAlwaysValid(
+      streamMasterPayloadFromQueueNoRandomDelay(
         dut.io.query.req,
         dut.clockDomain,
         addrData4QueryReqQueue.toMutableQueue(),
@@ -1091,11 +1091,9 @@ class PdAddrCacheTest extends AnyFunSuite {
               physicalAddr
             )
           )
-
-          println(
-            f"${simTime()} time: query request PSN=${queryReq.psn.toInt}%X, physicalAddr=${physicalAddr}%X"
-          )
-
+//          println(
+//            f"${simTime()} time: query request PSN=${queryReq.psn.toInt}%X, physicalAddr=${physicalAddr}%X"
+//          )
           val respValid = true
           respValid
         }
