@@ -332,14 +332,18 @@ object RoCEv2 {
     new SpinalConfig(
       defaultClockDomainFrequency = FixedFrequency(200 MHz),
       defaultConfigForClockDomains = ClockDomainConfig(resetKind = SYNC),
+//      inlineConditionalExpression = true,
+//      nameWhenByFile = false,
       mode = SystemVerilog,
       oneFilePerComponent = true,
-      targetDirectory = "./rtl",
+      removePruned = true,
       romReuse = true,
+      targetDirectory = "./rtl",
       verbose = true
-    ).withoutEnumString().generate(new RoCEv2(numMaxQPs = 4, BusWidth.W512))
-//      .printPruned()
-//      .printPrunedIo()
-//      .printZeroWidth()
+    ).withoutEnumString()
+      .generate(new RoCEv2(numMaxQPs = 4, BusWidth.W512))
+      .printPruned()
+      .printPrunedIo()
+      .printZeroWidth()
   }
 }

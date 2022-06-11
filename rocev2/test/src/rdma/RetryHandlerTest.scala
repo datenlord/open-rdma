@@ -6,7 +6,6 @@ import spinal.core.sim._
 import org.scalatest.funsuite.AnyFunSuite
 import scala.collection.mutable
 
-//import ConstantSettings._
 import RdmaConstants._
 import StreamSimUtil._
 import RdmaTypeReDef._

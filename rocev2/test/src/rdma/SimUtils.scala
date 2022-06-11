@@ -4,19 +4,20 @@ import spinal.core.{assert => _, _}
 import spinal.core.sim._
 import spinal.lib._
 
-import ConstantSettings._
-import RdmaConstants._
-import RdmaTypeReDef._
-
 import org.scalatest.matchers.should.Matchers._
 import org.scalatest.AppendedClues._
 import scala.collection.mutable
 import scala.util.Random
 
+import ConstantSettings._
+import RdmaConstants._
+import RdmaTypeReDef._
+
 // Test related settings
 object SimSettings {
   val SIM_CYCLE_TIME = 10L
   val MATCH_CNT = 1000
+  val INIT_PSN = 0
 }
 
 case class PayloadFragNumItr(payloadFragNumItr: Iterator[FragNum]) {
@@ -69,8 +70,6 @@ case class PayloadLenItr(totalLenItr: Iterator[Int]) {
 object SendWriteReqReadRespInputGen {
   val maxReqRespLen = 1L << (RDMA_MAX_LEN_WIDTH - 1) // 2GB
 
-  def busWidthBytes(busWidth: BusWidth.Value): Int = busWidth.id / BYTE_WIDTH
-
   def pmtuLenBytes(pmtu: PMTU.Value): Int = {
     pmtu match {
       case PMTU.U256  => 256
@@ -83,13 +82,13 @@ object SendWriteReqReadRespInputGen {
   }
 
   def maxFragNumPerPkt(pmtuLen: PMTU.Value, busWidth: BusWidth.Value): Int = {
-    val mtyWidth = busWidthBytes(busWidth)
+    val mtyWidth = MiscUtils.busWidthBytes(busWidth)
     val maxFragNum = (1 << pmtuLen.id) / mtyWidth
     maxFragNum
   }
 
   def maxPayloadFragNumPerReqOrResp(busWidth: BusWidth.Value): Int = {
-    val mtyWidth = busWidthBytes(busWidth)
+    val mtyWidth = MiscUtils.busWidthBytes(busWidth)
     val maxFragNum = (1L << RDMA_MAX_LEN_WIDTH) / mtyWidth
     maxFragNum.toInt
   }
@@ -115,7 +114,7 @@ object SendWriteReqReadRespInputGen {
   }
 
   private def genPayloadLen(busWidth: BusWidth.Value, maxFragNum: FragNum) = {
-    val mtyWidth = busWidthBytes(busWidth)
+    val mtyWidth = MiscUtils.busWidthBytes(busWidth)
     require(
       mtyWidth > 0,
       s"${simTime()} time: mtyWidth=${mtyWidth} should be positive"
@@ -146,7 +145,7 @@ object SendWriteReqReadRespInputGen {
       maxFragNum: FragNum,
       randSeed: Int
   ) = {
-    val mtyWidth = busWidthBytes(busWidth)
+    val mtyWidth = MiscUtils.busWidthBytes(busWidth)
     require(
       mtyWidth > 0,
       s"${simTime()} time: mtyWidth=${mtyWidth} should be positive"
@@ -188,7 +187,8 @@ object SendWriteReqReadRespInputGen {
       MiscUtils.computePktNum(payloadLen.toLong, pmtuLen)
     )
     // psnStartGen uses Long to avoid overflow, since Scala has not unsigned number
-    val psnStartGen = pktNumGen.map(_.toLong).scan(0L)(_ + _)
+    val psnStartGen =
+      pktNumGen.map(_.toLong).scan(SimSettings.INIT_PSN.toLong)(_ + _)
     val payloadFragNumItr = payloadFragNumGen.iterator
     val pktNumItr = pktNumGen.iterator
     val psnStartItr = psnStartGen.iterator
@@ -368,7 +368,7 @@ object StreamSimUtil {
       }
     }
 
-  def streamMasterPayloadFromQueueAlwaysValid[T <: Data, PayloadData](
+  def streamMasterPayloadFromQueueNoRandomDelay[T <: Data, PayloadData](
       stream: Stream[T],
       clockDomain: ClockDomain,
       payloadQueue: mutable.Queue[PayloadData],
@@ -391,12 +391,11 @@ object StreamSimUtil {
 //        )
 
         val payloadValid = payloadAssignFunc(stream.payload, payloadData)
-        payloadValid shouldBe true withClue
-          f"${simTime()} time: payloadValid=${payloadValid} should be true always in streamMasterPayloadFromQueueAlwaysValid"
+//        payloadValid shouldBe true withClue
+//          f"${simTime()} time: payloadValid=${payloadValid} should be true always in streamMasterPayloadFromQueueNoRandomDelay"
 
         if (payloadValid) {
           stream.valid #= true
-
 //          println(f"${simTime()} time: stream.valid=${stream.valid.toBoolean}")
 
           clockDomain.waitSamplingWhere(
@@ -636,6 +635,8 @@ object StreamSimUtil {
 }
 
 object MiscUtils {
+  def busWidthBytes(busWidth: BusWidth.Value): Int = busWidth.id / BYTE_WIDTH
+
   def safeDeQueue[T](queue: mutable.Queue[T], clockDomain: ClockDomain): T = {
     while (queue.isEmpty) {
       clockDomain.waitFallingEdge()
@@ -649,7 +650,7 @@ object MiscUtils {
       pktLenBytes >= 0,
       s"${simTime()} time: pktLenBytes=${pktLenBytes} should >= 0"
     )
-    val mtyWidth = busWidth.id / BYTE_WIDTH
+    val mtyWidth = MiscUtils.busWidthBytes(busWidth)
     val remainder = pktLenBytes % mtyWidth
     val quotient = pktLenBytes / mtyWidth
     if (remainder > 0) {
@@ -671,6 +672,20 @@ object MiscUtils {
     } else {
       quotient.toInt
     }
+  }
+
+  def isFragLast(
+      fragIdx: FragNum,
+      maxFragNumPerPkt: FragNum,
+      totalFragNum: FragNum,
+      segmentRespByPmtu: Boolean
+  ): Boolean = {
+    val fragLast = if (segmentRespByPmtu) {
+      ((fragIdx % maxFragNumPerPkt) == (maxFragNumPerPkt - 1)) || (fragIdx == totalFragNum - 1)
+    } else {
+      fragIdx == totalFragNum - 1
+    }
+    fragLast
   }
 
   def checkInputOutputQueues[T](
@@ -698,8 +713,7 @@ object MiscUtils {
           f"${simTime()} time: inputData=${inputData} not match outputData=${outputData} @ outputIdx=${outputIdx}"
 
         matchQueue.enqueue(inputData)
-//          println(f"${simTime()} time: matchQueue.size=${matchQueue.size}")
-//        }
+//        println(f"${simTime()} time: matchQueue.size=${matchQueue.size}")
       }
     }
 
@@ -784,91 +798,89 @@ object MiscUtils {
     }
   }
 
-  def checkConditionForSomePeriod(clockDomain: ClockDomain, cycles: Int)(
-      cond: => Boolean
-  ) = fork {
-    require(cycles > 0, s"${simTime()} time: cycles=${cycles} should > 0")
-
-    for (cycleIdx <- 0 until cycles) {
-      clockDomain.waitSampling()
-
-      cond shouldBe true withClue
-        f"${simTime()} time: condition=${cond} not satisfied @ cycleIdx=${cycleIdx}"
-    }
-  }
+//  def checkConditionForSomePeriod(clockDomain: ClockDomain, cycles: Int)(
+//      cond: => Boolean
+//  ) = fork {
+//    require(cycles > 0, s"${simTime()} time: cycles=${cycles} should > 0")
+//
+//    for (cycleIdx <- 0 until cycles) {
+//      clockDomain.waitSampling()
+//
+//      cond shouldBe true withClue
+//        f"${simTime()} time: condition=${cond} not satisfied @ cycleIdx=${cycleIdx}"
+//    }
+//  }
 
   def checkSendWriteReqReadResp(
       clockDomain: ClockDomain,
       inputDataQueue: mutable.Queue[(BigInt, BigInt, Int, Int, Long, Boolean)],
       outputDataQueue: mutable.Queue[(BigInt, BigInt, Int, Boolean)],
       busWidth: BusWidth.Value
-  ) = {
-    val mtyWidth = busWidth.id / BYTE_WIDTH
+  ) = fork {
+    val mtyWidth = MiscUtils.busWidthBytes(busWidth)
     val matchPsnQueue = mutable.Queue[Boolean]()
-
-    fork {
 //      clockDomain.waitSampling()
 
-      var nextPsn = 0
-      while (true) {
-        var (dataIn, mtyIn, pktNum, psnStart, totalLenBytes, isLastIn) =
-          (BigInt(0), BigInt(0), 0, 0, 0L, false)
-        do {
-          val inputData = safeDeQueue(inputDataQueue, clockDomain)
-          dataIn = inputData._1
-          mtyIn = inputData._2
-          pktNum = inputData._3
-          psnStart = inputData._4
-          totalLenBytes = inputData._5
-          isLastIn = inputData._6
-        } while (!isLastIn)
+    var nextPsn = 0
+    while (true) {
+      var (dataIn, mtyIn, pktNum, psnStart, totalLenBytes, isLastIn) =
+        (BigInt(0), BigInt(0), 0, 0, 0L, false)
+      do {
+        val inputData = safeDeQueue(inputDataQueue, clockDomain)
+        dataIn = inputData._1
+        mtyIn = inputData._2
+        pktNum = inputData._3
+        psnStart = inputData._4
+        totalLenBytes = inputData._5
+        isLastIn = inputData._6
+      } while (!isLastIn)
 
-        var (dataOut, mtyOut, psnOut, isLastOut) =
-          (BigInt(0), BigInt(0), 0, false)
-        do {
-          val outputData = safeDeQueue(outputDataQueue, clockDomain)
-          dataOut = outputData._1
-          mtyOut = outputData._2
-          psnOut = outputData._3
-          isLastOut = outputData._4
+      var (dataOut, mtyOut, psnOut, isLastOut) =
+        (BigInt(0), BigInt(0), 0, false)
+      do {
+        val outputData = safeDeQueue(outputDataQueue, clockDomain)
+        dataOut = outputData._1
+        mtyOut = outputData._2
+        psnOut = outputData._3
+        isLastOut = outputData._4
 
 //            println(
 //              f"${simTime()} time: pktNum=${pktNum}, psnStart=${psnStart}, totalLenBytes=${totalLenBytes}, isLastIn=${isLastIn}, psnOut=${psnOut}, isLastOut=${isLastOut}"
 //            )
-          matchPsnQueue.enqueue(isLastOut)
-        } while (!isLastOut)
+        matchPsnQueue.enqueue(isLastOut)
+      } while (!isLastOut)
 
-        val lastFragMtyInValidBytesNum = countOnes(mtyIn, mtyWidth)
-        val lastFragMtyOutValidBytesNum =
-          MiscUtils.countOnes(mtyOut, mtyWidth)
-        val lastFragMtyMinimumByteNum =
-          lastFragMtyInValidBytesNum.min(lastFragMtyOutValidBytesNum)
-        val lastFragMtyMinimumBitNum = lastFragMtyMinimumByteNum * BYTE_WIDTH
-        val dataInLastFragRightShiftBitAmt =
-          busWidth.id - (lastFragMtyInValidBytesNum * BYTE_WIDTH)
-        val dataOutLastFragRightShiftBitAmt =
-          busWidth.id - (lastFragMtyOutValidBytesNum * BYTE_WIDTH)
+      val lastFragMtyInValidBytesNum = countOnes(mtyIn, mtyWidth)
+      val lastFragMtyOutValidBytesNum =
+        MiscUtils.countOnes(mtyOut, mtyWidth)
+      val lastFragMtyMinimumByteNum =
+        lastFragMtyInValidBytesNum.min(lastFragMtyOutValidBytesNum)
+      val lastFragMtyMinimumBitNum = lastFragMtyMinimumByteNum * BYTE_WIDTH
+      val dataInLastFragRightShiftBitAmt =
+        busWidth.id - (lastFragMtyInValidBytesNum * BYTE_WIDTH)
+      val dataOutLastFragRightShiftBitAmt =
+        busWidth.id - (lastFragMtyOutValidBytesNum * BYTE_WIDTH)
 
-        val lastFragDataInValidBits = dataIn >> dataInLastFragRightShiftBitAmt
-        val lastFragDataOutValidBits =
-          dataOut >> dataOutLastFragRightShiftBitAmt
-        val lastFragMtyMinimumBits = setAllBits(lastFragMtyMinimumBitNum)
+      val lastFragDataInValidBits = dataIn >> dataInLastFragRightShiftBitAmt
+      val lastFragDataOutValidBits =
+        dataOut >> dataOutLastFragRightShiftBitAmt
+      val lastFragMtyMinimumBits = setAllBits(lastFragMtyMinimumBitNum)
 
 //          println(
 //            f"${simTime()} time: last fragment data=${lastFragDataOutValidBits}%X not match last fragment input data=${lastFragDataInValidBits}%X with minimum last fragment MTY=(${lastFragMtyMinimumByteNum}*BYTE_WIDTH)"
 //          )
-        withClue(
-          f"${simTime()} time: last fragment data=${lastFragDataOutValidBits}%X not match last fragment input data=${lastFragDataInValidBits}%X with minimum last fragment out MTY=(${lastFragMtyMinimumByteNum}*BYTE_WIDTH)"
-        )(
-          (lastFragDataOutValidBits & lastFragMtyMinimumBits) shouldBe (lastFragDataInValidBits & lastFragMtyMinimumBits)
-        )
+      (lastFragDataOutValidBits & lastFragMtyMinimumBits) shouldBe
+        (lastFragDataInValidBits & lastFragMtyMinimumBits) withClue
+        f"${simTime()} time: last fragment data=${lastFragDataOutValidBits}%X not match last fragment input data=${lastFragDataInValidBits}%X with minimum last fragment out MTY=(${lastFragMtyMinimumByteNum}*BYTE_WIDTH)"
+//      )(
+//        (lastFragDataOutValidBits & lastFragMtyMinimumBits) shouldBe (lastFragDataInValidBits & lastFragMtyMinimumBits)
+//      )
 //          println(
 //            f"${simTime()} time: expected output PSN=${nextPsn} not match output PSN=${psnOut}"
 //          )
-        psnOut shouldBe nextPsn withClue
-          f"${simTime()} time: expected output PSN=${nextPsn} not match output PSN=${psnOut}"
-        nextPsn += 1
-      }
+      psnOut shouldBe nextPsn withClue
+        f"${simTime()} time: expected output PSN=${nextPsn} not match output PSN=${psnOut}"
+      nextPsn += 1
     }
 
     waitUntil(matchPsnQueue.size > SimSettings.MATCH_CNT)
@@ -915,6 +927,9 @@ case class DelayedQueue[T](
 
   val queue = mutable.Queue[(T, SimTimeStamp)]()
 
+  def length: Int = queue.length
+  def isEmpty: Boolean = queue.isEmpty
+
   def enqueue(elem: T): this.type = {
     val curTimeStamp = simTime()
     queue.enqueue((elem, curTimeStamp))
@@ -935,7 +950,6 @@ case class DelayedQueue[T](
 //        println(f"${simTime()} time: delayed dequeue, insertTimeStamp=${insertTimeStamp}, delayCycles=${delayCycles}")
           clockDomain.waitSampling()
         }
-
 //    println(f"${simTime()} time: success dequeue, insertTimeStamp=${insertTimeStamp}, delayCycles=${delayCycles}")
 
         mutableQueue.enqueue(elem)

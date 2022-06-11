@@ -696,7 +696,7 @@ class WorkCompGen extends Component {
         severity = FAILURE
       )
     }
-
+    /*
     val inputWorkReqAndAckQueue = StreamFifoLowLatency(
       io.cachedWorkReqAndAck.payloadType(),
       DMA_WRITE_FIFO_DEPTH
@@ -712,7 +712,15 @@ class WorkCompGen extends Component {
       severity = FAILURE
     )
     val inputWorkReqAndAckQueuePop = inputWorkReqAndAckQueue.io.pop.combStage()
-//        .queueLowLatency(DMA_WRITE_FIFO_DEPTH)
+     */
+    val inputWorkReqAndAckQueuePop = FixedLenQueue(
+      io.cachedWorkReqAndAck.payloadType(),
+      depth = DMA_WRITE_FIFO_DEPTH,
+      push = io.cachedWorkReqAndAck.takeWhen(isWorkReqDone && isWorkCompNeeded),
+      // DO NOT flush inputWorkReqAndAckQueue even when error
+      flush = False, // io.txQCtrl.errorFlush
+      queueName = "inputWorkReqAndAckQueue"
+    )
   }
 
   val joinWithDmaResp = new Area {

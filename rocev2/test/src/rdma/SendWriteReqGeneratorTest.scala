@@ -1,14 +1,13 @@
 package rdma
 
+import scala.collection.mutable
+import org.scalatest.funsuite.AnyFunSuite
+
 import spinal.core._
 import spinal.core.sim._
-//import ConstantSettings._
 import StreamSimUtil._
 import RdmaTypeReDef._
 import SimSettings._
-
-import scala.collection.mutable
-import org.scalatest.funsuite.AnyFunSuite
 
 abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
     extends AnyFunSuite {
@@ -113,24 +112,14 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
             pktNum,
             payloadLenBytes
         ) =>
-//          DmaReadRespSim.setMtyAndLen(
-//            dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp,
-//            fragIdx,
-//            totalFragNum,
-//            payloadLenBytes.toLong,
-//            busWidth
-//          )
-
 //        println(
 //          f"${simTime()} time: fragIdx=${fragIdx}, fragNum=${fragNum}, isLastInputFrag=${isLastInputFrag}, isLastFragPerPkt=${isLastFragPerPkt}, fragLast=${fragLast}, totalLenBytes=${totalLenBytes}, pktNum=${pktNum}, mtyWidth=${mtyWidth}, residue=${totalLenBytes % mtyWidth}, mty=${mty}%X"
 //        )
 
-//          dut.io.cachedWorkReqAndDmaReadResp.dmaReadResp.psnStart #= psnStart
           dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.psnStart #= psnStart
           dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.lenBytes #= payloadLenBytes
           dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.workReq.opcode #= workReqOpCode
           dut.io.cachedWorkReqAndDmaReadResp.cachedWorkReq.pktNum #= pktNum
-//          dut.io.cachedWorkReqAndDmaReadResp.last #= fragLast
       }
       onStreamFire(dut.io.cachedWorkReqAndDmaReadResp, dut.clockDomain) {
         inputDataQueue.enqueue(

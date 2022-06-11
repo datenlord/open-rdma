@@ -2,9 +2,11 @@ package rdma
 
 import spinal.core._
 import spinal.core.sim._
+
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
 import org.scalatest.AppendedClues._
+import scala.language.postfixOps
 
 import scala.collection.mutable
 import ConstantSettings._
@@ -14,8 +16,6 @@ import StreamSimUtil._
 import SimSettings._
 import RdmaTypeReDef._
 import WorkReqSim._
-
-import scala.language.postfixOps
 
 class QPTest extends AnyFunSuite {
   val busWidth = BusWidth.W512
@@ -171,7 +171,7 @@ class QPTest extends AnyFunSuite {
       )
     }
 
-    streamMasterPayloadFromQueueAlwaysValid(
+    streamMasterPayloadFromQueueNoRandomDelay(
       dut.io.qpCreateOrModify.req,
       dut.clockDomain,
       ePsnQueue,
@@ -194,7 +194,7 @@ class QPTest extends AnyFunSuite {
     )
     // dmaReadRespQueue
     val _ =
-      DmaReadBusSim(busWidth).reqStreamAlwaysFireAndRespSuccess(
+      DmaReadBusSim(busWidth).reqStreamAlwaysFireAndMultiRespSuccess(
         dut.io.dma.rd,
         dut.clockDomain
       )
@@ -279,9 +279,8 @@ class QPTest extends AnyFunSuite {
     }
     RdmaDataPktSim.pktFragStreamMasterDriver(
       dut.io.rx.pktFrag,
-      (rdmaDataPkt: RdmaDataPkt) => rdmaDataPkt,
-//      getRdmaPktDataFunc = identity,
-      dut.clockDomain
+      dut.clockDomain,
+      getRdmaPktDataFunc = (rdmaDataPkt: RdmaDataPkt) => rdmaDataPkt
     ) {
       val (
         psnStart,
@@ -673,7 +672,7 @@ class QpCtrlTest extends AnyFunSuite {
       }
     }
 
-    streamMasterPayloadFromQueueAlwaysValid(
+    streamMasterPayloadFromQueueNoRandomDelay(
       dut.io.qpCreateOrModify.req,
       dut.clockDomain,
       stateChangeReqQueue,

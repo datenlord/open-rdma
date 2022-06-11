@@ -4,6 +4,10 @@ import spinal.core._
 import spinal.core.sim._
 import spinal.lib._
 
+import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers._
+import org.scalatest.AppendedClues._
+
 import ConstantSettings._
 import RdmaConstants._
 import StreamSimUtil._
@@ -14,10 +18,6 @@ import PsnSim._
 import RdmaTypeReDef._
 import WorkReqSim._
 import SimSettings._
-
-import org.scalatest.funsuite.AnyFunSuite
-import org.scalatest.matchers.should.Matchers._
-import org.scalatest.AppendedClues._
 
 import scala.collection.mutable
 import scala.language.postfixOps
@@ -473,8 +473,8 @@ class ReadRespLenCheckTest extends AnyFunSuite {
 //        SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
 
       RdmaDataPktSim.readRespPktFragStreamMasterDriver(
-        dut.clockDomain,
         dut.io.cachedWorkReqAndRespWithAethIn,
+        dut.clockDomain,
         getRdmaPktDataFunc =
           (cachedWorkReqAndRespWithAethIn: CachedWorkReqAndRespWithAeth) =>
             cachedWorkReqAndRespWithAethIn.pktFrag,
@@ -488,7 +488,8 @@ class ReadRespLenCheckTest extends AnyFunSuite {
             _, // fragIdx,
             _, // pktFragNum,
             _, // pktIdx,
-            _, // pktNum,
+            _, // reqPktNum,
+            _, // respPktNum,
             payloadLenBytes,
             _, // headerLenBytes,
             _ // opcode
@@ -605,8 +606,8 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
         mutable.Queue[(PSN, PhysicalAddr, WorkReqId, PktFragData, FragLast)]()
 
       RdmaDataPktSim.readRespPktFragStreamMasterDriverAlwaysValid(
-        dut.clockDomain,
         dut.io.cachedWorkReqAndRespWithAeth,
+        dut.clockDomain,
         getRdmaPktDataFunc =
           (cachedWorkReqAndRespWithAeth: CachedWorkReqAndRespWithAeth) =>
             cachedWorkReqAndRespWithAeth.pktFrag,
@@ -621,7 +622,8 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
             _, // fragIdx,
             _, // pktFragNum,
             _, // pktIdx,
-            _, // pktNum,
+            _, // repPktNum,
+            _, // respPktNum
             _, // payloadLenBytes,
             _, // headerLenBytes,
             _ // opcode
@@ -842,8 +844,8 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
         mutable.Queue[(PSN, PhysicalAddr, WorkReqId, PktFragData, FragLast)]()
 
       RdmaDataPktSim.readRespPktFragStreamMasterDriver(
-        dut.clockDomain,
         dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo,
+        dut.clockDomain,
         getRdmaPktDataFunc =
           (readAtomicRespWithDmaInfo: SqReadAtomicRespWithDmaInfo) =>
             readAtomicRespWithDmaInfo.pktFrag,
@@ -857,7 +859,8 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
             _, // fragIdx,
             _, // pktFragNum,
             _, // pktIdx,
-            _, // pktNum,
+            _, // reqPktNum,
+            _, // respPktNum,
             _, // payloadLenBytes,
             _, // headerLenBytes,
             _ // opcode
@@ -1057,7 +1060,7 @@ class WorkCompGenTest extends AnyFunSuite {
         }
       }
 
-      streamMasterPayloadFromQueueAlwaysValid(
+      streamMasterPayloadFromQueueNoRandomDelay(
         dut.io.cachedWorkReqAndAck,
         dut.clockDomain,
         workReqMetaDataQueue,
@@ -1117,7 +1120,7 @@ class WorkCompGenTest extends AnyFunSuite {
         )
       }
 
-      streamMasterPayloadFromQueueAlwaysValid(
+      streamMasterPayloadFromQueueNoRandomDelay(
         dut.io.readRespDmaWriteResp.resp,
         dut.clockDomain,
         readWorkReqMetaDataQueue.toMutableQueue(),

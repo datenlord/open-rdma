@@ -118,7 +118,7 @@ class DmaReadRespHandler[T <: Data](
   val dmaReadRespValid = io.dmaReadResp.resp.valid
   val isFirstDmaReadResp = io.dmaReadResp.resp.isFirst
   val isLastDmaReadResp = io.dmaReadResp.resp.isLast
-
+  /*
   val inputReqQueue =
     StreamFifoLowLatency(io.inputReq.payloadType(), reqQueueLen)
   inputReqQueue.io.push << io.inputReq.throwWhen(io.flush)
@@ -129,18 +129,26 @@ class DmaReadRespHandler[T <: Data](
       L"${REPORT_TIME} time: inputReqQueue is full, inputReqQueue.io.push.ready=${inputReqQueue.io.push.ready}, inputReqQueue.io.occupancy=${inputReqQueue.io.occupancy}, which is not allowed in DmaReadRespHandler".toSeq,
     severity = FAILURE
   )
-  val isEmptyReadReq = isReqZeroDmaLen(inputReqQueue.io.pop.payload)
+   */
+  val inputReqQueuePop = FixedLenQueue(
+    io.inputReq.payloadType(),
+    depth = reqQueueLen,
+    push = io.inputReq.throwWhen(io.flush),
+    flush = io.flush,
+    queueName = "inputReqQueue"
+  )
+  val isEmptyReadReq = isReqZeroDmaLen(inputReqQueuePop.payload)
 
-  val txSel = UInt(1 bits)
-  val (emptyReadIdx, nonEmptyReadIdx) = (0, 1)
-  when(isEmptyReadReq) {
-    txSel := emptyReadIdx
-  } otherwise {
-    txSel := nonEmptyReadIdx
-  }
+//  val txSel = UInt(1 bits)
+  val (nonEmptyReadIdx, emptyReadIdx) = (0, 1)
+//  when(isEmptyReadReq) {
+//    txSel := emptyReadIdx
+//  } otherwise {
+//    txSel := nonEmptyReadIdx
+//  }
   val twoStreams = StreamDemux(
-    select = txSel,
-    input = inputReqQueue.io.pop.throwWhen(io.flush),
+    select = isEmptyReadReq.asUInt,
+    input = inputReqQueuePop.throwWhen(io.flush),
     portCount = 2
   )
 
@@ -151,8 +159,16 @@ class DmaReadRespHandler[T <: Data](
   )
 
   val outputStream = StreamMux(
-    select = txSel,
+    select = isEmptyReadReq.asUInt,
     inputs = Vec(
+      joinStream.map { payloadData =>
+        val result =
+          cloneOf(io.reqAndDmaReadResp.payloadType)
+        result.dmaReadResp := payloadData._1
+        result.req := payloadData._2
+        result.last := payloadData.last
+        result
+      },
       twoStreams(emptyReadIdx).map { payloadData =>
         val result =
           cloneOf(io.reqAndDmaReadResp.payloadType)
@@ -161,27 +177,19 @@ class DmaReadRespHandler[T <: Data](
         result.req := payloadData
         result.last := True
         result
-      },
-      joinStream.map { payloadData =>
-        val result =
-          cloneOf(io.reqAndDmaReadResp.payloadType)
-        result.dmaReadResp := payloadData._1
-        result.req := payloadData._2
-        result.last := payloadData.last
-        result
       }
     )
   )
   io.reqAndDmaReadResp << outputStream.throwWhen(io.flush)
 
-  when(txSel === emptyReadIdx) {
+  when(isEmptyReadReq) {
     assert(
       assertion = !joinStream.valid,
       message =
         L"${REPORT_TIME} time: when request has zero DMA length, it should not handle DMA read response, that joinStream.valid should be false, but joinStream.valid=${joinStream.valid}".toSeq,
       severity = FAILURE
     )
-  } elsewhen (txSel === nonEmptyReadIdx) {
+  } otherwise {
     assert(
       assertion = !twoStreams(emptyReadIdx).valid,
       message =
@@ -1115,7 +1123,7 @@ object FragmentStreamForkQueryJoinResp {
       queryStream <-/< input4QueryStream
         .takeWhen(expectResp(input4QueryStream))
         .translateWith(buildQuery(input4QueryStream))
-
+      /*
       val inputFragQueue =
         StreamFifoLowLatency(inputFragStream.payloadType(), waitQueueDepth)
 //    inputFragQueue.setName("inputFragQueue", weak = true)
@@ -1126,10 +1134,16 @@ object FragmentStreamForkQueryJoinResp {
           L"${REPORT_TIME} time: inputFragQueue is full, inputFragQueue.io.push.ready=${inputFragQueue.io.push.ready}, inputFragQueue.io.occupancy=${inputFragQueue.io.occupancy}, which is not allowed in FragmentStreamForkQueryJoinResp".toSeq,
         severity = FAILURE
       )
-      // TODO: enable queue flush
 //    inputFragQueue.io.flush :=
       val inputFragQueuePop = inputFragQueue.io.pop.combStage()
-
+       */
+      val inputFragQueuePop = FixedLenQueue(
+        inputFragStream.payloadType(),
+        depth = waitQueueDepth,
+        push = input4Queue,
+        flush = False, // TODO: enable queue flush
+        queueName = "inputFragQueue"
+      )
       val emptyStream = StreamSource().translateWith(
         cloneOf(respStream.payloadType).assignDontCare()
       )
@@ -1165,63 +1179,6 @@ object FragmentStreamForkQueryJoinResp {
           result
         }
         .combStage()
-      /*
-    val (input4QueryStream, originalInputStream) =
-      StreamConditionalFork2(
-        inputFragStream,
-        forkCond = queryCond(inputFragStream)
-      )
-//    val originalInputQueue =
-//      originalInputStream.queueLowLatency(waitQueueDepth)
-    val inputFragQueue = new StreamFifoLowLatency(inputFragStream.payloadType, waitQueueDepth)
-    inputFragQueue.io.push << originalInputStream
-    assert(
-      assertion = inputFragQueue.io.push.ready,
-      message = L"inputFragQueue is full, inputFragQueue.io.push.ready=${inputFragQueue.io.push.ready}, inputFragQueue.io.occupancy=${inputFragQueue.io.occupancy}, which is not allowed in FragmentStreamForkQueryJoinResp".toSeq,
-      severity = FAILURE
-    )
-    val originalInputQueue = inputFragQueue.io.pop
-
-    queryStream <-/< input4QueryStream
-      .takeWhen(expectResp(input4QueryStream))
-      .translateWith(buildQuery(input4QueryStream))
-
-    val emptyStream = StreamSource().translateWith(
-      cloneOf(respStream.payloadType).assignDontCare()
-    )
-    // When not expect query response, join with StreamSource()
-    val selectedStreamValid = expectResp(originalInputQueue)
-    val selectedStream = StreamMux(
-      select = selectedStreamValid.asUInt,
-      inputs = Vec(emptyStream, respStream)
-    )
-    val stream4Join = selectedStream.translateWith {
-      val result = TupleBundle(selectedStreamValid, selectedStream.payload)
-      result
-    }
-
-    val joinStream = FragmentStreamJoinStreamOnCondition(
-      originalInputQueue,
-      stream4Join,
-      joinCond = joinRespCond(originalInputQueue)
-    )
-    val resultStream = joinStream
-      .translateWith {
-        val result = Fragment(
-          TupleBundle3(
-            inputFragStream.fragmentType,
-            Bool,
-            respStream.payloadType
-          )
-        )
-        result._1 := joinStream._1
-        result._2 := joinStream._2._1
-        result._3 := joinStream._2._2
-        result.last := joinStream.last
-        result
-      }
-      .combStage()
-       */
     }.resultStream
 }
 
@@ -1616,15 +1573,48 @@ object FlowExtractCompany {
     }.outputFlow
 }
 
+object DelayedStream {
+  def apply[T <: Data](inputStream: Stream[T], delayCycles: Int): Stream[T] =
+    new Composite(inputStream, "DelayedStream") {
+      require(
+        delayCycles >= 0,
+        s"${REPORT_TIME} time: delayCycles=${delayCycles} should >= 0"
+      )
+
+      // def unfold[A, S](init: S)(f: (S) => Option[(A, S)]): Iterator[A]
+      val delayedStreamSeq = IndexedSeq.unfold((inputStream, delayCycles)) {
+        state =>
+          val (stream, delay) = state
+          if (delay > 0) {
+            val oneCycleDelayedStream = stream.stage()
+            Some((oneCycleDelayedStream, (oneCycleDelayedStream, delay - 1)))
+          } else {
+            None
+          }
+      }
+      val result = if (delayCycles > 0) delayedStreamSeq.last else inputStream
+    }.result.combStage()
+}
+
 //========== Misc utilities ==========
 
 object setAllBits {
   def apply(width: Int): BigInt = {
+    require(
+      width > 0,
+      s"width=${width} should > 0 in setAllBits"
+    )
     (BigInt(1) << width) - 1
   }
 
   def apply(width: UInt): Bits =
     new Composite(width, "setAllBits") {
+      assert(
+        assertion = width > 0,
+        message =
+          f"${REPORT_TIME} time: width=${width} should > 0 in setAllBits",
+        severity = FAILURE
+      )
       val one = U(1, 1 bit)
       val shift = (one << width) - 1
       val result = shift.asBits
@@ -1688,11 +1678,31 @@ object mergeRdmaHeaderMty {
   }.result
 }
 
+object FixedLenQueue {
+  def apply[T <: Data](
+      dataType: T,
+      depth: Int,
+      push: Stream[T],
+      flush: => Bool,
+      queueName: String
+  ): Stream[T] = new Composite(push, "FixedLenQueue") {
+    val queue = new StreamFifoLowLatency(dataType, depth).setName(queueName)
+    queue.io.push << push
+    queue.io.flush := flush
+    assert(
+      assertion = queue.io.push.ready,
+      message =
+        L"${REPORT_TIME} time: ${queueName} is full, queue.io.push.ready=${queue.io.push.ready}, queue.io.occupancy=${queue.io.occupancy}, which is not allowed".toSeq,
+      severity = FAILURE
+    )
+  }.queue.io.pop.combStage()
+}
+
 object SeqOut {
   def apply[TPsnRange <: PsnRange](
       curPsn: UInt,
       flush: Bool,
-      outPsnRangeFifoPush: Stream[TPsnRange],
+      outPsnRangeQueuePush: Stream[TPsnRange],
       outDataStreamVec: Vec[Stream[Fragment[RdmaDataPkt]]],
 //      psnOutRangeFifoDepth: Int,
       outputValidateFunc: (TPsnRange, RdmaDataPkt) => Unit,
@@ -1701,27 +1711,35 @@ object SeqOut {
       opsnInc: OPsnInc
   ) = new Composite(curPsn, "SeqOut") {
     // TODO: set max pending request number using QpAttrData
+    val psnOutRangeQueuePop = FixedLenQueue(
+      outPsnRangeQueuePush.payloadType(),
+      depth = PSN_OUT_RANGE_FIFO_DEPTH,
+      push = outPsnRangeQueuePush,
+      flush = flush,
+      queueName = "outPsnRangeFifo"
+    )
+    /*
     val psnOutRangeFifo = StreamFifoLowLatency(
-      outPsnRangeFifoPush.payloadType(),
+      outPsnRangeQueuePush.payloadType(),
       depth = PSN_OUT_RANGE_FIFO_DEPTH
     )
     psnOutRangeFifo.io.flush := flush
-    psnOutRangeFifo.io.push << outPsnRangeFifoPush
+    psnOutRangeFifo.io.push << outPsnRangeQueuePush
     assert(
       assertion = psnOutRangeFifo.io.push.ready,
       message =
         L"${REPORT_TIME} time: psnOutRangeFifo is full, psnOutRangeFifo.io.push.ready=${psnOutRangeFifo.io.push.ready}, psnOutRangeFifo.io.occupancy=${psnOutRangeFifo.io.occupancy}, which is not allowed in SeqOut".toSeq,
       severity = FAILURE
     )
-
+     */
     val outStreamVec = Vec(outDataStreamVec.map(_.throwWhen(flush)))
     val outSelOH = outStreamVec.map(resp =>
       new Composite(resp, "outSelOH") {
-        val psnRangeMatch = resp.valid && psnOutRangeFifo.io.pop.valid &&
-          PsnUtil.lte(psnOutRangeFifo.io.pop.start, resp.bth.psn, curPsn) &&
-          PsnUtil.lte(resp.bth.psn, psnOutRangeFifo.io.pop.end, curPsn)
+        val psnRangeMatch = resp.valid && psnOutRangeQueuePop.valid &&
+          PsnUtil.lte(psnOutRangeQueuePop.start, resp.bth.psn, curPsn) &&
+          PsnUtil.lte(resp.bth.psn, psnOutRangeQueuePop.end, curPsn)
         when(psnRangeMatch) {
-          outputValidateFunc(psnOutRangeFifo.io.pop, resp)
+          outputValidateFunc(psnOutRangeQueuePop, resp)
         }
       }.psnRangeMatch
     )
@@ -1733,10 +1751,10 @@ object SeqOut {
     )
 
     val joinCond =
-      outStreamSel.bth.psn === psnOutRangeFifo.io.pop.end && outStreamSel.isLast
+      outStreamSel.bth.psn === psnOutRangeQueuePop.end && outStreamSel.isLast
     val outJoinStream = FragmentStreamJoinStreamOnCondition(
       inputFragmentStream = outStreamSel,
-      inputStream = psnOutRangeFifo.io.pop,
+      inputStream = psnOutRangeQueuePop,
       joinCond = joinCond
     )
     val outStream = outJoinStream.translateWith {
@@ -1749,7 +1767,7 @@ object SeqOut {
     opsnInc.inc := outStreamSel.lastFire
     opsnInc.psnVal := outStreamSel.bth.psn
 
-    val result = (outStream.combStage(), psnOutRangeFifo)
+    val result = (outStream.combStage(), psnOutRangeQueuePop)
   }.result
 }
 
