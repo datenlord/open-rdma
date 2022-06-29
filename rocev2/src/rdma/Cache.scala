@@ -318,7 +318,7 @@ class Cam[Tk <: Data, Tv <: Data](
           assertion = CountOne(itemIdxOH) === found.asUInt,
           message =
             L"${REPORT_TIME} time: itemIdxOH=${itemIdxOH} is not one hot when found=${found}, itemIdxBinary=${itemIdxBinary}".toSeq,
-          severity = ERROR
+          severity = FAILURE
         )
       }
       val result = (itemIdxOH, queryPortIdx, found)
@@ -423,22 +423,25 @@ class ReadAtomicRstCache(depth: Int) extends Component {
     queryFunc = (k: ReadAtomicRstCacheReq, v: ReadAtomicRstCacheData) =>
       new Composite(k, "ReadAtomicRstCache_queryFunc") {
         // TODO: check only one entry match or not
+        // For read request: v.psnStart <= k.queryPsn < (v.psnStart + v.pktNum), PSN end is exclusive
+        // For atomic request: v.psnStart == k.queryPsn
         val psnMatch = OpCode.isReadReqPkt(k.opcode) ? (
           PsnUtil.lte(v.psnStart, k.queryPsn, k.epsn) &&
-            PsnUtil.lte(k.queryPsn, v.psnStart + v.pktNum, k.epsn)
-        ) | True
+            PsnUtil.lt(k.queryPsn, v.psnStart + v.pktNum, k.epsn)
+        ) | v.psnStart === k.queryPsn
         val result = k.opcode === v.opcode && k.rkey === v.rkey && psnMatch
+//        when(result) {
+//          report(
+//            L"${REPORT_TIME} time: k.opcode=${k.opcode} === v.opcode=${v.opcode} && k.rkey=${k.rkey} === v.rkey=${v.rkey} && psnMatch=${psnMatch}".toSeq
+//          )
+//        }
       }.result,
     depth = depth,
     portCount = 1
   )
   cam.io.ram := fifo.io.ram
 
-  val queryPortVec = Vec(
-//    io.queryPort4DmaReadResp,
-    io.queryPort4DupReq
-//    io.queryPort4DupReqDmaRead
-  )
+  val queryPortVec = Vec(io.queryPort4DupReq)
   for ((queryPort, portIdx) <- queryPortVec.zipWithIndex) {
     cam.io.queryBusVec(portIdx).req << queryPort.req
     queryPort.resp << cam.io.queryBusVec(portIdx).resp
@@ -525,20 +528,6 @@ class WorkReqCache(depth: Int) extends Component {
   scan.io.scanCtrlBus << io.retryScanCtrlBus
   io.retryWorkReq << scan.io.scanOut
 
-  // TODO: remove cam from WorkReqCache
-  val cam = new Cam(
-    WorkReqCacheQueryReq(),
-    CachedWorkReq(),
-    queryFunc = (k: WorkReqCacheQueryReq, v: CachedWorkReq) =>
-      // TODO: verify PSN comparison correctness
-//        k.workReqOpCode === v.workReq.opcode &&
-      PsnUtil.lte(v.psnStart, k.queryPsn, k.npsn) &&
-        PsnUtil.lt(k.queryPsn, v.psnStart + v.pktNum, k.npsn),
-    depth = depth,
-    portCount = 1
-  )
-  cam.io.ram := fifo.io.ram
-
   when(io.txQCtrl.retry) {
     assert(
       assertion = stable(fifo.io.pushPtr),
@@ -547,6 +536,21 @@ class WorkReqCache(depth: Int) extends Component {
       severity = FAILURE
     )
   }
+
+  // TODO: remove cam from WorkReqCache
+//  val cam = new Cam(
+//    WorkReqCacheQueryReq(),
+//    CachedWorkReq(),
+//    queryFunc = (k: WorkReqCacheQueryReq, v: CachedWorkReq) =>
+//      // TODO: verify PSN comparison correctness
+//      //        k.workReqOpCode === v.workReq.opcode &&
+//      PsnUtil.lte(v.psnStart, k.queryPsn, k.npsn) &&
+//        PsnUtil.lt(k.queryPsn, v.psnStart + v.pktNum, k.npsn),
+//    depth = depth,
+//    portCount = 1
+//  )
+//  cam.io.ram := fifo.io.ram
+
 //  when(io.empty) {
 //    assert(
 //      assertion = !io.queryPort4SqRespDmaWrite.req.valid,
@@ -587,6 +591,7 @@ class PdAddrCache(depth: Int) extends Component {
 
   // TODO: add initial values to Mem
   val addrCacheMem = Vec(
+    // CSR
     RegInit(CachedValue(AddrData()).init(AddrData().init())),
     depth
   )

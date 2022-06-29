@@ -223,7 +223,7 @@ class RetryHandlerTest extends AnyFunSuite {
         )
       }
 
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputQueue,
         outputQueue,

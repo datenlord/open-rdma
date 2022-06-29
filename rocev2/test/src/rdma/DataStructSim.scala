@@ -48,7 +48,7 @@ object RdmaTypeReDef {
   type AckReq = Boolean
   type RxBufValid = Boolean
   type HasNak = Boolean
-  type HasNakSeq = Boolean
+//  type HasNakSeq = Boolean
   type DupReq = Boolean
   type KeyValid = Boolean
   type SizeValid = Boolean
@@ -399,6 +399,17 @@ object WorkReqSim {
     result
   }
 
+  def randomSendOpCode(): SpinalEnumElement[WorkReqOpCode.type] = {
+    val opCodes = workReqSend
+    val randIdx = scala.util.Random.nextInt(opCodes.size)
+    val result = opCodes(randIdx)
+    require(
+      opCodes.contains(result),
+      s"${simTime()} time: WR SendOpCode should contain ${result}"
+    )
+    result
+  }
+
   def randomSendWriteImmOpCode(): SpinalEnumElement[WorkReqOpCode.type] = {
     val opCodes = workReqSend :+ WorkReqOpCode.RDMA_WRITE_WITH_IMM
     val randIdx = scala.util.Random.nextInt(opCodes.size)
@@ -612,13 +623,24 @@ object AckTypeSim {
     result
   }
 
+  def randomRetryOrFatalNak(): SpinalEnumElement[AckType.type] = {
+    val ackTypes = retryNakTypes ++ fatalNakType
+    val randIdx = scala.util.Random.nextInt(ackTypes.size)
+    val result = ackTypes(randIdx)
+    require(
+      ackTypes.contains(result),
+      s"${simTime()} time: retry or fatal NAK types should contains ${result}"
+    )
+    result
+  }
+
   def randomNormalAckOrFatalNak(): SpinalEnumElement[AckType.type] = {
     val ackTypes = AckType.NORMAL +: fatalNakType
     val randIdx = scala.util.Random.nextInt(ackTypes.size)
     val result = ackTypes(randIdx)
     require(
       ackTypes.contains(result),
-      s"${simTime()} time: ackTypes should contains ${result}"
+      s"${simTime()} time: normal or fatal NAK types should contains ${result}"
     )
     result
   }
@@ -773,37 +795,123 @@ object AethSim {
   }
 }
 
-object AtomicEthSim {
+abstract class ReadAtomicReqEthSim {
+  val bthWidth = widthOf(BTH())
+  val addrBitMask = setAllBits(MEM_ADDR_WIDTH)
+  val rkeyBitMask = setAllBits(LRKEY_IMM_DATA_WIDTH)
+
+  protected def setHelper[T: Numeric](
+      inputData: PktFragData,
+      field: T,
+      shiftAmt: Int,
+      mask: BigInt
+  ): PktFragData = {
+    val fieldVal = implicitly[Numeric[T]].toLong(field)
+    val maskShifted = mask << shiftAmt
+    val fieldShifted = (fieldVal & mask) << shiftAmt
+    (inputData & (~maskShifted)) | fieldShifted
+  }
+
+  def setAddr(
+      inputData: PktFragData,
+      addr: VirtualAddr,
+      busWidth: BusWidth.Value
+  ): PktFragData = {
+    val addrShiftAmt = busWidth.id - bthWidth - MEM_ADDR_WIDTH
+    setHelper(inputData, addr, addrShiftAmt, addrBitMask)
+  }
+
+  def setRKey(
+      inputData: PktFragData,
+      rkey: LRKey,
+      busWidth: BusWidth.Value
+  ): PktFragData = {
+    val rkeyShiftAmt =
+      busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
+    setHelper(inputData, rkey, rkeyShiftAmt, rkeyBitMask)
+  }
+}
+
+object AtomicEthSim extends ReadAtomicReqEthSim {
+  val atomicEthWidth = widthOf(AtomicEth())
+  val compBitMask = setAllBits(LONG_WIDTH)
+  val swapBitMask = setAllBits(LONG_WIDTH)
+
+  def setSwap(
+      inputData: PktFragData,
+      swap: AtomicSwap,
+      busWidth: BusWidth.Value
+  ): PktFragData = {
+    val swapShiftAmt =
+      busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - LONG_WIDTH
+    setHelper(inputData, swap, swapShiftAmt, swapBitMask)
+  }
+
+  def setComp(
+      inputData: PktFragData,
+      comp: AtomicComp,
+      busWidth: BusWidth.Value
+  ): PktFragData = {
+    val compShiftAmt =
+      busWidth.id - bthWidth - atomicEthWidth
+    setHelper(inputData, comp, compShiftAmt, compBitMask)
+  }
+
+  def set(
+      addr: VirtualAddr,
+      rkey: LRKey,
+      swap: AtomicSwap,
+      comp: AtomicComp,
+      busWidth: BusWidth.Value
+  ): PktFragData = {
+    val addrShiftAmt = busWidth.id - bthWidth - MEM_ADDR_WIDTH
+
+    val rkeyShiftAmt =
+      busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
+
+    val swapShiftAmt =
+      busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - LONG_WIDTH
+
+    val compShiftAmt =
+      busWidth.id - bthWidth - atomicEthWidth
+
+    val result: BigInt =
+      ((addr & addrBitMask) << addrShiftAmt) |
+        ((rkey & rkeyBitMask) << rkeyShiftAmt) |
+        ((swap & swapBitMask) << swapShiftAmt) |
+        ((comp & compBitMask) << compShiftAmt)
+
+    result
+  }
+
   def extract(
       fragData: PktFragData,
       busWidth: BusWidth.Value
   ): (VirtualAddr, LRKey, AtomicSwap, AtomicComp) = {
-    val bthWidth = widthOf(BTH())
-    val atomicEthWidth = widthOf(AtomicEth())
     require(
       busWidth.id >= bthWidth + atomicEthWidth,
       s"${simTime()} time: input busWidth=${busWidth.id} should >= widthOf(BTH())=${bthWidth} + widthOf(AtomicEth())=${atomicEthWidth}"
     )
 
     val addrShiftAmt = busWidth.id - bthWidth - MEM_ADDR_WIDTH
-    val addrBitMask = setAllBits(MEM_ADDR_WIDTH) << addrShiftAmt
+    val addrBitMaskFragPos = addrBitMask << addrShiftAmt
 
     val rkeyShiftAmt =
       busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
-    val rkeyBitMask = setAllBits(LRKEY_IMM_DATA_WIDTH) << rkeyShiftAmt
+    val rkeyBitMaskFragPos = rkeyBitMask << rkeyShiftAmt
 
     val swapShiftAmt =
       busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - LONG_WIDTH
-    val swapBitMask = setAllBits(LONG_WIDTH) << swapShiftAmt
+    val swapBitMaskFragPos = swapBitMask << swapShiftAmt
 
     val compShiftAmt =
       busWidth.id - bthWidth - atomicEthWidth
-    val compBitMask = setAllBits(LONG_WIDTH) << compShiftAmt
+    val compBitMaskFragPos = compBitMask << compShiftAmt
 
-    val addr = (fragData & addrBitMask) >> addrShiftAmt
-    val rkey = (fragData & rkeyBitMask) >> rkeyShiftAmt
-    val comp = (fragData & compBitMask) >> compShiftAmt
-    val swap = (fragData & swapBitMask) >> swapShiftAmt
+    val addr = (fragData & addrBitMaskFragPos) >> addrShiftAmt
+    val rkey = (fragData & rkeyBitMaskFragPos) >> rkeyShiftAmt
+    val comp = (fragData & compBitMaskFragPos) >> compShiftAmt
+    val swap = (fragData & swapBitMaskFragPos) >> swapShiftAmt
 
     (addr, rkey.toLong, swap, comp)
   }
@@ -830,44 +938,9 @@ object AtomicAckEthSim {
   }
 }
 
-// TODO: refactor to set simulation value directly
-object RethSim {
-  val bthWidth = widthOf(BTH())
+object RethSim extends ReadAtomicReqEthSim {
   val rethWidth = widthOf(RETH())
-  val addrBitMask = setAllBits(MEM_ADDR_WIDTH)
-  val rkeyBitMask = setAllBits(LRKEY_IMM_DATA_WIDTH)
   val dlenBitMask = setAllBits(RDMA_MAX_LEN_WIDTH)
-
-  private def setHelper[T: Numeric](
-      inputData: PktFragData,
-      field: T,
-      shiftAmt: Int,
-      mask: BigInt
-  ): PktFragData = {
-    val fieldVal = implicitly[Numeric[T]].toLong(field)
-    val maskShifted = addrBitMask << shiftAmt
-    val fieldShifted = (fieldVal & mask) << shiftAmt
-    (inputData & (~maskShifted)) | fieldShifted
-  }
-
-  def setAddr(
-      inputData: PktFragData,
-      addr: VirtualAddr,
-      busWidth: BusWidth.Value
-  ): PktFragData = {
-    val addrShiftAmt = busWidth.id - bthWidth - MEM_ADDR_WIDTH
-    setHelper(inputData, addr, addrShiftAmt, addrBitMask)
-  }
-
-  def setRkey(
-      inputData: PktFragData,
-      rkey: LRKey,
-      busWidth: BusWidth.Value
-  ): PktFragData = {
-    val rkeyShiftAmt =
-      busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
-    setHelper(inputData, rkey, rkeyShiftAmt, rkeyBitMask)
-  }
 
   def setDlen(
       inputData: PktFragData,
@@ -891,9 +964,11 @@ object RethSim {
     val dlenShiftAmt =
       busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - RDMA_MAX_LEN_WIDTH
 
-    val result: BigInt = ((addr & addrBitMask) << addrShiftAmt) |
-      ((rkey & rkeyBitMask) << rkeyShiftAmt) |
-      ((dlen & dlenBitMask) << dlenShiftAmt)
+    val result: BigInt =
+      ((addr & addrBitMask) << addrShiftAmt) |
+        ((rkey & rkeyBitMask) << rkeyShiftAmt) |
+        ((dlen & dlenBitMask) << dlenShiftAmt)
+
     result
   }
 
@@ -907,19 +982,19 @@ object RethSim {
     )
 
     val addrShiftAmt = busWidth.id - bthWidth - MEM_ADDR_WIDTH
-    val addrBitMask = setAllBits(MEM_ADDR_WIDTH) << addrShiftAmt
+    val addrBitMaskFragPos = addrBitMask << addrShiftAmt
 
     val rkeyShiftAmt =
       busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH
-    val rkeyBitMask = setAllBits(LRKEY_IMM_DATA_WIDTH) << rkeyShiftAmt
+    val rkeyBitMaskFragPos = rkeyBitMask << rkeyShiftAmt
 
     val dlenShiftAmt =
       busWidth.id - bthWidth - MEM_ADDR_WIDTH - LRKEY_IMM_DATA_WIDTH - RDMA_MAX_LEN_WIDTH
-    val dlenBitMask = setAllBits(RDMA_MAX_LEN_WIDTH) << dlenShiftAmt
+    val dlenBitMaskFragPos = dlenBitMask << dlenShiftAmt
 
-    val addr = (fragData & addrBitMask) >> addrShiftAmt
-    val rkey = (fragData & rkeyBitMask) >> rkeyShiftAmt
-    val dlen = (fragData & dlenBitMask) >> dlenShiftAmt
+    val addr = (fragData & addrBitMaskFragPos) >> addrShiftAmt
+    val rkey = (fragData & rkeyBitMaskFragPos) >> rkeyShiftAmt
+    val dlen = (fragData & dlenBitMaskFragPos) >> dlenShiftAmt
 
     (addr, rkey.toLong, dlen.toLong)
   }
@@ -942,6 +1017,23 @@ object BthSim {
 }
 
 object OpCodeSim {
+  def randomSendOnlyOrWriteOnlyOpCode(): OpCode.Value = {
+    val opCodes = Seq(
+      OpCode.SEND_ONLY,
+      OpCode.SEND_ONLY_WITH_IMMEDIATE,
+      OpCode.SEND_ONLY_WITH_INVALIDATE,
+      OpCode.RDMA_WRITE_ONLY,
+      OpCode.RDMA_WRITE_ONLY_WITH_IMMEDIATE
+    )
+    val randIdx = scala.util.Random.nextInt(opCodes.size)
+    val result = opCodes(randIdx)
+    require(
+      opCodes.contains(result),
+      s"${simTime()} time: SendOnly or WriteOnly OpCode should contain ${result}"
+    )
+    result
+  }
+
   def randomAtomicOpCode(): OpCode.Value = {
     val opCodes = Seq(OpCode.COMPARE_SWAP, OpCode.FETCH_ADD)
     val randIdx = scala.util.Random.nextInt(opCodes.size)
@@ -986,6 +1078,10 @@ object OpCodeSim {
       val atomicEthWidth = widthOf(AtomicEth())
       val aethWidth = widthOf(AETH())
       val atomicAckEthWidth = widthOf(AtomicAckEth())
+
+//      println(
+//        f"${simTime()} time: bthWidth=${bthWidth}, immDtWidth=${immDtWidth}, iethWidth=${iethWidth}, rethWidth=${rethWidth}, atomicEthWidth=${atomicEthWidth}, aethWidth=${aethWidth}, atomicAckEthWidth=${atomicAckEthWidth}"
+//      )
 
       val headerLen = opcode match {
         case OpCode.SEND_FIRST | OpCode.SEND_MIDDLE | OpCode.SEND_LAST |
@@ -1118,6 +1214,15 @@ object OpCodeSim {
     def isLastOrOnlyReadRespPkt(): Boolean = {
       opcode match {
         case OpCode.RDMA_READ_RESPONSE_LAST | OpCode.RDMA_READ_RESPONSE_ONLY =>
+          true
+        case _ => false
+      }
+    }
+
+    def isLastOrOnlyRespPkt(): Boolean = {
+      opcode match {
+        case OpCode.ACKNOWLEDGE | OpCode.ATOMIC_ACKNOWLEDGE |
+            OpCode.RDMA_READ_RESPONSE_LAST | OpCode.RDMA_READ_RESPONSE_ONLY =>
           true
         case _ => false
       }
@@ -1748,61 +1853,71 @@ object PdAddrCacheSim
   }
 }
 
-object ReadAtomicRstCacheSim
-    extends SingleRespQuerySim[
+case class ReadAtomicRstCacheSim(
+    readAtomicRstMap: mutable.Map[
+      PSN,
+      (PsnStart, VirtualAddr, PktLen, PktNum, AtomicSwap, AtomicComp)
+    ]
+) extends SingleRespQuerySim[
       ReadAtomicRstCacheReq,
       CamQueryResp[ReadAtomicRstCacheReq, ReadAtomicRstCacheData],
       ReadAtomicRstCacheQueryBus,
       (PSN, OpCode.Value),
       (QueryPsn, QuerySuccess, PsnStart, PhysicalAddr, PktNum, PktLen)
     ] {
+  import OpCodeSim._
   type ReadAtomicRstCacheResp =
     CamQueryResp[ReadAtomicRstCacheReq, ReadAtomicRstCacheData]
 
-  override def onReqFire(req: ReadAtomicRstCacheReq):
-//      reqQueue: mutable.Queue[
-  (PSN, OpCode.Value) = {
-//  ]): Unit = {
-
+  override def onReqFire(req: ReadAtomicRstCacheReq): (PSN, OpCode.Value) = {
 //    println(
 //      f"${simTime()} time: ReadAtomicRstCacheSim receive request PSN=${req.queryPsn.toInt}%X"
 //    )
-
-//    reqQueue.enqueue(
     (
       req.queryPsn.toInt,
       OpCode(req.opcode.toInt)
     )
-//    )
   }
 
   override def buildRespFromReqData(
       resp: ReadAtomicRstCacheResp,
       reqData: (PSN, OpCode.Value),
-//      reqQueue: mutable.Queue[(PSN, OpCode.Value)],
       respAlwaysSuccess: Boolean
   ): Boolean = {
-//    val (queryPsn, queryOpCode) = reqQueue.dequeue()
     val (queryPsn, queryOpCode) = reqData
     resp.respValue.opcode #= queryOpCode.id
     resp.respValue.psnStart #= queryPsn // TODO: support partial retry
     resp.queryKey.queryPsn #= queryPsn
     resp.found #= respAlwaysSuccess
 
+    (queryOpCode.isReadReqPkt() || queryOpCode
+      .isAtomicReqPkt()) shouldBe true withClue
+      f"${simTime()} time: queryOpCode=${queryOpCode} should be read/atomic"
+
+    if (respAlwaysSuccess) {
+      readAtomicRstMap.get(queryPsn).foreach { atomicData =>
+        val (psnStart, va, pktLen, pktNum, atomicSwap, atomicComp) = atomicData
+
+        resp.respValue.psnStart #= psnStart
+        resp.respValue.va #= va
+        resp.respValue.dlen #= pktLen
+        resp.respValue.pktNum #= pktNum
+        resp.respValue.swap #= atomicSwap
+        resp.respValue.comp #= atomicComp
+
+//        println(
+//          f"${simTime()} time: ReadAtomicRstCacheSim found PSN=${queryPsn}%X, opcode=${queryOpCode}, va=${va}%X"
+//        )
+      }
+    }
+
     val respValid = true
     respValid
   }
 
-  override def onRespFire(resp: ReadAtomicRstCacheResp):
-//      respQueue: mutable.Queue[
-  (QueryPsn, QuerySuccess, PsnStart, PhysicalAddr, PktNum, PktLen) = {
-//      ]
-//  ): Unit = {
-//    println(
-//      f"${simTime()} time: ReadAtomicRstCacheSim response to PSN=${resp.queryKey.queryPsn.toInt}%X"
-//    )
-
-//    respQueue.enqueue(
+  override def onRespFire(
+      resp: ReadAtomicRstCacheResp
+  ): (QueryPsn, QuerySuccess, PsnStart, PhysicalAddr, PktNum, PktLen) = {
     (
       resp.queryKey.queryPsn.toInt,
       resp.found.toBoolean,
@@ -1811,7 +1926,6 @@ object ReadAtomicRstCacheSim
       resp.respValue.pktNum.toInt,
       resp.respValue.dlen.toLong
     )
-//    )
   }
 }
 
@@ -2312,14 +2426,12 @@ object RdmaDataPktSim {
       isReadRespGen = false
     )(outerLoopBody)(innerLoopFunc)
 
-  private def rdmaPktFragStreamMasterDriverHelper[T <: Data](
-      stream: Stream[Fragment[T]],
-      clockDomain: ClockDomain,
-      getRdmaPktDataFunc: T => RdmaDataPkt,
-      pendingReqNumExceed: => Boolean,
-      readAtomicRstCacheFull: => Boolean,
-      alwaysValid: Boolean,
+  private def rdmaPktFragStreamMasterGenHelper(
+      stream: Fragment[RdmaDataPkt],
+      psnStart: PSN,
+      numWorkReq: Int,
       isReadRespGen: Boolean,
+      isSendWriteImmReqOnly: Boolean,
       isSendWriteReqOnly: Boolean,
       isReadAtomicReqOnly: Boolean,
       pmtuLen: PMTU.Value,
@@ -2339,21 +2451,34 @@ object RdmaDataPktSim {
           HeaderLen, // TODO: remove this field
           OpCode.Value
       ) => Unit
-  ): Unit = fork {
-    stream.valid #= false
-    clockDomain.waitSampling()
+  ): Unit = {
+    require(
+      (isReadRespGen && !isSendWriteImmReqOnly && !isSendWriteReqOnly && !isReadAtomicReqOnly == true) ||
+        (!isReadRespGen && isSendWriteImmReqOnly && !isSendWriteReqOnly && !isReadAtomicReqOnly == true) ||
+        (!isReadRespGen && !isSendWriteImmReqOnly && isSendWriteReqOnly && !isReadAtomicReqOnly == true) ||
+        (!isReadRespGen && !isSendWriteImmReqOnly && !isSendWriteReqOnly && isReadAtomicReqOnly == true) ||
+        (!isReadRespGen && !isSendWriteImmReqOnly && !isSendWriteReqOnly && !isReadAtomicReqOnly == true),
+      s"${simTime()} time: isReadRespGen=${isReadRespGen}, isSendWriteImmReqOnly=${isSendWriteImmReqOnly}, isSendWriteReqOnly=${isSendWriteReqOnly}, isReadAtomicReqOnly=${isReadAtomicReqOnly}, no more than one can be true"
+    )
 
     val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
-      SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
+      SendWriteReqReadRespInputGen.getItr(
+        psnStart,
+        maxFragNum,
+        pmtuLen,
+        busWidth
+      )
 
     // Outer loop
-    while (true) {
+    for (_ <- 0 until numWorkReq) {
       val _ = payloadFragNumItr.next()
       val totalPktNum = pktNumItr.next()
       val psnStart = psnStartItr.next()
       val payloadLenBytes = payloadLenItr.next()
 
-      val workReqOpCode = if (isSendWriteReqOnly) {
+      val workReqOpCode = if (isSendWriteImmReqOnly) {
+        WorkReqSim.randomSendWriteImmOpCode()
+      } else if (isSendWriteReqOnly) {
         WorkReqSim.randomSendWriteOpCode()
       } else if (isReadAtomicReqOnly) {
         if (totalPktNum == 1) {
@@ -2361,17 +2486,10 @@ object RdmaDataPktSim {
         } else {
           WorkReqOpCode.RDMA_READ
         }
+      } else if (totalPktNum == 1) {
+        WorkReqSim.randomSendWriteReadAtomicOpCode()
       } else {
-        if (readAtomicRstCacheFull) {
-          // If readAtomicRstCacheFull is true, then only generate send/write request
-          WorkReqSim.randomSendWriteOpCode()
-        } else {
-          if (totalPktNum == 1) {
-            WorkReqSim.randomSendWriteReadAtomicOpCode()
-          } else {
-            WorkReqSim.randomSendWriteReadOpCode()
-          }
-        }
+        WorkReqSim.randomSendWriteReadOpCode()
       }
 
       val isReadReq = workReqOpCode == WorkReqOpCode.RDMA_READ
@@ -2380,14 +2498,6 @@ object RdmaDataPktSim {
         WorkReqOpCode.ATOMIC_FETCH_AND_ADD
       ).contains(workReqOpCode)
 
-      if (!isReadRespGen) {
-        if (pendingReqNumExceed) {
-          clockDomain.waitSamplingWhere(!pendingReqNumExceed)
-        }
-        if ((isReadReq || isAtomicReq) && readAtomicRstCacheFull) {
-          clockDomain.waitSamplingWhere(!readAtomicRstCacheFull)
-        }
-      }
       val (pktNum4Loop, reqPktNum, respPktNum) = if (isReadRespGen) {
         (totalPktNum, 1, totalPktNum)
       } else if (isReadReq) {
@@ -2422,10 +2532,10 @@ object RdmaDataPktSim {
             pktNum4Loop
           )
         }
-
 //        println(
 //          f"${simTime()} time: opcode=${opcode}, PSN=${psn}, pktNum4Loop=${pktNum4Loop}%X, totalPktNum=${totalPktNum}, pktFragNum=${pktFragNum}%X, psnStart=${psnStart}%X, payloadLenBytes=${payloadLenBytes}%X"
 //        )
+
         for (fragIdx <- 0 until pktFragNum) {
           val fragLast = fragIdx == pktFragNum - 1
           val mty = if (!isReadRespGen && (isReadReq || isAtomicReq)) {
@@ -2442,8 +2552,335 @@ object RdmaDataPktSim {
             )
           }
 
+          stream.fragment.randomize()
+          sleep(0)
+          stream.last #= fragLast // Set last must after set fragment, since last is part of the fragment
+
+          setRdmaDataFrag(
+            stream.fragment,
+            psn,
+            opcode,
+            fragIdx,
+//              fragLast,
+            pktIdx,
+            pktNum4Loop,
+            payloadLenBytes.toLong,
+            mty,
+            pmtuLen,
+            busWidth
+          )
+          sleep(0)
+
 //          println(
-//            f"${simTime()} time: opcode=${opcode}, pktIdx=${pktIdx}%X, pktNum=${pktNum}%X, fragIdx=${fragIdx}%X, pktFragNum=${pktFragNum}%X, fragLast=${fragLast}, mty=${mty}%X, PSN=${psn}%X, headerLenBytes=${headerLenBytes}%X, payloadLenBytes=${payloadLenBytes}%X"
+//            f"${simTime()} time: PSN=${psn}%X, opcode=${opcode}, ackreq=${stream.bth.ackreq.toBoolean}, pktIdx=${pktIdx}%X, pktFragNum=${pktFragNum}%X, fragIdx=${fragIdx}%X, pktFragNum=${pktFragNum}%X, fragLast=${fragLast}, mty=${mty}%X, headerLenBytes=${headerLenBytes}%X, payloadLenBytes=${payloadLenBytes}%X"
+//          )
+
+          innerLoopFunc(
+            psn,
+            psnStart,
+            fragLast,
+            fragIdx,
+            pktFragNum,
+            pktIdx,
+            reqPktNum,
+            respPktNum,
+            payloadLenBytes.toLong,
+            headerLenBytes,
+            opcode
+          )
+        }
+      }
+    }
+  }
+
+  def sendWriteImmReqPktFragStreamMasterGen(
+      fragment: Fragment[RdmaDataPkt],
+      psnStart: PSN,
+      numWorkReq: Int,
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      maxFragNum: Int
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          ReqPktNum,
+          RespPktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit =
+    rdmaPktFragStreamMasterGenHelper(
+      fragment,
+      psnStart,
+      numWorkReq,
+      isReadRespGen = false,
+      isSendWriteImmReqOnly = true,
+      isSendWriteReqOnly = false,
+      isReadAtomicReqOnly = false,
+      pmtuLen = pmtuLen,
+      busWidth = busWidth,
+      maxFragNum = maxFragNum
+    )(innerLoopFunc)
+
+  def sendWriteReqPktFragStreamMasterGen(
+      fragment: Fragment[RdmaDataPkt],
+      psnStart: PSN,
+      numWorkReq: Int,
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      maxFragNum: Int
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          ReqPktNum,
+          RespPktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit =
+    rdmaPktFragStreamMasterGenHelper(
+      fragment,
+      psnStart,
+      numWorkReq,
+      isReadRespGen = false,
+      isSendWriteImmReqOnly = false,
+      isSendWriteReqOnly = true,
+      isReadAtomicReqOnly = false,
+      pmtuLen = pmtuLen,
+      busWidth = busWidth,
+      maxFragNum = maxFragNum
+    )(innerLoopFunc)
+
+  def readAtomicReqStreamMasterGen(
+      fragment: Fragment[RdmaDataPkt],
+      psnStart: PSN,
+      numWorkReq: Int,
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      maxFragNum: Int
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          ReqPktNum,
+          RespPktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit = rdmaPktFragStreamMasterGenHelper(
+    fragment,
+    psnStart,
+    numWorkReq,
+    isReadRespGen = false,
+    isSendWriteImmReqOnly = false,
+    isSendWriteReqOnly = false,
+    isReadAtomicReqOnly = true,
+    pmtuLen = pmtuLen,
+    busWidth = busWidth,
+    maxFragNum = maxFragNum
+  )(innerLoopFunc)
+
+  def rdmaReqPktFragStreamMasterGen(
+      fragment: Fragment[RdmaDataPkt],
+      psnStart: PSN,
+      numWorkReq: Int,
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      maxFragNum: Int
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          ReqPktNum,
+          RespPktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit = rdmaPktFragStreamMasterGenHelper(
+    fragment,
+    psnStart,
+    numWorkReq,
+    isReadRespGen = false,
+    isSendWriteImmReqOnly = false,
+    isSendWriteReqOnly = false,
+    isReadAtomicReqOnly = false,
+    pmtuLen = pmtuLen,
+    busWidth = busWidth,
+    maxFragNum = maxFragNum
+  )(innerLoopFunc)
+
+  private def rdmaPktFragStreamMasterDriverHelper[T <: Data](
+      stream: Stream[Fragment[T]],
+      clockDomain: ClockDomain,
+      getRdmaPktDataFunc: T => RdmaDataPkt,
+      pendingReqNumExceed: => Boolean,
+      readAtomicRstCacheFull: => Boolean,
+      alwaysValid: Boolean,
+      isReadRespGen: Boolean,
+      isSendWriteImmReqOnly: Boolean,
+      isSendWriteReqOnly: Boolean,
+      isReadAtomicReqOnly: Boolean,
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      maxFragNum: Int
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          ReqPktNum,
+          RespPktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit = fork {
+    require(
+      (isReadRespGen && !isSendWriteImmReqOnly && !isSendWriteReqOnly && !isReadAtomicReqOnly == true) ||
+        (!isReadRespGen && isSendWriteImmReqOnly && !isSendWriteReqOnly && !isReadAtomicReqOnly == true) ||
+        (!isReadRespGen && !isSendWriteImmReqOnly && isSendWriteReqOnly && !isReadAtomicReqOnly == true) ||
+        (!isReadRespGen && !isSendWriteImmReqOnly && !isSendWriteReqOnly && isReadAtomicReqOnly == true) ||
+        (!isReadRespGen && !isSendWriteImmReqOnly && !isSendWriteReqOnly && !isReadAtomicReqOnly == true),
+      s"${simTime()} time: isReadRespGen=${isReadRespGen}, isSendWriteImmReqOnly=${isSendWriteImmReqOnly}, isSendWriteReqOnly=${isSendWriteReqOnly}, isReadAtomicReqOnly=${isReadAtomicReqOnly}, no more than one can be true"
+    )
+
+    stream.valid #= false
+    clockDomain.waitSampling()
+
+    val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
+      SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
+
+    // Outer loop
+    while (true) {
+      val _ = payloadFragNumItr.next()
+      val totalPktNum = pktNumItr.next()
+      val psnStart = psnStartItr.next()
+      val payloadLenBytes = payloadLenItr.next()
+
+      val workReqOpCode = if (isSendWriteImmReqOnly) {
+        WorkReqSim.randomSendWriteImmOpCode()
+      } else if (isSendWriteReqOnly) {
+        WorkReqSim.randomSendWriteOpCode()
+      } else if (isReadAtomicReqOnly) {
+        if (totalPktNum == 1) {
+          WorkReqSim.randomReadAtomicOpCode()
+        } else {
+          WorkReqOpCode.RDMA_READ
+        }
+      } else {
+        if (readAtomicRstCacheFull) {
+          // If readAtomicRstCacheFull is true, then only generate send/write request
+          WorkReqSim.randomSendWriteOpCode()
+        } else {
+          if (totalPktNum == 1) {
+            WorkReqSim.randomSendWriteReadAtomicOpCode()
+          } else {
+            WorkReqSim.randomSendWriteReadOpCode()
+          }
+        }
+      }
+
+      val isReadReq = workReqOpCode == WorkReqOpCode.RDMA_READ
+      val isAtomicReq = Seq(
+        WorkReqOpCode.ATOMIC_CMP_AND_SWP,
+        WorkReqOpCode.ATOMIC_FETCH_AND_ADD
+      ).contains(workReqOpCode)
+
+      if (!isReadRespGen) {
+        if (pendingReqNumExceed) {
+//          println(f"${simTime()} time: pendingReqNumExceed=${pendingReqNumExceed}, waiting")
+
+          clockDomain.waitSamplingWhere(!pendingReqNumExceed)
+        }
+        if ((isReadReq || isAtomicReq) && readAtomicRstCacheFull) {
+//          println(
+//            f"${simTime()} time: readAtomicRstCacheFull=${readAtomicRstCacheFull}, and isReadReq=${isReadReq}, isAtomicReq=${isAtomicReq}, waiting"
+//          )
+
+          clockDomain.waitSamplingWhere(!readAtomicRstCacheFull)
+        }
+      }
+
+      val (pktNum4Loop, reqPktNum, respPktNum) = if (isReadRespGen) {
+        (totalPktNum, 1, totalPktNum)
+      } else if (isReadReq) {
+        (1, 1, totalPktNum) // Only 1 packet for read request
+      } else {
+        (
+          totalPktNum,
+          totalPktNum,
+          1
+        ) // Only 1 packet for send/write/atomic response
+      }
+
+      // Inner loop
+      for (pktIdx <- 0 until pktNum4Loop) {
+        val opcode = if (isReadRespGen) {
+          WorkReqSim.assignReadRespOpCode(pktIdx, pktNum4Loop)
+        } else {
+          WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx, pktNum4Loop)
+        }
+
+        val headerLenBytes = opcode.getPktHeaderLenBytes()
+        val psn = psnStart + pktIdx
+        val pktFragNum = if (!isReadRespGen && (isReadReq || isAtomicReq)) {
+          1 // Only 1 fragment for read/atomic request
+        } else {
+          computePktFragNum(
+            pmtuLen,
+            busWidth,
+            opcode,
+            payloadLenBytes.toLong,
+            pktIdx,
+            pktNum4Loop
+          )
+        }
+//        println(
+//          f"${simTime()} time: opcode=${opcode}, PSN=${psn}, pktNum4Loop=${pktNum4Loop}%X, totalPktNum=${totalPktNum}, pktFragNum=${pktFragNum}%X, psnStart=${psnStart}%X, payloadLenBytes=${payloadLenBytes}%X"
+//        )
+
+        for (fragIdx <- 0 until pktFragNum) {
+          val fragLast = fragIdx == pktFragNum - 1
+          val mty = if (!isReadRespGen && (isReadReq || isAtomicReq)) {
+            computeHeaderMty(headerLenBytes, busWidth)
+          } else {
+            computePktFragMty(
+              pmtuLen,
+              busWidth,
+              opcode,
+              fragLast,
+              pktIdx,
+              pktNum4Loop,
+              payloadLenBytes.toLong
+            )
+          }
+//          println(
+//            f"${simTime()} time: opcode=${opcode}, pktIdx=${pktIdx}%X, pktFragNum=${pktFragNum}%X, fragIdx=${fragIdx}%X, pktFragNum=${pktFragNum}%X, fragLast=${fragLast}, mty=${mty}%X, PSN=${psn}%X, headerLenBytes=${headerLenBytes}%X, payloadLenBytes=${payloadLenBytes}%X"
 //          )
 
           do {
@@ -2473,7 +2910,7 @@ object RdmaDataPktSim {
             pmtuLen,
             busWidth
           )
-
+          sleep(0)
           innerLoopFunc(
             psn,
             psnStart,
@@ -2499,10 +2936,11 @@ object RdmaDataPktSim {
     }
   }
 
-  def sendWriteReqPktFragStreamMasterDriverAlwaysValid[T <: Data](
+  def sendWriteImmReqPktFragStreamMasterDriver[T <: Data](
       stream: Stream[Fragment[T]],
       clockDomain: ClockDomain,
       getRdmaPktDataFunc: T => RdmaDataPkt,
+      pendingReqNumExceed: => Boolean,
       pmtuLen: PMTU.Value,
       busWidth: BusWidth.Value,
       maxFragNum: Int
@@ -2525,10 +2963,128 @@ object RdmaDataPktSim {
       stream,
       clockDomain,
       getRdmaPktDataFunc,
-      pendingReqNumExceed = false,
+      pendingReqNumExceed,
+      readAtomicRstCacheFull = true,
+      alwaysValid = false,
+      isReadRespGen = false,
+      isSendWriteImmReqOnly = true,
+      isSendWriteReqOnly = false,
+      isReadAtomicReqOnly = false,
+      pmtuLen = pmtuLen,
+      busWidth = busWidth,
+      maxFragNum = maxFragNum
+    )(innerLoopFunc)
+
+  def sendWriteImmReqPktFragStreamMasterDriverAlwaysValid[T <: Data](
+      stream: Stream[Fragment[T]],
+      clockDomain: ClockDomain,
+      getRdmaPktDataFunc: T => RdmaDataPkt,
+      pendingReqNumExceed: => Boolean,
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      maxFragNum: Int
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          ReqPktNum,
+          RespPktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit =
+    rdmaPktFragStreamMasterDriverHelper(
+      stream,
+      clockDomain,
+      getRdmaPktDataFunc,
+      pendingReqNumExceed,
       readAtomicRstCacheFull = true,
       alwaysValid = true,
       isReadRespGen = false,
+      isSendWriteImmReqOnly = true,
+      isSendWriteReqOnly = false,
+      isReadAtomicReqOnly = false,
+      pmtuLen = pmtuLen,
+      busWidth = busWidth,
+      maxFragNum = maxFragNum
+    )(innerLoopFunc)
+
+  def sendWriteReqPktFragStreamMasterDriver[T <: Data](
+      stream: Stream[Fragment[T]],
+      clockDomain: ClockDomain,
+      getRdmaPktDataFunc: T => RdmaDataPkt,
+      pendingReqNumExceed: => Boolean,
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      maxFragNum: Int
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          ReqPktNum,
+          RespPktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit =
+    rdmaPktFragStreamMasterDriverHelper(
+      stream,
+      clockDomain,
+      getRdmaPktDataFunc,
+      pendingReqNumExceed,
+      readAtomicRstCacheFull = true,
+      alwaysValid = false,
+      isReadRespGen = false,
+      isSendWriteImmReqOnly = false,
+      isSendWriteReqOnly = true,
+      isReadAtomicReqOnly = false,
+      pmtuLen = pmtuLen,
+      busWidth = busWidth,
+      maxFragNum = maxFragNum
+    )(innerLoopFunc)
+
+  def sendWriteReqPktFragStreamMasterDriverAlwaysValid[T <: Data](
+      stream: Stream[Fragment[T]],
+      clockDomain: ClockDomain,
+      getRdmaPktDataFunc: T => RdmaDataPkt,
+      pendingReqNumExceed: => Boolean,
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      maxFragNum: Int
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          ReqPktNum,
+          RespPktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit =
+    rdmaPktFragStreamMasterDriverHelper(
+      stream,
+      clockDomain,
+      getRdmaPktDataFunc,
+      pendingReqNumExceed,
+      readAtomicRstCacheFull = true,
+      alwaysValid = true,
+      isReadRespGen = false,
+      isSendWriteImmReqOnly = false,
       isSendWriteReqOnly = true,
       isReadAtomicReqOnly = false,
       pmtuLen = pmtuLen,
@@ -2541,9 +3097,9 @@ object RdmaDataPktSim {
       clockDomain: ClockDomain,
       getRdmaPktDataFunc: T => RdmaDataPkt,
       readAtomicRstCacheFull: => Boolean,
-      maxFragNum: Int,
       pmtuLen: PMTU.Value,
-      busWidth: BusWidth.Value
+      busWidth: BusWidth.Value,
+      maxFragNum: Int
   )(
       innerLoopFunc: (
           PSN,
@@ -2566,6 +3122,7 @@ object RdmaDataPktSim {
     readAtomicRstCacheFull = readAtomicRstCacheFull,
     alwaysValid = false,
     isReadRespGen = false,
+    isSendWriteImmReqOnly = false,
     isSendWriteReqOnly = false,
     isReadAtomicReqOnly = true,
     pmtuLen = pmtuLen,
@@ -2603,6 +3160,7 @@ object RdmaDataPktSim {
     readAtomicRstCacheFull = readAtomicRstCacheFull,
     alwaysValid = true,
     isReadRespGen = false,
+    isSendWriteImmReqOnly = false,
     isSendWriteReqOnly = false,
     isReadAtomicReqOnly = true,
     pmtuLen = pmtuLen,
@@ -2638,6 +3196,7 @@ object RdmaDataPktSim {
     readAtomicRstCacheFull = false,
     alwaysValid = false,
     isReadRespGen = true,
+    isSendWriteImmReqOnly = false,
     isSendWriteReqOnly = false,
     isReadAtomicReqOnly = false,
     pmtuLen = pmtuLen,
@@ -2674,12 +3233,53 @@ object RdmaDataPktSim {
     readAtomicRstCacheFull = false,
     alwaysValid = true,
     isReadRespGen = true,
+    isSendWriteImmReqOnly = false,
     isSendWriteReqOnly = false,
     isReadAtomicReqOnly = false,
     pmtuLen = pmtuLen,
     busWidth = busWidth,
     maxFragNum = maxFragNum
   )(innerLoopFunc)
+
+  def rdmaReqPktFragStreamMasterDriver[T <: Data](
+      stream: Stream[Fragment[T]],
+      clockDomain: ClockDomain,
+      getRdmaPktDataFunc: T => RdmaDataPkt,
+      pendingReqNumExceed: => Boolean,
+      readAtomicRstCacheFull: => Boolean,
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      maxFragNum: Int
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          ReqPktNum,
+          RespPktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit =
+    rdmaPktFragStreamMasterDriverHelper(
+      stream,
+      clockDomain,
+      getRdmaPktDataFunc,
+      pendingReqNumExceed,
+      readAtomicRstCacheFull,
+      alwaysValid = false,
+      isReadRespGen = false,
+      isSendWriteImmReqOnly = false,
+      isSendWriteReqOnly = false,
+      isReadAtomicReqOnly = false,
+      pmtuLen = pmtuLen,
+      busWidth = busWidth,
+      maxFragNum = maxFragNum
+    )(innerLoopFunc)
 
   def rdmaReqPktFragStreamMasterDriverAlwaysValid[T <: Data](
       stream: Stream[Fragment[T]],
@@ -2713,118 +3313,14 @@ object RdmaDataPktSim {
       readAtomicRstCacheFull,
       alwaysValid = true,
       isReadRespGen = false,
+      isSendWriteImmReqOnly = false,
       isSendWriteReqOnly = false,
       isReadAtomicReqOnly = false,
       pmtuLen = pmtuLen,
       busWidth = busWidth,
       maxFragNum = maxFragNum
     )(innerLoopFunc)
-  /*
-  def readRespPktFragStreamMasterDriver[T <: Data](
-      stream: Stream[Fragment[T]],
-      clockDomain: ClockDomain,
-      getRdmaPktDataFunc: T => RdmaDataPkt,
-      pmtuLen: PMTU.Value,
-      busWidth: BusWidth.Value,
-      maxFragNum: Int,
-      innerLoopFunc: (
-          PSN,
-          PsnStart,
-          FragLast,
-          FragIdx,
-          FragNum,
-          PktIdx,
-          PktNum,
-          PktLen,
-          HeaderLen, // TODO: remove this field
-          OpCode.Value
-      ) => Unit
-  ): Unit = {
-    val (totalFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
-      SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
 
-    val outerLoopBody = {
-      val payloadFragNum = totalFragNumItr.next()
-      val pktNum = pktNumItr.next()
-      val psnStart = psnStartItr.next()
-      val payloadLenBytes = payloadLenItr.next()
-
-//      println(
-//        f"${simTime()} time: pktNum=${pktNum}%X, totalFragNum=${totalFragNum}%X, psnStart=${psnStart}%X, totalLenBytes=${totalLenBytes}%X"
-//      )
-      val workReqOpCode = WorkReqOpCode.RDMA_READ
-      (
-        psnStart,
-        payloadFragNum,
-        pktNum,
-        pmtuLen,
-        busWidth,
-        payloadLenBytes.toLong,
-        workReqOpCode
-      )
-    }
-    pktFragStreamMasterDriverHelper(
-      stream,
-      clockDomain,
-      getRdmaPktDataFunc,
-      alwaysValid = false,
-      isReadRespGen = true
-    )(outerLoopBody)(innerLoopFunc)
-  }
-
-  def readRespPktFragStreamMasterDriverAlwaysValid[T <: Data](
-      stream: Stream[Fragment[T]],
-      clockDomain: ClockDomain,
-      getRdmaPktDataFunc: T => RdmaDataPkt,
-      pmtuLen: PMTU.Value,
-      busWidth: BusWidth.Value,
-      maxFragNum: Int
-  )(
-      innerLoopFunc: (
-          PSN,
-          PsnStart,
-          FragLast,
-          FragIdx,
-          FragNum,
-          PktIdx,
-          PktNum,
-          PktLen,
-          HeaderLen, // TODO: remove this field
-          OpCode.Value
-      ) => Unit
-  ): Unit = {
-    val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
-      SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
-
-    val outerLoopBody = {
-      val payloadFragNum = totalFragNumItr.next()
-      val pktNum = pktNumItr.next()
-      val psnStart = psnStartItr.next()
-      val payloadLenBytes = totalLenItr.next()
-
-//      println(
-//        f"${simTime()} time: pktNum=${pktNum}%X, totalFragNum=${totalFragNum}%X, psnStart=${psnStart}%X, totalLenBytes=${totalLenBytes}%X"
-//      )
-      val workReqOpCode = WorkReqOpCode.RDMA_READ
-      (
-        psnStart,
-        payloadFragNum,
-        pktNum,
-        pmtuLen,
-        busWidth,
-        payloadLenBytes.toLong,
-        workReqOpCode
-      )
-    }
-    pktFragStreamMasterDriverHelper(
-      stream,
-      clockDomain,
-      getRdmaPktDataFunc,
-      alwaysValid = true,
-      isReadRespGen = true
-    )(outerLoopBody)(innerLoopFunc)
-  }
-   */
   private def buildPktMetaDataHelper(
       pmtuLen: PMTU.Value,
       busWidth: BusWidth.Value,
@@ -2834,7 +3330,7 @@ object RdmaDataPktSim {
     val maxPayloadFragNumPerPkt =
       SendWriteReqReadRespInputGen.maxFragNumPerPkt(pmtuLen, busWidth)
     val mtyWidth = MiscUtils.busWidthBytes(busWidth)
-    val pmtuLenBytes = SendWriteReqReadRespInputGen.pmtuLenBytes(pmtuLen)
+    val pmtuLenBytes = MiscUtils.getPmtuPktLenBytes(pmtuLen)
     val lastPktPadCnt = if (opcode.isReadReqPkt() || opcode.isAtomicReqPkt()) {
       0
     } else {
@@ -2946,12 +3442,13 @@ object RdmaDataPktSim {
     }
 
     pktFrag.bth.padCnt #= padCnt
-    pktFrag.bth.ackreq #= opcode.isLastOrOnlyReqPkt() // && fragLast
+    pktFrag.bth.ackreq #= opcode.isLastOrOnlyReqPkt()
     pktFrag.mty #= mty
 
     if (fragIdx == 0 && pktIdx == 0 && opcode.hasReth()) {
       // Set DmaInfo for write/read requests
       val pktFragData = pktFrag.data.toBigInt
+
       pktFrag.data #= RethSim.setDlen(
         pktFragData,
         payloadLenBytes,
@@ -3011,151 +3508,6 @@ object RdmaDataPktSim {
     }
     mty
   }
-  /*
-  def readAtomicReqStreamMasterDriver[T <: Data](
-      stream: Stream[Fragment[T]],
-      clockDomain: ClockDomain,
-      getRdmaPktDataFunc: T => RdmaDataPkt,
-      readAtomicRstCacheFull: => Boolean,
-      maxFragNum: Int,
-      pmtuLen: PMTU.Value,
-      busWidth: BusWidth.Value
-  )(
-      innerLoopFunc: (
-          PSN,
-          PktLen,
-          OpCode.Value
-      ) => Unit
-  ): Unit = readAtomicReqStreamMasterDriverHelper(
-    stream,
-    clockDomain,
-    getRdmaPktDataFunc,
-    readAtomicRstCacheFull,
-    maxFragNum,
-    pmtuLen,
-    busWidth,
-    alwaysValid = false
-  )(innerLoopFunc)
-
-  def readAtomicReqStreamMasterDriverAlwaysValid[T <: Data](
-      stream: Stream[Fragment[T]],
-      clockDomain: ClockDomain,
-      getRdmaPktDataFunc: T => RdmaDataPkt,
-      readAtomicRstCacheFull: => Boolean,
-      pmtuLen: PMTU.Value,
-      busWidth: BusWidth.Value,
-      maxFragNum: Int
-  )(
-      innerLoopFunc: (
-          PSN,
-          PktLen,
-          OpCode.Value
-      ) => Unit
-  ): Unit = readAtomicReqStreamMasterDriverHelper(
-    stream,
-    clockDomain,
-    getRdmaPktDataFunc,
-    readAtomicRstCacheFull,
-    maxFragNum,
-    pmtuLen,
-    busWidth,
-    alwaysValid = true
-  )(innerLoopFunc)
-
-  private def readAtomicReqStreamMasterDriverHelper[T <: Data](
-      stream: Stream[Fragment[T]],
-      clockDomain: ClockDomain,
-      getRdmaPktDataFunc: T => RdmaDataPkt,
-      readAtomicRstCacheFull: => Boolean,
-      maxFragNum: Int,
-      pmtuLen: PMTU.Value,
-      busWidth: BusWidth.Value,
-      alwaysValid: Boolean
-  )(
-      innerLoopFunc: (
-          PSN,
-          PktLen,
-          OpCode.Value
-      ) => Unit
-  ): Unit = fork {
-    stream.valid #= false
-    clockDomain.waitSampling()
-
-    val (totalFragNumItr, pktNumItr, psnStartItr, totalLenItr) =
-      SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
-
-    while (true) {
-      val _ = totalFragNumItr.next()
-      val pktNum = pktNumItr.next()
-      val psnStart = psnStartItr.next()
-      val readDataLenBytes = totalLenItr.next()
-
-      val isReadReq = pktNum > 1
-//      for (reqIdx <- 0 until reqNum) {
-      val opcode = if (isReadReq) {
-        OpCode.RDMA_READ_REQUEST
-      } else {
-        val atomicOpCode = WorkReqSim.assignReadAtomicReqOpCode(
-          WorkReqSim.randomAtomicOpCode()
-//            workReqOpCode
-        )
-        atomicOpCode
-      }
-      val headerLenBytes = opcode.getPktHeaderLenBytes()
-      val mty = computeHeaderMty(headerLenBytes, busWidth)
-
-//        val psn = psnStart + reqIdx
-      val fragLast = true
-
-//      println(
-//        f"${simTime()} time: opcode=${opcode}, pktNum=${pktNum}%X, fragLast=${fragLast}, mty=${mty}%X, PSN=${psnStart}%X, headerLenBytes=${headerLenBytes}%X, readDataLenBytes=${readDataLenBytes}%X, readAtomicRstCacheFull=${readAtomicRstCacheFull}"
-//      )
-
-      if (readAtomicRstCacheFull) {
-        clockDomain.waitSamplingWhere(!readAtomicRstCacheFull)
-      }
-      do {
-        if (alwaysValid) {
-          stream.valid #= true
-        } else {
-          stream.valid.randomize()
-        }
-        stream.payload.randomize()
-        sleep(0)
-        if (!stream.valid.toBoolean) {
-          clockDomain.waitSampling()
-        }
-      } while (!stream.valid.toBoolean)
-
-      stream.last #= fragLast // Set last must after set payload, since last is part of the payload
-      val pktFragData = getRdmaPktDataFunc(stream.fragment)
-      setRdmaDataFrag(
-        pktFragData,
-        psnStart,
-        opcode,
-        fragIdx = 0,
-//              fragLast,
-        pktIdx = 0,
-        pktNum = 1, // Since read/atomic request itself has only 1 packet
-        payloadLenBytes = readDataLenBytes.toLong,
-        mty,
-        pmtuLen,
-        busWidth
-      )
-
-      innerLoopFunc(
-        psnStart,
-        readDataLenBytes.toLong,
-        opcode
-      )
-      clockDomain.waitSamplingWhere(
-        stream.valid.toBoolean && stream.ready.toBoolean
-      )
-      stream.valid #= false
-//      }
-    }
-  }
-   */
 }
 
 object DmaReadRespSim {
@@ -3383,9 +3735,9 @@ object RqNakSim {
     val pulse = expectNakType match {
       case AckType.NAK_RNR     => rqNak.rnr.pulse
       case AckType.NAK_SEQ     => rqNak.seqErr.pulse
-      case AckType.NAK_INV     => rqNak.invReq
-      case AckType.NAK_RMT_ACC => rqNak.rmtAcc
-      case AckType.NAK_RMT_OP  => rqNak.rmtOp
+      case AckType.NAK_INV     => rqNak.fatal.invReq
+      case AckType.NAK_RMT_ACC => rqNak.fatal.rmtAcc
+      case AckType.NAK_RMT_OP  => rqNak.fatal.rmtOp
       case _ => SpinalExit(s"${simTime()} time: rqNak=${rqNak} is not NAK")
     }
 
@@ -3395,8 +3747,12 @@ object RqNakSim {
 }
 
 object QpCtrlSim {
+  import PsnSim._
+
   object RqSubState extends SpinalEnum {
-    val WAITING, NORMAL, NAK_SEQ, RNR_TIMEOUT, RNR = newElement()
+    val WAITING, NORMAL, NAK_SEQ_TRIGGERED, NAK_SEQ, RNR_TRIGGERED, RNR_TIMEOUT,
+        RNR =
+      newElement()
   }
 
   object SqSubState extends SpinalEnum {
@@ -3413,8 +3769,8 @@ object QpCtrlSim {
   private def initQpAttrData(qpAttr: QpAttrData, pmtuLen: PMTU.Value): Unit = {
     qpAttr.npsn #= INIT_PSN
     qpAttr.epsn #= INIT_PSN
-    qpAttr.rqOutPsn #= INIT_PSN
-    qpAttr.sqOutPsn #= INIT_PSN
+    qpAttr.rqOutPsn #= INIT_PSN -% 1
+    qpAttr.sqOutPsn #= INIT_PSN -% 1
     qpAttr.pmtu #= pmtuLen.id
 
     qpAttr.maxDstPendingReadAtomicWorkReqNum #= MAX_PENDING_READ_ATOMIC_REQ_NUM
@@ -3438,9 +3794,9 @@ object QpCtrlSim {
   }
 
   private def rqHasFatalNak(rqNotifier: RqNotifier): Boolean = {
-    rqNotifier.nak.rmtAcc.toBoolean ||
-    rqNotifier.nak.rmtOp.toBoolean ||
-    rqNotifier.nak.invReq.toBoolean
+    rqNotifier.nak.fatal.rmtAcc.toBoolean ||
+    rqNotifier.nak.fatal.rmtOp.toBoolean ||
+    rqNotifier.nak.fatal.invReq.toBoolean
   }
 
 //  private def updateQpAttr(thatQpAttr: QpAttrData): Unit = {
@@ -3491,18 +3847,29 @@ object QpCtrlSim {
     }
   }
 
-  def assignDefaultQpAttrAndRxCtrl(
+  def assignDefaultQpAttrAndFlush(
       qpAttr: QpAttrData,
       pmtuLen: PMTU.Value,
-      rxQCtrl: RxQCtrl
+      flush: Bool
   ): Unit = {
     initQpAttrData(qpAttr, pmtuLen)
 
-    rxQCtrl.stateErrFlush #= false
-    rxQCtrl.flush #= false
-    rxQCtrl.rnrFlush #= false
-    rxQCtrl.rnrTimeOut #= false
-    rxQCtrl.nakSeqTrigger #= false
+    flush #= false
+  }
+
+  def connectExpectedPsnInc(
+      qpAttr: QpAttrData,
+      epsnInc: EPsnInc,
+      clockDomain: ClockDomain
+  ): Unit = fork {
+    while (true) {
+      clockDomain.waitSampling()
+      val curExpectedPsn = qpAttr.epsn.toInt
+      if (epsnInc.inc.toBoolean) {
+        qpAttr.epsn #= curExpectedPsn +% epsnInc.incVal.toInt
+        qpAttr.rqPreReqOpCode #= epsnInc.preReqOpCode.toInt
+      }
+    }
   }
 
   def assignDefaultQpAttrAndTxCtrl(
@@ -3535,12 +3902,16 @@ object QpCtrlSim {
       while (true) {
 //        updateQpAttr(thatQpAttr)
         clockDomain.waitSampling()
-        if (rqPsnInc.epsn.inc.toBoolean) {
-          qpAttr.epsn #= qpAttr.epsn.toInt + rqPsnInc.epsn.incVal.toInt
-          qpAttr.rqPreReqOpCode #= rqPsnInc.epsn.preReqOpCode.toInt
-        }
-        if (rqPsnInc.opsn.inc.toBoolean) {
-          qpAttr.rqOutPsn #= rqPsnInc.opsn.psnVal.toInt
+
+        // Update PSN
+        if (rqSubState == RqSubState.NORMAL) {
+          if (rqPsnInc.epsn.inc.toBoolean) {
+            qpAttr.epsn #= qpAttr.epsn.toInt + rqPsnInc.epsn.incVal.toInt
+            qpAttr.rqPreReqOpCode #= rqPsnInc.epsn.preReqOpCode.toInt
+          }
+          if (rqPsnInc.opsn.inc.toBoolean) {
+            qpAttr.rqOutPsn #= rqPsnInc.opsn.psnVal.toInt
+          }
         }
 
         if (
@@ -3549,10 +3920,53 @@ object QpCtrlSim {
           if (rqHasFatalNak(rqNotifier)) {
             qpAttr.state #= QpState.ERR
             rqSubState = RqSubState.WAITING
-          } else if (rqNotifier.nak.rnr.pulse.toBoolean) {
+          } else if (
+            rqSubState == RqSubState.NORMAL && rqNotifier.nak.rnr.pulse.toBoolean
+          ) {
+            rqSubState = RqSubState.RNR_TRIGGERED
+            qpAttr.epsn #= rqNotifier.nak.rnr.psn.toInt
+            qpAttr.rqPreReqOpCode #= rqNotifier.nak.rnr.preOpCode.toInt
+
+            println(
+              f"${simTime()} time: received rqNotifier.nak.rnr.pulse=${rqNotifier.nak.rnr.pulse.toBoolean} and rqNotifier.nak.rnr.psn=${rqNotifier.nak.rnr.psn.toInt}, RqSubState.RNR_TRIGGERED=${RqSubState.RNR_TRIGGERED}"
+            )
+          } else if (
+            rqSubState == RqSubState.RNR_TRIGGERED && rqNotifier.retryNakHasSent.pulse.toBoolean
+          ) {
             rqSubState = RqSubState.RNR_TIMEOUT
-          } else if (rqNotifier.nak.seqErr.pulse.toBoolean) {
+            sleep(qpAttr.negotiatedRnrTimeOut.toLong)
+            rqSubState = RqSubState.RNR
+
+            println(
+              f"${simTime()} time: received rqNotifier.retryNakHasSent.pulse=${rqNotifier.retryNakHasSent.pulse.toBoolean}, RqSubState.RNR=${RqSubState.RNR}"
+            )
+          } else if (
+            rqSubState == RqSubState.NORMAL && rqNotifier.nak.seqErr.pulse.toBoolean
+          ) {
+            rqSubState = RqSubState.NAK_SEQ_TRIGGERED
+//            qpAttr.epsn #= rqNotifier.nak.seqErr.psn.toInt
+//            qpAttr.rqPreReqOpCode #= rqNotifier.nak.seqErr.preOpCode.toInt
+
+            println(
+              f"${simTime()} time: received rqNotifier.nak.seqErr.pulse=${rqNotifier.nak.seqErr.pulse.toBoolean} and rqNotifier.nak.seqErr.psn=${rqNotifier.nak.seqErr.psn.toInt}%X, RqSubState.NAK_SEQ_TRIGGERED=${RqSubState.NAK_SEQ_TRIGGERED}"
+            )
+          } else if (
+            rqSubState == RqSubState.NAK_SEQ_TRIGGERED && rqNotifier.retryNakHasSent.pulse.toBoolean
+          ) {
             rqSubState = RqSubState.NAK_SEQ
+
+            println(
+              f"${simTime()} time: received rqNotifier.retryNakHasSent.pulse=${rqNotifier.retryNakHasSent.pulse.toBoolean}, RqSubState.NAK_SEQ=${RqSubState.NAK_SEQ}"
+            )
+          } else if (
+            (rqSubState == RqSubState.NAK_SEQ || rqSubState == RqSubState.RNR) &&
+            rqNotifier.clearRetryNakFlush.pulse.toBoolean
+          ) {
+            rqSubState = RqSubState.NORMAL
+
+            println(
+              f"${simTime()} time: received rqNotifier.clearRetryNakFlush.pulse=${rqNotifier.clearRetryNakFlush.pulse.toBoolean}, RqSubState.NORMAL=${RqSubState.NORMAL}"
+            )
           }
         }
         // TODO: check RQ behavior under ERR
@@ -3561,12 +3975,19 @@ object QpCtrlSim {
           qpAttr.state.toEnum == QpState.ERR ||
             qpAttr.state.toEnum == QpState.INIT ||
             qpAttr.state.toEnum == QpState.RESET
+        val nakSeqTriggered = rqSubState == RqSubState.NAK_SEQ_TRIGGERED
+        val nakSeqWait4Clear = rqSubState == RqSubState.NAK_SEQ
+        val rnrTriggered = rqSubState == RqSubState.RNR_TRIGGERED
+        val rnrTimeOut = rqSubState == RqSubState.RNR_TIMEOUT
+        val rnrWait4Clear = rqSubState == RqSubState.RNR
         // RQ flush
         rxQCtrl.stateErrFlush #= isQpStateWrong
-        rxQCtrl.nakSeqTrigger #= rqSubState == RqSubState.NAK_SEQ
-        rxQCtrl.rnrFlush #= rqSubState == RqSubState.RNR
-        rxQCtrl.rnrTimeOut #= rqSubState == RqSubState.RNR_TIMEOUT
-        rxQCtrl.flush #= rxQCtrl.stateErrFlush.toBoolean || rxQCtrl.rnrFlush.toBoolean || rxQCtrl.nakSeqTrigger.toBoolean
+//        rxQCtrl.nakSeqTriggered #= nakSeqTriggered
+        rxQCtrl.nakSeqFlush #= nakSeqTriggered || nakSeqWait4Clear
+//        rxQCtrl.rnrTriggered #= rnrTriggered
+//        rxQCtrl.rnrTimeOut #= rnrTimeOut
+        rxQCtrl.rnrFlush #= rnrTriggered || rnrTimeOut || rnrWait4Clear
+        rxQCtrl.isRetryNakNotCleared #= rnrTriggered || rnrTimeOut || rnrWait4Clear || nakSeqTriggered || nakSeqWait4Clear
       }
     }
   }
@@ -3587,12 +4008,16 @@ object QpCtrlSim {
       while (true) {
 //        updateQpAttr(thatQpAttr)
         clockDomain.waitSampling()
-        if (qpAttr.state.toEnum == QpState.RTS) {
-          if (sqPsnInc.npsn.inc.toBoolean) {
-            qpAttr.npsn #= qpAttr.npsn.toInt + sqPsnInc.npsn.incVal.toInt
-          }
-          if (sqPsnInc.opsn.inc.toBoolean) {
-            qpAttr.sqOutPsn #= sqPsnInc.opsn.psnVal.toInt
+
+        // Update PSN
+        if (sqSubState == SqSubState.NORMAL) {
+          if (qpAttr.state.toEnum == QpState.RTS) {
+            if (sqPsnInc.npsn.inc.toBoolean) {
+              qpAttr.npsn #= qpAttr.npsn.toInt + sqPsnInc.npsn.incVal.toInt
+            }
+            if (sqPsnInc.opsn.inc.toBoolean) {
+              qpAttr.sqOutPsn #= sqPsnInc.opsn.psnVal.toInt
+            }
           }
         }
 

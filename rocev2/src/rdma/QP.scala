@@ -64,7 +64,7 @@ class QpCtrl extends Component {
     val txQCtrl = out(TxQCtrl())
   }
 
-  val qpAttr = RegInit(QpAttrData().init())
+  val qpAttr = RegInit(QpAttrData().init()) // CSR
   io.qpAttr := qpAttr
 
   when(io.qpCreateOrModify.req.fire) {
@@ -145,46 +145,6 @@ class QpCtrl extends Component {
       }
     }
   }
-
-//  def sqRetryStateFsm() = new StateMachine {
-//    val RETRY_FLUSH: State = new State with EntryPoint {
-//      onEntry {
-//        qpAttr.retryReason := io.sqNotifier.retry.reason
-//        qpAttr.retryStartPsn := io.sqNotifier.retry.psnStart
-//      }
-//      whenIsActive {
-//        // retryFlushDone just means first retry WR sent, it needs to wait for new responses, stop flushing responses
-//        when(io.sqNotifier.retryClear.retryFlushDone) {
-//          goto(RETRY)
-//        }
-//      }
-//    }
-//
-//    val RETRY: State = new State {
-//      whenIsActive {
-//        when(io.sqNotifier.retryClear.retryWorkReqDone) {
-//          exit()
-//        }
-//      }
-//    }
-//  }
-
-//  val fenceRetryFsm = sqRetryStateFsm()
-//  def fenceStateFsm() = new StateMachine {
-//    val FENCE: State = new State with EntryPoint {
-//      whenIsActive {
-//        when(io.sqNotifier.workReqCacheEmpty) {
-//          exit()
-//        }
-//      }
-//    }
-//
-//    val FENCE_RETRY: State = new StateFsm(fenceRetryFsm) {
-//      whenCompleted {
-//        goto(FENCE)
-//      }
-//    }
-//  }
 
   // SQD needs to handle retry
   def drainStateFsm() = new StateMachine {
@@ -334,16 +294,33 @@ class QpCtrl extends Component {
 
     val NORMAL: State = new State {
       whenIsActive {
+        // The priority matters: ERR > RNR > NAK SEQ
+        // Clearly, QP ERR state has highest priority.
+        // Especially, since RQ detects RNR after NAK SEQ,
+        // which means if both RNR and NAK SEQ detected,
+        // that RNR is earlier than NAK SEQ,
+        // so RNR has higher priority than NAK SEQ.
         when(isQpErr) {
           goto(WAITING)
-        } elsewhen (io.rqNotifier.nak.seqErr.pulse) {
-          qpAttr.rqPreReqOpCode := io.rqNotifier.nak.seqErr.preOpCode
-          qpAttr.epsn := io.rqNotifier.nak.seqErr.psn
-          goto(NAK_SEQ)
         } elsewhen (io.rqNotifier.nak.rnr.pulse) {
-          qpAttr.rqPreReqOpCode := io.rqNotifier.nak.rnr.preOpCode
           qpAttr.epsn := io.rqNotifier.nak.rnr.psn
-          goto(RNR_TIMEOUT)
+          qpAttr.rqPreReqOpCode := io.rqNotifier.nak.rnr.preOpCode
+          goto(RNR_TRIGGERED)
+        } elsewhen (io.rqNotifier.nak.seqErr.pulse) {
+          // No need to update ePSN and pre-opcode when NAK SEQ
+//          qpAttr.rqPreReqOpCode := io.rqNotifier.nak.seqErr.preOpCode
+//          qpAttr.epsn := io.rqNotifier.nak.seqErr.psn
+          goto(NAK_SEQ_TRIGGERED)
+        }
+      }
+    }
+
+    val NAK_SEQ_TRIGGERED: State = new State {
+      whenIsActive {
+        when(isQpErr) {
+          goto(WAITING)
+        } elsewhen (io.rqNotifier.retryNakHasSent.pulse) {
+          goto(NAK_SEQ)
         }
       }
     }
@@ -352,8 +329,18 @@ class QpCtrl extends Component {
       whenIsActive {
         when(isQpErr) {
           goto(WAITING)
-        } elsewhen (io.rqNotifier.clearRnrOrNakSeq.pulse) {
+        } elsewhen (io.rqNotifier.clearRetryNakFlush.pulse) {
           goto(NORMAL)
+        }
+      }
+    }
+
+    val RNR_TRIGGERED: State = new State {
+      whenIsActive {
+        when(isQpErr) {
+          goto(WAITING)
+        } elsewhen (io.rqNotifier.retryNakHasSent.pulse) {
+          goto(RNR_TIMEOUT)
         }
       }
     }
@@ -372,7 +359,7 @@ class QpCtrl extends Component {
       whenIsActive {
         when(isQpErr) {
           goto(WAITING)
-        } elsewhen (io.rqNotifier.clearRnrOrNakSeq.pulse) {
+        } elsewhen (io.rqNotifier.clearRetryNakFlush.pulse) {
           goto(NORMAL)
         }
       }
@@ -401,9 +388,9 @@ class QpCtrl extends Component {
     }
     when(this.isActive(RNR_TIMEOUT) && !isRnrTimeOut) {
       assert(
-        assertion = stable(io.rqNotifier.clearRnrOrNakSeq.pulse),
+        assertion = stable(io.rqNotifier.clearRetryNakFlush.pulse),
         message =
-          L"${REPORT_TIME} time: rnr timer is not timeout but receive RNR clear signal, rnrTimer.state=${rnrTimer.state}, io.rqNotifier.clearRnrOrNakSeq.pulse=${io.rqNotifier.clearRnrOrNakSeq.pulse}".toSeq,
+          L"${REPORT_TIME} time: rnr timer is not timeout but receive RNR clear signal, rnrTimer.state=${rnrTimer.state}, io.rqNotifier.clearRnrOrNakSeq.pulse=${io.rqNotifier.clearRetryNakFlush.pulse}".toSeq,
         severity = FAILURE
       )
     }
@@ -500,7 +487,7 @@ class QpCtrl extends Component {
   val psnCtrl = new Area {
     // TODO: check increase PSN under normal state?
     // Increase PSN
-    when(mainFsm.isActive(mainFsm.RTR) || mainFsm.isActive(mainFsm.RTS)) {
+    when(rqFsm.isActive(rqFsm.NORMAL)) {
       when(io.psnInc.rq.epsn.inc) {
         qpAttr.epsn := qpAttr.epsn + io.psnInc.rq.epsn.incVal
         // Update RQ previous received request opcode
@@ -510,7 +497,9 @@ class QpCtrl extends Component {
         qpAttr.rqOutPsn := io.psnInc.rq.opsn.psnVal
       }
     }
-    when(mainFsm.isActive(mainFsm.RTS)) {
+//    when(mainFsm.isActive(mainFsm.RTR) || mainFsm.isActive(mainFsm.RTS)) {}
+//    when(mainFsm.isActive(mainFsm.RTS)) {
+    when(sqFsm.isActive(sqFsm.NORMAL)) {
       when(io.psnInc.sq.npsn.inc) {
         qpAttr.npsn := qpAttr.npsn + io.psnInc.sq.npsn.incVal
       }
@@ -535,10 +524,15 @@ class QpCtrl extends Component {
 
   // RQ flush
   io.rxQCtrl.stateErrFlush := isQpStateWrong
-  io.rxQCtrl.nakSeqTrigger := rqFsm.isActive(rqFsm.NAK_SEQ)
-  io.rxQCtrl.rnrFlush := rqFsm.isActive(rqFsm.RNR)
-  io.rxQCtrl.rnrTimeOut := rqFsm.isActive(rqFsm.RNR_TIMEOUT)
-  io.rxQCtrl.flush := io.rxQCtrl.stateErrFlush || io.rxQCtrl.rnrFlush || io.rxQCtrl.nakSeqTrigger
+//  io.rxQCtrl.nakSeqTriggered := rqFsm.isActive(rqFsm.NAK_SEQ_TRIGGERED)
+  io.rxQCtrl.nakSeqFlush := rqFsm.isActive(rqFsm.NAK_SEQ_TRIGGERED) || rqFsm
+    .isActive(rqFsm.NAK_SEQ)
+//  io.rxQCtrl.rnrTriggered := rqFsm.isActive(rqFsm.RNR_TRIGGERED)
+//  io.rxQCtrl.rnrTimeOut := rqFsm.isActive(rqFsm.RNR_TIMEOUT)
+  io.rxQCtrl.rnrFlush := rqFsm.isActive(rqFsm.RNR_TRIGGERED) || rqFsm.isActive(
+    rqFsm.RNR_TIMEOUT
+  ) || rqFsm.isActive(rqFsm.RNR)
+  io.rxQCtrl.isRetryNakNotCleared := io.rxQCtrl.rnrFlush || io.rxQCtrl.nakSeqFlush
 }
 
 class QP(busWidth: BusWidth.Value) extends Component {

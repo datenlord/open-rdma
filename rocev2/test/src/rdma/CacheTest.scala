@@ -301,13 +301,13 @@ class ReadAtomicRstCacheTest extends AnyFunSuite {
       )
     }
 
-    MiscUtils.checkInputOutputQueues(
+    MiscUtils.checkExpectedOutputMatch(
       dut.clockDomain,
       allInputReqQueue,
       allOutputReqQueue,
       MATCH_CNT
     )
-    MiscUtils.checkInputOutputQueues(
+    MiscUtils.checkExpectedOutputMatch(
       dut.clockDomain,
       allExpectedQueryRespQueue,
       allQueryRespQueue,
@@ -391,7 +391,7 @@ class FifoTest extends AnyFunSuite {
         outputQueue.enqueue(dut.io.read.payload.toBigInt)
       }
 
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputQueue,
         outputQueue,
@@ -415,7 +415,7 @@ class FifoTest extends AnyFunSuite {
         outputQueue.enqueue(dut.io.read.payload.toBigInt)
       }
 
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputQueue,
         outputQueue,
@@ -433,6 +433,87 @@ class WorkReqCacheTest extends AnyFunSuite {
   val simCfg = SimConfig.allOptimisation.withWave
     .withConfig(SpinalConfig(anonymSignalPrefix = "tmp"))
     .compile(new WorkReqCache(depth))
+
+  def testPushPopFunc(): Unit = simCfg.doSim { dut =>
+    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
+
+    dut.io.qpAttr.maxPendingWorkReqNum #= depth
+    dut.io.qpAttr.maxDstPendingWorkReqNum #= depth
+    dut.io.qpAttr.maxPendingReadAtomicWorkReqNum #= depth
+    dut.io.qpAttr.maxDstPendingReadAtomicWorkReqNum #= depth
+    dut.io.txQCtrl.retry #= false
+    dut.io.txQCtrl.wrongStateFlush #= false
+
+    dut.io.retryWorkReq.ready #= false
+    dut.io.retryScanCtrlBus.startPulse #= false
+
+    val inputWorkReqQueue = mutable.Queue[
+      (
+          PhysicalAddr,
+          PsnStart,
+          PktNum,
+          PktLen,
+          SpinalEnumElement[WorkReqOpCode.type],
+          VirtualAddr,
+          LRKey
+      )
+    ]()
+    val outputWorkReqQueue = mutable.Queue[
+      (
+          PhysicalAddr,
+          PsnStart,
+          PktNum,
+          PktLen,
+          SpinalEnumElement[WorkReqOpCode.type],
+          VirtualAddr,
+          LRKey
+      )
+    ]()
+
+    streamMasterDriver(dut.io.push, dut.clockDomain) {
+      dut.io.push.workReq.opcode #= WorkReqSim.randomSendWriteReadAtomicOpCode()
+    }
+    onStreamFire(dut.io.push, dut.clockDomain) {
+      inputWorkReqQueue.enqueue(
+        (
+          dut.io.push.pa.toBigInt,
+          dut.io.push.psnStart.toInt,
+          dut.io.push.pktNum.toInt,
+          dut.io.push.workReq.lenBytes.toLong,
+          dut.io.push.workReq.opcode.toEnum,
+          dut.io.push.workReq.raddr.toBigInt,
+          dut.io.push.workReq.rkey.toLong
+        )
+      )
+    }
+    streamSlaveRandomizer(dut.io.pop, dut.clockDomain)
+    onStreamFire(dut.io.pop, dut.clockDomain) {
+      outputWorkReqQueue.enqueue(
+        (
+          dut.io.pop.pa.toBigInt,
+          dut.io.pop.psnStart.toInt,
+          dut.io.pop.pktNum.toInt,
+          dut.io.pop.workReq.lenBytes.toLong,
+          dut.io.pop.workReq.opcode.toEnum,
+          dut.io.pop.workReq.raddr.toBigInt,
+          dut.io.pop.workReq.rkey.toLong
+        )
+      )
+    }
+
+    MiscUtils.checkConditionAlwaysHold(dut.clockDomain)(
+      cond = !dut.io.retryWorkReq.valid.toBoolean,
+      clue =
+        f"${simTime()} time: dut.io.retryWorkReq.valid=${dut.io.retryWorkReq.valid.toBoolean} should be false when push and pop only"
+    )
+
+    MiscUtils.checkExpectedOutputMatch(
+      dut.clockDomain,
+      inputWorkReqQueue,
+      outputWorkReqQueue,
+      MATCH_CNT
+    )
+  }
 
   def testRetryScan(retryReason: SpinalEnumElement[RetryReason.type]): Unit =
     simCfg.doSim { dut =>
@@ -513,7 +594,7 @@ class WorkReqCacheTest extends AnyFunSuite {
       ]()
 
       fork {
-//        dut.io.push.valid #= false
+        //        dut.io.push.valid #= false
         dut.io.pop.ready #= false
         dut.io.retryScanCtrlBus.startPulse #= false
         dut.io.retryScanCtrlBus.retryReason #= retryReason
@@ -554,17 +635,17 @@ class WorkReqCacheTest extends AnyFunSuite {
             dut.io.txQCtrl.retry #= false
             dut.clockDomain.waitSampling()
           }
-//          println(
-//            f"${simTime()} time: retry done=${dut.io.retryScanCtrlBus.donePulse.toBoolean}"
-//          )
+          //          println(
+          //            f"${simTime()} time: retry done=${dut.io.retryScanCtrlBus.donePulse.toBoolean}"
+          //          )
 
           // Clear WorkReqCache
           dut.io.pop.ready #= true
           dut.clockDomain.waitSamplingWhere(dut.io.empty.toBoolean)
           dut.io.pop.ready #= false
-//          println(
-//            f"${simTime()} time: pop from WR cache until empty=${dut.io.empty.toBoolean}"
-//          )
+          //          println(
+          //            f"${simTime()} time: pop from WR cache until empty=${dut.io.empty.toBoolean}"
+          //          )
         }
       }
 
@@ -609,9 +690,9 @@ class WorkReqCacheTest extends AnyFunSuite {
         }
       )
       onStreamFire(dut.io.push, dut.clockDomain) {
-//        println(
-//          f"${simTime()} time, dut.io.push.workReq.id=${dut.io.push.workReq.id.toBigInt}%X"
-//        )
+        //        println(
+        //          f"${simTime()} time, dut.io.push.workReq.id=${dut.io.push.workReq.id.toBigInt}%X"
+        //        )
         allPushReqQueue.enqueue(
           (
             dut.io.push.workReq.id.toBigInt,
@@ -667,7 +748,7 @@ class WorkReqCacheTest extends AnyFunSuite {
         val workReqOpCode =
           dut.io.retryWorkReq.scanOutData.workReq.opcode.toEnum
         if (rnrCnt >= retryTimes || retryCnt >= retryTimes) {
-//          println(f"${simTime()} time, dut.io.retryWorkReq.scanOutData.psnStart=${psnStart}%X, workReqOpCode=${workReqOpCode}, rnrCnt=${rnrCnt}, retryCnt=${retryCnt}")
+          //          println(f"${simTime()} time, dut.io.retryWorkReq.scanOutData.psnStart=${psnStart}%X, workReqOpCode=${workReqOpCode}, rnrCnt=${rnrCnt}, retryCnt=${retryCnt}")
           retryOutQueue.enqueue(
             (
               dut.io.retryWorkReq.scanOutData.workReq.id.toBigInt,
@@ -685,94 +766,19 @@ class WorkReqCacheTest extends AnyFunSuite {
         }
       }
 
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         expectedRetryQueue,
         retryOutQueue,
         MATCH_CNT
       )
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         allPushReqQueue,
         allPopRespQueue,
         MATCH_CNT
       )
     }
-
-  def testPushPopFunc(): Unit = simCfg.doSim { dut =>
-    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
-
-    dut.io.qpAttr.maxPendingWorkReqNum #= depth
-    dut.io.qpAttr.maxDstPendingWorkReqNum #= depth
-    dut.io.qpAttr.maxPendingReadAtomicWorkReqNum #= depth
-    dut.io.qpAttr.maxDstPendingReadAtomicWorkReqNum #= depth
-    dut.io.txQCtrl.retry #= false
-    dut.io.txQCtrl.wrongStateFlush #= false
-
-    dut.io.retryWorkReq.ready #= false
-    dut.io.retryScanCtrlBus.startPulse #= false
-
-    val inputWorkReqQueue = mutable.Queue[
-      (
-          PhysicalAddr,
-          PsnStart,
-          PktNum,
-          PktLen,
-          SpinalEnumElement[WorkReqOpCode.type],
-          VirtualAddr,
-          LRKey
-      )
-    ]()
-    val outputWorkReqQueue = mutable.Queue[
-      (
-          PhysicalAddr,
-          PsnStart,
-          PktNum,
-          PktLen,
-          SpinalEnumElement[WorkReqOpCode.type],
-          VirtualAddr,
-          LRKey
-      )
-    ]()
-
-    streamMasterDriver(dut.io.push, dut.clockDomain) {
-      dut.io.push.workReq.opcode #= WorkReqSim.randomSendWriteReadAtomicOpCode()
-    }
-    onStreamFire(dut.io.push, dut.clockDomain) {
-      inputWorkReqQueue.enqueue(
-        (
-          dut.io.push.pa.toBigInt,
-          dut.io.push.psnStart.toInt,
-          dut.io.push.pktNum.toInt,
-          dut.io.push.workReq.lenBytes.toLong,
-          dut.io.push.workReq.opcode.toEnum,
-          dut.io.push.workReq.raddr.toBigInt,
-          dut.io.push.workReq.rkey.toLong
-        )
-      )
-    }
-    streamSlaveRandomizer(dut.io.pop, dut.clockDomain)
-    onStreamFire(dut.io.pop, dut.clockDomain) {
-      outputWorkReqQueue.enqueue(
-        (
-          dut.io.pop.pa.toBigInt,
-          dut.io.pop.psnStart.toInt,
-          dut.io.pop.pktNum.toInt,
-          dut.io.pop.workReq.lenBytes.toLong,
-          dut.io.pop.workReq.opcode.toEnum,
-          dut.io.pop.workReq.raddr.toBigInt,
-          dut.io.pop.workReq.rkey.toLong
-        )
-      )
-    }
-
-    MiscUtils.checkInputOutputQueues(
-      dut.clockDomain,
-      inputWorkReqQueue,
-      outputWorkReqQueue,
-      MATCH_CNT
-    )
-  }
 
   test("WorkReqCache normal case") {
     testPushPopFunc()
@@ -1114,13 +1120,13 @@ class PdAddrCacheTest extends AnyFunSuite {
         )
       }
 
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         expectedAllQueryRespQueue,
         allQueryRespQueue,
         MATCH_CNT
       )
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         allCreateOrDeleteReqQueue,
         allCreateOrDeleteRespQueue,
