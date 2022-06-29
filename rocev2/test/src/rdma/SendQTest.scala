@@ -178,13 +178,13 @@ class WorkReqValidatorTest extends AnyFunSuite {
         }
       }
 
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         input4WorkReqCacheQueue,
         outputWorkReqCacheQueue,
         MATCH_CNT
       )
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputPktNumQueue,
         outputPktNumQueue,
@@ -252,7 +252,7 @@ class WorkReqValidatorTest extends AnyFunSuite {
         clue =
           f"${simTime()} time: dut.io.workCompErr.valid=${dut.io.workCompErr.valid.toBoolean} should be true always when normalOrErrorCase=${normalOrErrorCase}, addrCacheQueryErrOrFlushErr=${addrCacheQueryErrOrFlushErr}"
       )
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputWorkCompErrQueue,
         outputWorkCompErrQueue,
@@ -481,33 +481,33 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
         f"${simTime()} time: dut.io.workReqCachePush.valid=${dut.io.workReqCachePush.valid.toBoolean} should be false when isRetryWorkReq=${isRetryWorkReq}"
     )
 
-    MiscUtils.checkInputOutputQueues(
+    MiscUtils.checkExpectedOutputMatch(
       dut.clockDomain,
       input4SqOutPsnRangeQueue,
       outputSqOutPsnRangeQueue,
       MATCH_CNT
     )
     if (!isRetryWorkReq) {
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputWorkReq4CachePushQueue,
         outputWorkReqCachePushQueue,
         MATCH_CNT
       )
     }
-    MiscUtils.checkInputOutputQueues(
+    MiscUtils.checkExpectedOutputMatch(
       dut.clockDomain,
       inputSendWriteWorkReqOutQueue,
       outputSendWriteWorkReqOutQueue,
       MATCH_CNT
     )
-    MiscUtils.checkInputOutputQueues(
+    MiscUtils.checkExpectedOutputMatch(
       dut.clockDomain,
       inputReadWorkReqOutQueue,
       outputReadWorkReqOutQueue,
       MATCH_CNT
     )
-    MiscUtils.checkInputOutputQueues(
+    MiscUtils.checkExpectedOutputMatch(
       dut.clockDomain,
       inputAtomicWorkReqOutQueue,
       outputAtomicWorkReqOutQueue,
@@ -710,7 +710,7 @@ class SqDmaReadRespHandlerTest extends AnyFunSuite {
           f"${simTime()} time: dut.io.cachedWorkReqAndDmaReadResp.valid=${dut.io.cachedWorkReqAndDmaReadResp.valid.toBoolean} should be true always"
       )
 
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         expectedOutputQueue,
         outputQueue,
@@ -741,7 +741,7 @@ class SqOutTest extends AnyFunSuite {
         (SpinalEnumElement[WorkReqOpCode.type], PsnStart, PsnEnd)
       ],
       inputOutPsnQueue: mutable.Queue[PSN]
-  ) =
+  ): Unit =
     for (_ <- 0 until MAX_PENDING_REQ_NUM) {
       val _ = payloadFragNumItr.next()
       val pktNum = pktNumItr.next()
@@ -966,6 +966,8 @@ class SqOutTest extends AnyFunSuite {
             val (psnEnd, opcode, isLastFrag) = payloadData
             sendWriteReq.bth.psn #= psnEnd
             sendWriteReq.bth.opcodeFull #= opcode.id
+            sendWriteReq.bth.padCnt #= 0
+            sendWriteReq.bth.ackreq #= opcode.isLastOrOnlyReqPkt()
             sendWriteReq.last #= isLastFrag
 
             val reqValid = true
@@ -998,6 +1000,8 @@ class SqOutTest extends AnyFunSuite {
             val (psnEnd, opcode) = payloadData
             readReq.bth.psn #= psnEnd
             readReq.bth.opcodeFull #= opcode.id
+            readReq.bth.padCnt #= 0
+            readReq.bth.ackreq #= false
 
             val reqValid = true
             reqValid
@@ -1030,6 +1034,8 @@ class SqOutTest extends AnyFunSuite {
             val (psnEnd, opcode) = payloadData
             atomicReq.bth.psn #= psnEnd
             atomicReq.bth.opcodeFull #= opcode.id
+            atomicReq.bth.padCnt #= 0
+            atomicReq.bth.ackreq #= false
 
             val reqValid = true
             reqValid
@@ -1108,7 +1114,7 @@ class SqOutTest extends AnyFunSuite {
           }
         }
       }
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputOutPsnQueue,
         outputOutPsnQueue,
@@ -1117,25 +1123,25 @@ class SqOutTest extends AnyFunSuite {
 //      MiscUtils.checkConditionAlways(dut.clockDomain)(
 //        dut.io.outPsnRangeFifoPush.valid.toBoolean
 //      )
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputReadReqQueue,
         outputReadWorkReqOutQueue,
         MATCH_CNT
       )
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputAtomicReqQueue,
         outputAtomicWorkReqOutQueue,
         MATCH_CNT
       )
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputSendReqQueue,
         outputSendReqQueue,
         MATCH_CNT
       )
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputWriteReqQueue,
         outputWriteReqQueue,

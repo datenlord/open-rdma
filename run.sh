@@ -37,6 +37,30 @@ fi
 
 #$MILL rocev2.test.testSim rdma.SetSuite
 
+# Cache Test
+$MILL rocev2.test.testSim rdma.FifoTest
+$MILL rocev2.test.testSim rdma.PdAddrCacheTest
+$MILL rocev2.test.testSim rdma.ReadAtomicRstCacheTest
+$MILL rocev2.test.testSim rdma.WorkReqCacheTest
+
+# SQ Test
+$MILL rocev2.test.testSim rdma.SendReqGeneratorTest
+$MILL rocev2.test.testSim rdma.WriteReqGeneratorTest
+$MILL rocev2.test.testSim rdma.WorkReqValidatorTest
+$MILL rocev2.test.testSim rdma.WorkReqCacheAndOutPsnRangeHandlerTest
+$MILL rocev2.test.testSim rdma.SqOutTest # Slow test
+$MILL rocev2.test.testSim rdma.SqDmaReadRespHandlerTest
+
+# Retry Handler Test
+$MILL rocev2.test.testSim rdma.RetryHandlerTest
+
+# Response Handler Test
+$MILL rocev2.test.testSim rdma.CoalesceAndNormalAndRetryNakHandlerTest
+$MILL rocev2.test.testSim rdma.ReadRespLenCheckTest
+$MILL rocev2.test.testSim rdma.ReadAtomicRespVerifierAndFatalNakNotifierTest
+$MILL rocev2.test.testSim rdma.ReadAtomicRespDmaReqInitiatorTest
+$MILL rocev2.test.testSim rdma.WorkCompGenTest
+
 # RQ Test
 $MILL rocev2.test.testSim rdma.ReqCommCheckTest
 $MILL rocev2.test.testSim rdma.ReqRnrCheckTest
@@ -58,29 +82,5 @@ $MILL rocev2.test.testSim rdma.RqSendWriteWorkCompGeneratorTest
 # E2E test
 $MILL rocev2.test.testSim rdma.RecvQTest
 
-# Cache Test
-$MILL rocev2.test.testSim rdma.FifoTest
-$MILL rocev2.test.testSim rdma.PdAddrCacheTest
-$MILL rocev2.test.testSim rdma.ReadAtomicRstCacheTest
-$MILL rocev2.test.testSim rdma.WorkReqCacheTest
-
 # QpCtrl Test
 $MILL rocev2.test.testSim rdma.QpCtrlTest
-
-# SQ Test
-$MILL rocev2.test.testSim rdma.SendReqGeneratorTest
-$MILL rocev2.test.testSim rdma.WriteReqGeneratorTest
-$MILL rocev2.test.testSim rdma.WorkReqValidatorTest
-$MILL rocev2.test.testSim rdma.WorkReqCacheAndOutPsnRangeHandlerTest
-$MILL rocev2.test.testSim rdma.SqOutTest # Slow test
-$MILL rocev2.test.testSim rdma.SqDmaReadRespHandlerTest
-
-# Retry Handler Test
-$MILL rocev2.test.testSim rdma.RetryHandlerTest
-
-# Response Handler Test
-$MILL rocev2.test.testSim rdma.CoalesceAndNormalAndRetryNakHandlerTest
-$MILL rocev2.test.testSim rdma.ReadRespLenCheckTest
-$MILL rocev2.test.testSim rdma.ReadAtomicRespVerifierAndFatalNakNotifierTest
-$MILL rocev2.test.testSim rdma.ReadAtomicRespDmaReqInitiatorTest
-$MILL rocev2.test.testSim rdma.WorkCompGenTest

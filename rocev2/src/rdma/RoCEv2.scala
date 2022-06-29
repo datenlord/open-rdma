@@ -58,7 +58,7 @@ class AllQpCtrl(numMaxQPs: Int) extends Component {
   }
 
   // QP0 and QP1 are reserved QPN
-  val nextQpnReg = RegInit(U(2, QPN_WIDTH bits))
+  val nextQpnReg = RegInit(U(2, QPN_WIDTH bits)) // CSR
 
   val qpVecAvailable = io.qpAttrVec.map(_.isValid === False)
   val availableQpOH = OHMasking.first(qpVecAvailable)
@@ -190,7 +190,7 @@ class AllAddrCache(numMaxPDs: Int, numMaxMRsPerPD: Int) extends Component {
 
   val pdCreateOrDelete = new Area {
     val pdVec = Vec(pdIdxVec.map(_ => {
-      val pdValidReg = RegInit(False)
+      val pdValidReg = RegInit(False) // CSR
       pdValidReg
     }))
 

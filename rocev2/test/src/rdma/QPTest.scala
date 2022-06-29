@@ -347,7 +347,7 @@ class QPTest extends AnyFunSuite {
       }
     }
 
-    MiscUtils.checkInputOutputQueues(
+    MiscUtils.checkExpectedOutputMatch(
       dut.clockDomain,
       expectedAckQueue,
       outputAckQueue,
@@ -383,11 +383,12 @@ class QpCtrlTest extends AnyFunSuite {
 
     dut.io.rqNotifier.nak.rnr.pulse #= false
     dut.io.rqNotifier.nak.seqErr.pulse #= false
-    dut.io.rqNotifier.nak.invReq #= false
-    dut.io.rqNotifier.nak.rmtAcc #= false
-    dut.io.rqNotifier.nak.rmtOp #= false
+    dut.io.rqNotifier.nak.fatal.invReq #= false
+    dut.io.rqNotifier.nak.fatal.rmtAcc #= false
+    dut.io.rqNotifier.nak.fatal.rmtOp #= false
 
-    dut.io.rqNotifier.clearRnrOrNakSeq.pulse #= false
+    dut.io.rqNotifier.clearRetryNakFlush.pulse #= false
+    dut.io.rqNotifier.retryNakHasSent.pulse #= false
 
     dut.io.sqNotifier.err.pulse #= false
 
@@ -454,11 +455,23 @@ class QpCtrlTest extends AnyFunSuite {
         (
           dut.mainFsm.enumOf(dut.mainFsm.RTR),
           dut.sqFsm.enumOf(dut.sqFsm.WAITING),
+          dut.rqFsm.enumOf(dut.rqFsm.NAK_SEQ_TRIGGERED)
+        ), // RTR state NAK_SEQ_TRIGGERED internal state
+        () => {
+          clearStateChangeConditions(dut)
+          dut.io.rqNotifier.nak.seqErr.pulse #= true
+        }
+      ),
+      (
+        QpAttrMaskEnum.QP_STATE,
+        (
+          dut.mainFsm.enumOf(dut.mainFsm.RTR),
+          dut.sqFsm.enumOf(dut.sqFsm.WAITING),
           dut.rqFsm.enumOf(dut.rqFsm.NAK_SEQ)
         ), // RTR state NAK_SEQ internal state
         () => {
           clearStateChangeConditions(dut)
-          dut.io.rqNotifier.nak.seqErr.pulse #= true
+          dut.io.rqNotifier.retryNakHasSent.pulse #= true
         }
       ),
       (
@@ -470,7 +483,19 @@ class QpCtrlTest extends AnyFunSuite {
         ), // RTR state NORMAL internal state
         () => {
           clearStateChangeConditions(dut)
-          dut.io.rqNotifier.clearRnrOrNakSeq.pulse #= true
+          dut.io.rqNotifier.clearRetryNakFlush.pulse #= true
+        }
+      ),
+      (
+        QpAttrMaskEnum.QP_STATE,
+        (
+          dut.mainFsm.enumOf(dut.mainFsm.RTR),
+          dut.sqFsm.enumOf(dut.sqFsm.WAITING),
+          dut.rqFsm.enumOf(dut.rqFsm.RNR_TRIGGERED)
+        ), // RTR state RNR_TRIGGERED internal state
+        () => {
+          clearStateChangeConditions(dut)
+          dut.io.rqNotifier.nak.rnr.pulse #= true
         }
       ),
       (
@@ -485,7 +510,7 @@ class QpCtrlTest extends AnyFunSuite {
           MIN_RNR_TIMEOUT * 10 shouldBe SIM_CYCLE_TIME withClue
             f"${simTime()} time: MIN_RNR_TIMEOUT=${MIN_RNR_TIMEOUT}, which means RNR timeout is 10ns, should == SIM_CYCLE_TIME=${SIM_CYCLE_TIME}ns"
 
-          dut.io.rqNotifier.nak.rnr.pulse #= true
+          dut.io.rqNotifier.retryNakHasSent.pulse #= true
           dut.io.qpAttr.receivedRnrTimeOut #= MIN_RNR_TIMEOUT
         }
       ),
@@ -509,7 +534,7 @@ class QpCtrlTest extends AnyFunSuite {
         ), // RTR state NORMAL state
         () => {
           clearStateChangeConditions(dut)
-          dut.io.rqNotifier.clearRnrOrNakSeq.pulse #= true
+          dut.io.rqNotifier.clearRetryNakFlush.pulse #= true
         }
       ),
       (
@@ -610,7 +635,7 @@ class QpCtrlTest extends AnyFunSuite {
           clearStateChangeConditions(dut)
 //          dut.io.sqNotifier.err.pulse #= true
 //          dut.io.sqNotifier.err.errType #= SqErrType.INV_REQ
-          dut.io.rqNotifier.nak.invReq #= true
+          dut.io.rqNotifier.nak.fatal.invReq #= true
         }
       ),
       (
@@ -717,7 +742,7 @@ class QpCtrlTest extends AnyFunSuite {
       outputQueue.enqueue((mainFsmState, sqFsmState, rqFsmState))
     }
 
-    MiscUtils.checkInputOutputQueues(
+    MiscUtils.checkExpectedOutputMatch(
       dut.clockDomain,
       inputQueue,
       outputQueue,

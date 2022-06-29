@@ -443,4 +443,5 @@ class SqOut(busWidth: BusWidth.Value) extends Component {
   io.tx.pktFrag <-/< normalReqOut.throwWhen(
     io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush
   )
+  checkBthStable(normalReqOut.bth, normalReqOut.isFirst, normalReqOut.valid)
 }

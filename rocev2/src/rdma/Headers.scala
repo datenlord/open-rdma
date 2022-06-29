@@ -18,7 +18,7 @@ sealed abstract class RdmaHeader extends Bundle {
 case class BTH() extends RdmaHeader {
   val opcodeFull = Bits(TRANSPORT_WIDTH + OPCODE_WIDTH bits)
   val solicited = Bool()
-  val migreq = Bool()
+  val migReq = Bool()
   val padCnt = UInt(PAD_COUNT_WIDTH bits)
   val version = Bits(VERSION_WIDTH bits)
   val pkey = Bits(PKEY_WIDTH bits)
@@ -34,7 +34,7 @@ case class BTH() extends RdmaHeader {
   def opcode = opcodeFull(0, OPCODE_WIDTH bits)
 
   override def asBigEndianBits(): Bits = {
-    opcodeFull ## solicited ## migreq ## padCnt ## version ## pkey ## fecn ## becn ## resv6 ## dqpn ## ackreq ## resv7 ## psn
+    opcodeFull ## solicited ## migReq ## padCnt ## version ## pkey ## fecn ## becn ## resv6 ## dqpn ## ackreq ## resv7 ## psn
   }
 
   def set(opcode: Bits, dqpn: UInt, psn: UInt): this.type = {
@@ -62,7 +62,7 @@ case class BTH() extends RdmaHeader {
     transport := Transports.RC.id
     this.opcode := opcode
     solicited := False
-    migreq := False
+    migReq := False
     this.padCnt := padCnt
     version := 0
     pkey := 0xffff // Default PKEY
@@ -81,7 +81,7 @@ case class BTH() extends RdmaHeader {
     transport := Transports.RC.id
     opcode := 0
     solicited := False
-    migreq := False
+    migReq := False
     padCnt := 0
     version := 0
     pkey := 0xffff // Default PKEY
@@ -231,7 +231,7 @@ case class AETH() extends RdmaHeader {
       val result = code === AethCode.NAK.id && value === NakCode.SEQ.id
     }.result
 
-  def isErrAck(): Bool =
+  def isFatalNak(): Bool =
     new Composite(this, "AETH_isErrAck") {
       val result = code === AethCode.NAK.id && value =/= NakCode.SEQ.id &&
         !NakCode.isReserved(value)

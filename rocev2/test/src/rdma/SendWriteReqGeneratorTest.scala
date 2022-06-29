@@ -53,7 +53,7 @@ abstract class SendWriteReqGeneratorTest[T <: SendWriteReqGenerator]
         outputPsnQueue.enqueue(dut.io.txReq.pktFrag.bth.psn.toInt)
       }
 
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputPsnQueue,
         outputPsnQueue,

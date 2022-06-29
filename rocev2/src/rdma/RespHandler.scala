@@ -115,7 +115,7 @@ class RespVerifier(busWidth: BusWidth.Value) extends Component {
     // The previous read response packet opcode, used to check the read response opcode sequence
     val preReadRespPktOpCodeReg = RegInit(
       B(OpCode.RDMA_READ_RESPONSE_ONLY.id, OPCODE_WIDTH bits)
-    )
+    ) // CSR
     // CSR needs to reset when QP in error state
     when(io.txQCtrl.wrongStateFlush || io.txQCtrl.errorFlush) {
       preReadRespPktOpCodeReg := OpCode.RDMA_READ_RESPONSE_ONLY.id
@@ -214,7 +214,7 @@ class CoalesceAndNormalAndRetryNakHandler(busWidth: BusWidth.Value)
 
   val isNormalAck = io.rx.aeth.isNormalAck()
   val isRetryNak = io.rx.aeth.isRetryNak()
-  val isErrAck = io.rx.aeth.isErrAck()
+  val isErrAck = io.rx.aeth.isFatalNak()
 
   val isDupAck = PsnUtil.lt(
     inputRespPktFrag.bth.psn,
@@ -260,7 +260,7 @@ class CoalesceAndNormalAndRetryNakHandler(busWidth: BusWidth.Value)
       io.rx.throwWhen(io.txQCtrl.wrongStateFlush || io.txQCtrl.retryFlush),
     // Coalesce ACK pending WR, or errorFlush
     leftFireCond = fireCachedWorkReqOnly,
-    // Discard duplicated ACK or ghost ACK if no pending WR
+    // Discard duplicate ACK or ghost ACK if no pending WR
     rightFireCond = fireAckOnly,
     bothFireCond = fireBothCachedWorkReqAndAck
   )
@@ -376,7 +376,7 @@ class ReadRespLenCheck(busWidth: BusWidth.Value) extends Component {
       result
     }
 
-  val pmtuLenBytes = pmtuPktLenBytes(io.qpAttr.pmtu)
+  val pmtuLenBytes = getPmtuPktLenBytes(io.qpAttr.pmtu)
 
   val totalLenFlow = ReqRespTotalLenCalculator(
     flush = io.txQCtrl.wrongStateFlush,
@@ -760,7 +760,7 @@ class WorkCompGen extends Component {
   // TODO: only explicit ACK generate WC
   io.workCompPush <-/< joinWithDmaResp.joinStream.map { payloadData =>
     val isExplicitAck = payloadData._1.ackValid
-    val isErrAck = payloadData._1.ack.aeth.isErrAck()
+    val isErrAck = payloadData._1.ack.aeth.isFatalNak()
     val result = cloneOf(io.workCompPush.payloadType)
     when(isExplicitAck && isErrAck) {
       // Handle fatal NAK

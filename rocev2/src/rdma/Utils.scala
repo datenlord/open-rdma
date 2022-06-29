@@ -229,7 +229,7 @@ class DmaReadRespSegment[T <: Data](
     val reqAndDmaReadRespOut = master(Stream(Fragment(fragType)))
   }
 
-  val pmtuMaxFragNum = pmtuPktLenBytes(io.pmtu) >>
+  val pmtuMaxFragNum = getPmtuPktLenBytes(io.pmtu) >>
     log2Up(busWidth.id / BYTE_WIDTH)
   val isEmptyReadReq = isReqZeroDmaLen(io.reqAndDmaReadRespIn.fragment)
 
@@ -336,7 +336,7 @@ class CombineHeaderAndDmaResponse[T <: Data](
     }
   val addHeaderStream = StreamAddHeader(
     input
-      .throwWhen(io.flush)
+//      .throwWhen(io.flush)
       .map { payloadData =>
         val result = Fragment(DataAndMty(busWidth))
         result.data := payloadData.dmaReadResp.data
@@ -345,6 +345,7 @@ class CombineHeaderAndDmaResponse[T <: Data](
         result
       },
     headerStream,
+    io.flush,
     busWidth
   )
   io.tx.pktFrag << addHeaderStream.map { payloadData =>
@@ -503,6 +504,7 @@ class StreamDropHeader[T <: Data](dataType: HardType[T]) extends Component {
     val outputStream = master(Stream(Fragment(dataType())))
   }
 
+  // Data register, no need to reset or flush
   val headerFragNumReg =
     RegNextWhen(io.headerFragNum, cond = io.inputStream.firstFire)
   val headerFragCnt = Counter(bitCount = MAX_PKT_NUM_WIDTH bits)
@@ -588,6 +590,7 @@ object StreamAddHeader {
   def apply[T <: Data](
       inputStream: Stream[Fragment[DataAndMty]],
       inputHeader: Stream[HeaderDataAndMty[T]],
+      flush: Bool,
       busWidth: BusWidth.Value
   ): Stream[Fragment[HeaderDataAndMty[T]]] = {
     require(
@@ -596,6 +599,7 @@ object StreamAddHeader {
     )
     val result =
       new StreamAddHeader(inputHeader.headerType, busWidth)
+    result.io.flush := flush
     result.io.inputStream << inputStream
     result.io.inputHeader << inputHeader
     result.io.outputStream.combStage()
@@ -607,6 +611,7 @@ class StreamAddHeader[T <: Data](
     busWidth: BusWidth.Value
 ) extends Component {
   val io = new Bundle {
+    val flush = in(Bool())
     val inputStream = slave(Stream(Fragment(DataAndMty(busWidth))))
     val inputHeader = slave(Stream(HeaderDataAndMty(headerType, busWidth)))
     val outputStream = master(
@@ -614,7 +619,10 @@ class StreamAddHeader[T <: Data](
     )
   }
 
-  val joinStream = FragmentStreamJoinStream(io.inputStream, io.inputHeader)
+  val joinStream = FragmentStreamJoinStream(
+    io.inputStream.throwWhen(io.flush),
+    io.inputHeader.throwWhen(io.flush)
+  )
 
   val inputValid = joinStream.valid
   val inputData = joinStream._1.data
@@ -676,6 +684,7 @@ class StreamAddHeader[T <: Data](
     }
   }
 
+  // Data register, no need to reset or flush
   val cachedJoinStreamReg =
     RegNextWhen(joinStream.payload, cond = joinStream.fire)
   val rstCacheData = cachedJoinStreamReg._1.data
@@ -762,8 +771,8 @@ class StreamAddHeader[T <: Data](
     result
   }
 
-  // needHandleLastFragResidueReg is CSR.
-  val needHandleLastFragResidueReg = RegInit(False)
+  // CSR.
+  val needHandleLastFragResidueReg = RegInit(False) clearWhen (io.flush)
   val extraLastFragStream = cloneOf(io.outputStream)
   extraLastFragStream.valid := needHandleLastFragResidueReg
   extraLastFragStream.header := cachedHeader
@@ -901,7 +910,7 @@ object StreamConditionalJoin {
       joinCond: Bool
   ): Stream[TupleBundle2[T1, T2]] = {
     val emptyStream =
-      StreamSource().translateWith(inputB.payloadType().assignDontCare())
+      StreamSource().translateWith(inputB.payload)
     val streamToJoin = StreamMux(joinCond.asUInt, Vec(emptyStream, inputB))
     when(joinCond) {
       assert(
@@ -1123,20 +1132,7 @@ object FragmentStreamForkQueryJoinResp {
       queryStream <-/< input4QueryStream
         .takeWhen(expectResp(input4QueryStream))
         .translateWith(buildQuery(input4QueryStream))
-      /*
-      val inputFragQueue =
-        StreamFifoLowLatency(inputFragStream.payloadType(), waitQueueDepth)
-//    inputFragQueue.setName("inputFragQueue", weak = true)
-      inputFragQueue.io.push << input4Queue
-      assert(
-        assertion = inputFragQueue.io.push.ready,
-        message =
-          L"${REPORT_TIME} time: inputFragQueue is full, inputFragQueue.io.push.ready=${inputFragQueue.io.push.ready}, inputFragQueue.io.occupancy=${inputFragQueue.io.occupancy}, which is not allowed in FragmentStreamForkQueryJoinResp".toSeq,
-        severity = FAILURE
-      )
-//    inputFragQueue.io.flush :=
-      val inputFragQueuePop = inputFragQueue.io.pop.combStage()
-       */
+
       val inputFragQueuePop = FixedLenQueue(
         inputFragStream.payloadType(),
         depth = waitQueueDepth,
@@ -1144,9 +1140,7 @@ object FragmentStreamForkQueryJoinResp {
         flush = False, // TODO: enable queue flush
         queueName = "inputFragQueue"
       )
-      val emptyStream = StreamSource().translateWith(
-        cloneOf(respStream.payloadType).assignDontCare()
-      )
+      val emptyStream = StreamSource().translateWith(respStream.payload)
       // When not expect query response, join with StreamSource()
       val selectedStreamValid = expectResp(inputFragQueuePop)
       val selectedStream = StreamMux(
@@ -1172,14 +1166,13 @@ object FragmentStreamForkQueryJoinResp {
               respStream.payloadType
             )
           )
-          result._1 := joinStream._1
-          result._2 := joinStream._2._1
-          result._3 := joinStream._2._2
+          result._1 := joinStream._1 // inputFragStream.fragment
+          result._2 := joinStream._2._1 // selectedStreamValid
+          result._3 := joinStream._2._2 // selectedStream.payload
           result.last := joinStream.last
           result
         }
-        .combStage()
-    }.resultStream
+    }.resultStream.combStage()
 }
 
 /** Build an arbiter tree to arbitrate on many inputs.
@@ -1504,7 +1497,7 @@ object StreamCounterSource {
     val cntWidth = log2Up(stateCount)
     val stream = Stream(UInt(cntWidth bits))
     val counter = Counter(stateCount = stateCount, inc = stream.fire)
-    val running = RegInit(False)
+    val running = RegInit(False) clearWhen (flush) // CSR
     when(startPulse && !flush) {
       running := True
       counter.valueNext := startValue
@@ -1530,8 +1523,9 @@ object StreamExtractCompany {
   ): Stream[TupleBundle2[Tpay, Tcomp]] =
     new Composite(inputStream, "StreamExtractCompany") {
       val companyFlow = companyExtractFunc(inputStream)
-      // Data register, no need to reset
-      val companyReg = Reg(companyFlow.payloadType)
+      // Data register, no need to reset or flush
+      val companyReg =
+        RegNextWhen(companyFlow.payload, cond = companyFlow.valid)
 
       val outputStream = inputStream.translateWith {
         val result =
@@ -1539,7 +1533,7 @@ object StreamExtractCompany {
         result._1 := inputStream.payload
         when(companyFlow.valid) {
           result._2 := companyFlow.payload
-          companyReg := companyFlow.payload
+//          companyReg := companyFlow.payload
         } otherwise {
           result._2 := companyReg
         }
@@ -1555,8 +1549,9 @@ object FlowExtractCompany {
   ): Flow[TupleBundle2[Tpay, Tcomp]] =
     new Composite(inputFlow, "FlowExtractCompany") {
       val companyFlow = companyExtractFunc(inputFlow)
-      // Data register, no need to reset
-      val companyReg = Reg(companyFlow.payloadType)
+      // Data register, no need to reset or flush
+      val companyReg =
+        RegNextWhen(companyFlow.payload, cond = companyFlow.valid)
 
       val outputFlow = inputFlow.translateWith {
         val result =
@@ -1564,7 +1559,7 @@ object FlowExtractCompany {
         result._1 := inputFlow.payload
         when(companyFlow.valid) {
           result._2 := companyFlow.payload
-          companyReg := companyFlow.payload
+//          companyReg := companyFlow.payload
         } otherwise {
           result._2 := companyReg
         }
@@ -1678,6 +1673,44 @@ object mergeRdmaHeaderMty {
   }.result
 }
 
+object checkBthStable {
+  def apply(bth: BTH, isFirstFrag: Bool, inputValid: Bool) =
+    new Composite(bth, "checkBthStable") {
+      // Data register, no need to reset or flush
+      val firstFragBTH = Reg(BTH())
+      when(inputValid) {
+        when(isFirstFrag) {
+          firstFragBTH := bth
+        } otherwise {
+          assert(
+            assertion = firstFragBTH.opcodeFull === bth.opcodeFull,
+            message =
+              L"${REPORT_TIME} time: invalid bth.opcodeFull=${bth.opcodeFull}, it should be stable @ ${firstFragBTH.opcodeFull}, and firstFragBTH.psn=${firstFragBTH.psn}".toSeq,
+            severity = FAILURE
+          )
+          assert(
+            assertion = firstFragBTH.psn === bth.psn,
+            message =
+              L"${REPORT_TIME} time: invalid bth.psn=${bth.psn}, it should be stable @ ${firstFragBTH.psn}".toSeq,
+            severity = FAILURE
+          )
+          assert(
+            assertion = firstFragBTH.padCnt === bth.padCnt,
+            message =
+              L"${REPORT_TIME} time: invalid bth.padCnt=${bth.padCnt}, it should be stable @ ${firstFragBTH.padCnt}, and firstFragBTH.psn=${firstFragBTH.psn}".toSeq,
+            severity = FAILURE
+          )
+          assert(
+            assertion = firstFragBTH.ackreq === bth.ackreq,
+            message =
+              L"${REPORT_TIME} time: invalid bth.ackreq=${bth.ackreq}, it should be stable @ ${firstFragBTH.ackreq}".toSeq,
+            severity = FAILURE
+          )
+        }
+      }
+    }
+}
+
 object FixedLenQueue {
   def apply[T <: Data](
       dataType: T,
@@ -1751,7 +1784,7 @@ object SeqOut {
     )
 
     val joinCond =
-      outStreamSel.bth.psn === psnOutRangeQueuePop.end && outStreamSel.isLast
+      outStreamSel.bth.psn === psnOutRangeQueuePop.end && outStreamSel.lastFire
     val outJoinStream = FragmentStreamJoinStreamOnCondition(
       inputFragmentStream = outStreamSel,
       inputStream = psnOutRangeQueuePop,
@@ -2046,11 +2079,11 @@ object reqPadCountCheck {
         // Last packet fragment should not be empty
         mtyCheck := pktMty.orR
         when(OpCode.isAtomicReqPkt(opcode)) {
-          // Atomic request has BTH and AtomicEth, total 48 + 28 = 76 bytes
+          // Atomic request has BTH and AtomicEth, total 12 + 28 = 40 bytes
           // BTH is not included in packet payload
           mtyCheck := pktFragLen === (ATOMIC_REQ_WIDTH / BYTE_WIDTH)
         } elsewhen (OpCode.isReadReqPkt(opcode)) {
-          // Read request has BTH and RETH, total 48 + 16 = 64 bytes
+          // Read request has BTH and RETH, total 12 + 16 = 28 bytes
           // BTH is not included in packet payload
           // Assume RETH fits in bus width
           mtyCheck := pktFragLen === (READ_REQ_WIDTH / BYTE_WIDTH)
@@ -2218,7 +2251,7 @@ object computePktNum {
     }.result
 }
 
-object pmtuPktLenBytes {
+object getPmtuPktLenBytes {
   def apply(pmtu: UInt): UInt = new Composite(pmtu, "pmtuPktLenBytes") {
     val result = UInt(PMTU_FRAG_NUM_WIDTH bits)
     switch(pmtu) {
@@ -2544,7 +2577,7 @@ object PartialRetry {
 }
 
 object reqRespOpCodeHeaderLen {
-  def apply(opcode: Bits): UInt =
+  def apply(opcode: Bits, valid: Bool): UInt =
     new Composite(opcode, "OpCodeHeaderLen") {
       val bthLenBytes = widthOf(BTH()) / BYTE_WIDTH
       val rethLenBytes = widthOf(RETH()) / BYTE_WIDTH
@@ -2617,11 +2650,13 @@ object reqRespOpCodeHeaderLen {
           result := bthLenBytes + aethLenBytes + atomicAckEthLenBytes
         }
         default {
-          report(
-            message =
-              L"${REPORT_TIME} time: illegal opcode=${opcode}, must be send/write/read/atomic request or response".toSeq,
-            severity = ERROR
-          )
+          when(valid) {
+            report(
+              message =
+                L"${REPORT_TIME} time: illegal opcode=${opcode}, must be send/write/read/atomic request or response".toSeq,
+              severity = FAILURE
+            )
+          }
           result := 0
         }
       }
@@ -2634,7 +2669,7 @@ object ReqRespTotalLenCalculator {
       pktFireFlow: Flow[Fragment[LenCheckElements]],
       pmtuLenBytes: UInt
   ) = new Composite(pktFireFlow, "ReqTotalLenCalculator") {
-    val fire = pktFireFlow.valid
+    val pktFireFlowValid = pktFireFlow.valid
     val opcode = pktFireFlow.opcode
     val padCnt = pktFireFlow.padCnt
     val mty = pktFireFlow.mty
@@ -2651,7 +2686,7 @@ object ReqRespTotalLenCalculator {
 
     val concat = isFirstPkt ## isMidPkt ## isLastPkt ## isOnlyPkt
     val width = log2Up(widthOf(concat) + 1)
-    when(fire) {
+    when(pktFireFlowValid) {
       assert(
         assertion = CountOne(concat) === 1,
         message =
@@ -2677,14 +2712,16 @@ object ReqRespTotalLenCalculator {
       default -> illegalPkt
     )
 
-    val pktHeaderLenBytes = reqRespOpCodeHeaderLen(opcode)
-//    val firstPktLenAdjust = firstPktHeaderLenFunc(opcode)
-//    val midPktLenAdjust = midPktHeaderLenFunc(opcode)
-//    val lastPktLenAdjust = lastPktHeaderLenFunc(opcode)
-//    val onlyPktLenAdjust = onlyPktHeaderLenFunc(opcode)
+    val pktHeaderLenBytes =
+      reqRespOpCodeHeaderLen(opcode, valid = pktFireFlowValid)
 
+    // CSR
     val pktLenBytesReg = RegInit(U(0, RDMA_MAX_LEN_WIDTH bits))
     val totalLenBytesReg = RegInit(U(0, RDMA_MAX_LEN_WIDTH bits))
+    when(flush) {
+      pktLenBytesReg := 0
+      totalLenBytesReg := 0
+    }
 
     val pktFragLenBytes = CountOne(mty).resize(RDMA_MAX_LEN_WIDTH)
     val isPktLenCheckErr = False
@@ -2706,7 +2743,7 @@ object ReqRespTotalLenCalculator {
         (PAD_COUNT_FULL - padCnt).resize(PAD_COUNT_WIDTH)
     }
     // Calculate request/response total length
-    when(fire) {
+    when(pktFireFlowValid) {
       switch(isFirstFrag ## isLastFrag) {
         is(True ## False) { // First fragment
           switch(isFirstMidLastOnlyPkt) {
@@ -2729,7 +2766,7 @@ object ReqRespTotalLenCalculator {
             default {
               report(
                 message =
-                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
+                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${pktFireFlowValid}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
                 severity = FAILURE
               )
             }
@@ -2779,7 +2816,7 @@ object ReqRespTotalLenCalculator {
             default {
               report(
                 message =
-                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
+                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${pktFireFlowValid}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
                 severity = FAILURE
               )
             }
@@ -2821,7 +2858,7 @@ object ReqRespTotalLenCalculator {
             default {
               report(
                 message =
-                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${fire}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
+                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${pktFireFlowValid}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
                 severity = FAILURE
               )
             }

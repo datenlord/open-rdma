@@ -91,11 +91,15 @@ case class SqRetryClear() extends Bundle {
   val retryWorkReqDone = Bool()
 }
 
-case class RnrNakSeqClear() extends Bundle {
+case class RetryNakClear() extends Bundle {
   val pulse = Bool()
 }
 
-case class RetryNak() extends Bundle {
+case class RetryNakSent() extends Bundle {
+  val pulse = Bool()
+}
+
+case class RqRetryNakNotifier() extends Bundle {
   val psn = UInt(PSN_WIDTH bits)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val pulse = Bool()
@@ -104,6 +108,54 @@ case class RetryNak() extends Bundle {
     psn := 0
     preOpCode := OpCode.SEND_ONLY.id
     pulse := False
+    this
+  }
+}
+
+case class RqFatalNakNotifier() extends Bundle {
+  val invReq = Bool()
+  val rmtAcc = Bool()
+  val rmtOp = Bool()
+
+  def setNoErr(): this.type = {
+    invReq := False
+    rmtAcc := False
+    rmtOp := False
+    this
+  }
+
+  def setFromAeth(aeth: AETH): this.type = {
+    when(aeth.isNormalAck()) {
+      setNoErr()
+    } elsewhen (aeth.isInvReqNak()) {
+      setInvReq()
+    } elsewhen (aeth.isRmtAccNak()) {
+      setRmtAcc()
+    } elsewhen (aeth.isRmtOpNak()) {
+      setRmtOp()
+    } otherwise {
+      report(
+        message =
+          L"${REPORT_TIME} time: illegal AETH to set RqFatalNakNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}".toSeq,
+        severity = FAILURE
+      )
+      setNoErr() // To avoid latch
+    }
+    this
+  }
+
+  private def setInvReq(): this.type = {
+    invReq := True
+    this
+  }
+
+  private def setRmtAcc(): this.type = {
+    rmtAcc := True
+    this
+  }
+
+  private def setRmtOp(): this.type = {
+    rmtOp := True
     this
   }
 }
@@ -133,7 +185,7 @@ case class SqErrNotifier() extends Bundle {
           L"${REPORT_TIME} time: illegal AETH to set SqErrNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}".toSeq,
         severity = FAILURE
       )
-      setLocalErr()
+      setNoErr() // To avoid latch
     }
     this
   }
@@ -209,11 +261,12 @@ case class SqErrNotifier() extends Bundle {
 }
 
 case class RqNakNotifier() extends Bundle {
-  val rnr = RetryNak()
-  val seqErr = RetryNak()
-  val invReq = Bool()
-  val rmtAcc = Bool()
-  val rmtOp = Bool()
+  val rnr = RqRetryNakNotifier()
+  val seqErr = RqRetryNakNotifier()
+  val fatal = RqFatalNakNotifier()
+//  val invReq = Bool()
+//  val rmtAcc = Bool()
+//  val rmtOp = Bool()
 //  val localErr = Bool()
 
   def setFromAeth(
@@ -222,27 +275,23 @@ case class RqNakNotifier() extends Bundle {
       preOpCode: Bits,
       psn: UInt
   ): this.type = {
-    setNoErr()
-    when(aeth.isRnrNak()) {
+    when(aeth.isNormalAck()) {
+      setNoErr()
+    } elsewhen (aeth.isRnrNak()) {
       setRnrNak(pulse, preOpCode, psn)
     } elsewhen (aeth.isSeqNak()) {
       setSeqErr(pulse, preOpCode, psn)
+    } elsewhen (aeth.isInvReqNak() || aeth.isRmtAccNak() || aeth.isRmtOpNak()) {
+      fatal.setFromAeth(aeth)
     } elsewhen (pulse) {
-      when(aeth.isInvReqNak()) {
-        setInvReq()
-      } elsewhen (aeth.isRmtAccNak()) {
-        setRmtAcc()
-      } elsewhen (aeth.isRmtOpNak()) {
-        setRmtOp()
-      } otherwise {
-        report(
-          message =
-            L"${REPORT_TIME} time: illegal AETH to set NakNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}".toSeq,
-          severity = FAILURE
-        )
-        this.assignDontCare() // To avoid latch
-      }
+      report(
+        message =
+          L"${REPORT_TIME} time: illegal AETH to set NakNotifier, aeth.code=${aeth.code}, aeth.value=${aeth.value}".toSeq,
+        severity = FAILURE
+      )
+      setNoErr() // To avoid latch
     }
+
     this
   }
 
@@ -260,21 +309,6 @@ case class RqNakNotifier() extends Bundle {
     this
   }
 
-  private def setInvReq(): this.type = {
-    invReq := True
-    this
-  }
-
-  private def setRmtAcc(): this.type = {
-    rmtAcc := True
-    this
-  }
-
-  private def setRmtOp(): this.type = {
-    rmtOp := True
-    this
-  }
-
 //  private def setLocalErr(): this.type = {
 //    localErr := True
 //    this
@@ -283,14 +317,16 @@ case class RqNakNotifier() extends Bundle {
   def setNoErr(): this.type = {
     rnr.setNoErr()
     seqErr.setNoErr()
-    invReq := False
-    rmtAcc := False
-    rmtOp := False
+    fatal.setNoErr()
+//    invReq := False
+//    rmtAcc := False
+//    rmtOp := False
 //    localErr := False
     this
   }
 
-  def hasFatalNak(): Bool = invReq || rmtAcc || rmtOp // || localErr
+  def hasFatalNak(): Bool =
+    fatal.invReq || fatal.rmtAcc || fatal.rmtOp // || localErr
 
 //  def ||(that: NakNotifier): NakNotifier = {
 //    val result = NakNotifier()
@@ -305,7 +341,8 @@ case class RqNakNotifier() extends Bundle {
 
 case class RqNotifier() extends Bundle {
   val nak = RqNakNotifier()
-  val clearRnrOrNakSeq = RnrNakSeqClear()
+  val clearRetryNakFlush = RetryNakClear()
+  val retryNakHasSent = RetryNakSent()
 
   def hasFatalNak(): Bool = nak.hasFatalNak()
 }
@@ -323,18 +360,21 @@ case class SqNotifier() extends Bundle {
 
 case class RxQCtrl() extends Bundle {
   val stateErrFlush = Bool()
+//  val rnrTriggered = Bool()
+//  val rnrTimeOut = Bool()
   val rnrFlush = Bool()
-  val rnrTimeOut = Bool()
-  val nakSeqTrigger = Bool()
-  val flush = Bool()
+//  val nakSeqTriggered = Bool()
+  val nakSeqFlush = Bool()
+  val isRetryNakNotCleared = Bool()
 
   // TODO: remove this
   def setDefaultVal(): this.type = {
     stateErrFlush := False
     rnrFlush := False
-    rnrTimeOut := True
-    nakSeqTrigger := False
-    flush := False
+//    rnrTimeOut := True
+//    nakSeqTriggered := False
+    nakSeqFlush := False
+    isRetryNakNotCleared := False
     this
   }
 }
@@ -445,8 +485,8 @@ case class QpAttrData() extends Bundle {
     pdId := 0
     epsn := 0
     npsn := 0
-    rqOutPsn := 0
-    sqOutPsn := 0
+    rqOutPsn := setAllBits(PSN_WIDTH)
+    sqOutPsn := setAllBits(PSN_WIDTH)
     pmtu := PMTU.U512.id
     maxPendingReadAtomicWorkReqNum := MAX_PENDING_READ_ATOMIC_REQ_NUM
     maxDstPendingReadAtomicWorkReqNum := MAX_PENDING_READ_ATOMIC_REQ_NUM
@@ -2201,18 +2241,22 @@ case class SqReadAtomicRespWithDmaInfoBus(busWidth: BusWidth.Value)
 }
 
 case class RqReqCheckRst() extends Bundle {
-  val isPsnExpected = Bool()
-  val isDupReq = Bool()
+  val isCheckPass = Bool()
+//  val isDupReq = Bool()
   val isOpSeqCheckPass = Bool()
-  val isSupportedOpCode = Bool()
+  val isPsnExpected = Bool()
   val isPadCntCheckPass = Bool()
   val isReadAtomicRstCacheFull = Bool()
+//  val isSeqErr = Bool()
+  val isSupportedOpCode = Bool()
   val epsn = UInt(PSN_WIDTH bits)
+  val preOpCode = Bits(OPCODE_WIDTH bits)
 }
 
 case class RqReqWithRxBuf(busWidth: BusWidth.Value) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
-  val preOpCode = Bits(OPCODE_WIDTH bits)
+//  val preOpCode = Bits(OPCODE_WIDTH bits)
+//  val curExpectedPsn = UInt(PSN_WIDTH bits)
   val hasNak = Bool()
   val ackAeth = AETH()
   // RxWorkReq is only valid at the first or only fragment for send,
@@ -2244,6 +2288,7 @@ case class RqReqCheckStageOutput(busWidth: BusWidth.Value) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
   val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
+//  val isDupReq = Bool()
   val ackAeth = AETH()
 }
 
@@ -2279,7 +2324,7 @@ case class VirtualAddrInfo() extends Bundle {
 case class RqReqWithRxBufAndVirtualAddrInfo(busWidth: BusWidth.Value)
     extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
-  val preOpCode = Bits(OPCODE_WIDTH bits)
+//  val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
   val ackAeth = AETH()
   // RxWorkReq is only valid at the first or only fragment for send,
@@ -2323,7 +2368,7 @@ case class DmaInfo() extends Bundle {
 
 case class RqReqWithRxBufAndDmaInfo(busWidth: BusWidth.Value) extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
-  val preOpCode = Bits(OPCODE_WIDTH bits)
+//  val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
   val ackAeth = AETH()
   // RxWorkReq is only valid at the first or only fragment for send,
@@ -2353,7 +2398,7 @@ case class RqReqWithRxBufAndDmaInfoBus(busWidth: BusWidth.Value)
 case class RqReqWithRxBufAndDmaInfoWithLenCheck(busWidth: BusWidth.Value)
     extends Bundle {
   val pktFrag = RdmaDataPkt(busWidth)
-  val preOpCode = Bits(OPCODE_WIDTH bits)
+//  val preOpCode = Bits(OPCODE_WIDTH bits)
   val hasNak = Bool()
   val ackAeth = AETH()
   // reqTotalLenValid is only for the last fragment of send/write request packet

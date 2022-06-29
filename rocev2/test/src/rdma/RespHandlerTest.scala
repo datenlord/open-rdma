@@ -448,7 +448,7 @@ class ReadRespLenCheckTest extends AnyFunSuite {
       f"${simTime()} time, dut.totalLenValid=${dut.totalLenValid.toBoolean} should be false for non-read responses"
     )
 
-    MiscUtils.checkInputOutputQueues(
+    MiscUtils.checkExpectedOutputMatch(
       dut.clockDomain,
       inputQueue,
       outputQueue,
@@ -553,7 +553,7 @@ class ReadRespLenCheckTest extends AnyFunSuite {
         }
       }
 
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputQueue,
         outputQueue,
@@ -775,7 +775,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
           clue =
             f"${simTime()} time: dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.valid=${dut.io.readAtomicRespWithDmaInfoBus.respWithDmaInfo.valid.toBoolean} should be true always when addrCacheQuerySuccess=${addrCacheQuerySuccess}"
         )
-        MiscUtils.checkInputOutputQueues(
+        MiscUtils.checkExpectedOutputMatch(
           dut.clockDomain,
           inputReadResp4DmaQueue,
           outputReadResp4DmaQueue,
@@ -796,7 +796,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
         )
       }
 
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         inputWorkReqAndAckQueue,
         outputWorkReqAndAckQueue,
@@ -943,7 +943,7 @@ class ReadAtomicRespDmaReqInitiatorTest extends AnyFunSuite {
 //        f"${simTime()} time: dut.io.atomicRespDmaWriteReq.req.valid=${dut.io.atomicRespDmaWriteReq.req.valid.toBoolean} should be false, since atomic not supported"
 //      )
 
-      MiscUtils.checkInputOutputQueues(
+      MiscUtils.checkExpectedOutputMatch(
         dut.clockDomain,
         rxReadRespQueue,
         readRespDmaWriteReqQueue,
@@ -965,219 +965,218 @@ class WorkCompGenTest extends AnyFunSuite {
   def testFunc(
       ackType: SpinalEnumElement[AckType.type],
       needDmaWriteResp: Boolean
-  ): Unit =
-    simCfg.doSim { dut =>
-      dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
+  ): Unit = simCfg.doSim { dut =>
+    dut.clockDomain.forkStimulus(SIM_CYCLE_TIME)
 
-      val workCompStatus = AckTypeSim.toWorkCompStatus(ackType)
-      val sqpn = 11
-      val dqpn = 10
-      dut.io.qpAttr.sqpn #= sqpn
-      dut.io.qpAttr.dqpn #= dqpn
-      // TODO: change flush signal accordingly
-      dut.io.txQCtrl.wrongStateFlush #= false
-      dut.io.txQCtrl.errorFlush #= false
-      dut.io.txQCtrl.retryFlush #= false
+    val workCompStatus = AckTypeSim.toWorkCompStatus(ackType)
+    val sqpn = 11
+    val dqpn = 10
+    dut.io.qpAttr.sqpn #= sqpn
+    dut.io.qpAttr.dqpn #= dqpn
+    // TODO: change flush signal accordingly
+    dut.io.txQCtrl.wrongStateFlush #= false
+    dut.io.txQCtrl.errorFlush #= false
+    dut.io.txQCtrl.retryFlush #= false
 
-      val readWorkReqMetaDataQueue = DelayedQueue[
-        (
-            WorkReqId,
-            PsnStart,
-            PktLen
+    val readWorkReqMetaDataQueue = DelayedQueue[
+      (
+          WorkReqId,
+          PsnStart,
+          PktLen
+      )
+    ](dut.clockDomain, DMA_WRITE_DELAY_CYCLES)
+    val inputQueue = mutable.Queue[
+      (
+          WorkReqId,
+          SpinalEnumElement[WorkCompOpCode.type],
+          SpinalEnumElement[WorkCompStatus.type],
+          PktLen,
+          DQPN,
+          SQPN
+      )
+    ]()
+    val outputQueue = mutable.Queue[
+      (
+          WorkReqId,
+          SpinalEnumElement[WorkCompOpCode.type],
+          SpinalEnumElement[WorkCompStatus.type],
+          PktLen,
+          DQPN,
+          SQPN
+      )
+    ]()
+    val workReqMetaDataQueue = mutable.Queue[
+      (
+          SpinalEnumElement[WorkReqOpCode.type],
+          FragNum,
+          PktNum,
+          PsnStart,
+          PktLen
+      )
+    ]()
+
+    // Input to DUT
+    fork {
+      val (totalFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
+        SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
+
+      while (true) {
+        dut.clockDomain.waitSampling()
+
+        val totalFragNum = totalFragNumItr.next()
+        val pktNum = pktNumItr.next()
+        val psnStart = psnStartItr.next()
+        val payloadLenBytes = payloadLenItr.next()
+
+        // TODO: support atomic request
+        val workReqOpCode = if (needDmaWriteResp) {
+          WorkReqOpCode.RDMA_READ
+        } else {
+          WorkReqSim.randomSendWriteOpCode()
+        }
+        workReqMetaDataQueue.enqueue(
+          (
+            workReqOpCode,
+            totalFragNum,
+            pktNum,
+            psnStart,
+            payloadLenBytes.toLong
+          )
         )
-      ](dut.clockDomain, DMA_WRITE_DELAY_CYCLES)
-      val inputQueue = mutable.Queue[
-        (
-            WorkReqId,
-            SpinalEnumElement[WorkCompOpCode.type],
-            SpinalEnumElement[WorkCompStatus.type],
-            PktLen,
-            DQPN,
-            SQPN
-        )
-      ]()
-      val outputQueue = mutable.Queue[
-        (
-            WorkReqId,
-            SpinalEnumElement[WorkCompOpCode.type],
-            SpinalEnumElement[WorkCompStatus.type],
-            PktLen,
-            DQPN,
-            SQPN
-        )
-      ]()
-      val workReqMetaDataQueue = mutable.Queue[
-        (
-            SpinalEnumElement[WorkReqOpCode.type],
-            FragNum,
-            PktNum,
-            PsnStart,
-            PktLen
-        )
-      ]()
 
-      // Input to DUT
-      fork {
-        val (totalFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
-          SendWriteReqReadRespInputGen.getItr(maxFragNum, pmtuLen, busWidth)
-
-        while (true) {
-          dut.clockDomain.waitSampling()
-
-          val totalFragNum = totalFragNumItr.next()
-          val pktNum = pktNumItr.next()
-          val psnStart = psnStartItr.next()
-          val payloadLenBytes = payloadLenItr.next()
-
-          // TODO: support atomic request
-          val workReqOpCode = if (needDmaWriteResp) {
-            WorkReqOpCode.RDMA_READ
-          } else {
-            WorkReqSim.randomSendWriteOpCode()
-          }
-          workReqMetaDataQueue.enqueue(
+        if (workReqOpCode.isReadReq()) {
+          val workReqId = psnStart
+//              cachedWorkReqAndAck.cachedWorkReq.workReq.id.toBigInt
+          readWorkReqMetaDataQueue.enqueue(
             (
-              workReqOpCode,
-              totalFragNum,
-              pktNum,
+              BigInt(workReqId),
               psnStart,
               payloadLenBytes.toLong
             )
           )
-
-          if (workReqOpCode.isReadReq()) {
-            val workReqId = psnStart
-//              cachedWorkReqAndAck.cachedWorkReq.workReq.id.toBigInt
-            readWorkReqMetaDataQueue.enqueue(
-              (
-                BigInt(workReqId),
-                psnStart,
-                payloadLenBytes.toLong
-              )
-            )
 //        println(f"${simTime()} time: workReqId=${workReqId}%X, psnStart=${psnStart}%X, totalLenBytes=${totalLenBytes}%X")
-          }
         }
       }
+    }
 
-      streamMasterPayloadFromQueueNoRandomDelay(
-        dut.io.cachedWorkReqAndAck,
-        dut.clockDomain,
-        workReqMetaDataQueue,
-        payloadAssignFunc = (
-            cachedWorkReqAndAck: Fragment[CachedWorkReqAndAck],
-            payloadData: (
-                SpinalEnumElement[WorkReqOpCode.type],
-                FragNum,
-                PktNum,
-                PsnStart,
-                PktLen
-            )
-        ) => {
-          val (
-            workReqOpCode,
-            _, // totalFragNum,
-            pktNum,
-            psnStart,
-            payloadLenBytes
-          ) = payloadData
-
-          dut.io.qpAttr.npsn #= psnStart +% pktNum
-
-          cachedWorkReqAndAck.cachedWorkReq.workReq.id #= psnStart
-          cachedWorkReqAndAck.cachedWorkReq.workReq.sqpn #= sqpn
-          cachedWorkReqAndAck.cachedWorkReq.psnStart #= psnStart
-          cachedWorkReqAndAck.cachedWorkReq.pktNum #= pktNum
-          cachedWorkReqAndAck.cachedWorkReq.workReq.lenBytes #= payloadLenBytes
-          cachedWorkReqAndAck.cachedWorkReq.workReq.flags.flagBits #=
-            WorkReqSim.assignFlagBits(WorkReqSendFlagEnum.SIGNALED)
-          cachedWorkReqAndAck.last #= true
-          cachedWorkReqAndAck.ackValid #= true
-
-          cachedWorkReqAndAck.cachedWorkReq.workReq.opcode #= workReqOpCode
-
-          cachedWorkReqAndAck.ack.bth.psn #= psnStart +% (pktNum - 1)
-          cachedWorkReqAndAck.ack.aeth.setAs(ackType)
-          cachedWorkReqAndAck.workCompStatus #= workCompStatus
-
-          val reqValid = true
-          reqValid
-        }
-      )
-      onStreamFire(dut.io.cachedWorkReqAndAck, dut.clockDomain) {
-        val workReqOpCode =
-          dut.io.cachedWorkReqAndAck.cachedWorkReq.workReq.opcode.toEnum
-        val workCompOpCode = WorkCompSim.fromSqWorkReqOpCode(workReqOpCode)
-        inputQueue.enqueue(
-          (
-            dut.io.cachedWorkReqAndAck.cachedWorkReq.workReq.id.toBigInt,
-            workCompOpCode,
-            workCompStatus,
-            dut.io.cachedWorkReqAndAck.cachedWorkReq.workReq.lenBytes.toLong,
-            dut.io.qpAttr.dqpn.toInt,
-            dut.io.qpAttr.sqpn.toInt
+    streamMasterPayloadFromQueueNoRandomDelay(
+      dut.io.cachedWorkReqAndAck,
+      dut.clockDomain,
+      workReqMetaDataQueue,
+      payloadAssignFunc = (
+          cachedWorkReqAndAck: Fragment[CachedWorkReqAndAck],
+          payloadData: (
+              SpinalEnumElement[WorkReqOpCode.type],
+              FragNum,
+              PktNum,
+              PsnStart,
+              PktLen
           )
-        )
+      ) => {
+        val (
+          workReqOpCode,
+          _, // totalFragNum,
+          pktNum,
+          psnStart,
+          payloadLenBytes
+        ) = payloadData
+
+        dut.io.qpAttr.npsn #= psnStart +% pktNum
+
+        cachedWorkReqAndAck.cachedWorkReq.workReq.id #= psnStart
+        cachedWorkReqAndAck.cachedWorkReq.workReq.sqpn #= sqpn
+        cachedWorkReqAndAck.cachedWorkReq.psnStart #= psnStart
+        cachedWorkReqAndAck.cachedWorkReq.pktNum #= pktNum
+        cachedWorkReqAndAck.cachedWorkReq.workReq.lenBytes #= payloadLenBytes
+        cachedWorkReqAndAck.cachedWorkReq.workReq.flags.flagBits #=
+          WorkReqSim.assignFlagBits(WorkReqSendFlagEnum.SIGNALED)
+        cachedWorkReqAndAck.last #= true
+        cachedWorkReqAndAck.ackValid #= true
+
+        cachedWorkReqAndAck.cachedWorkReq.workReq.opcode #= workReqOpCode
+
+        cachedWorkReqAndAck.ack.bth.psn #= psnStart +% (pktNum - 1)
+        cachedWorkReqAndAck.ack.aeth.setAs(ackType)
+        cachedWorkReqAndAck.workCompStatus #= workCompStatus
+
+        val reqValid = true
+        reqValid
       }
-
-      streamMasterPayloadFromQueueNoRandomDelay(
-        dut.io.readRespDmaWriteResp.resp,
-        dut.clockDomain,
-        readWorkReqMetaDataQueue.toMutableQueue(),
-//        maxIntervalCycles = DMA_WRITE_DELAY_CYCLES,
-        payloadAssignFunc = (
-            dmaWriteResp: DmaWriteResp,
-            workReqData: (
-                WorkReqId,
-                PsnStart,
-                PktLen
-            )
-        ) => {
-          val (workReqId, psnStart, pktLen) = workReqData
-          dmaWriteResp.initiator #= DmaInitiator.SQ_WR
-          dmaWriteResp.workReqId #= workReqId
-          dmaWriteResp.psn #= psnStart
-          dmaWriteResp.lenBytes #= pktLen
-          dmaWriteResp.sqpn #= dut.io.qpAttr.sqpn.toInt
-
-          val respValid = true
-          respValid
-        }
-      )
-
-      streamSlaveAlwaysReady(dut.io.workCompPush, dut.clockDomain)
-      onStreamFire(dut.io.workCompPush, dut.clockDomain) {
-        outputQueue.enqueue(
-          (
-            dut.io.workCompPush.id.toBigInt,
-            dut.io.workCompPush.opcode.toEnum,
-            dut.io.workCompPush.status.toEnum,
-            dut.io.workCompPush.lenBytes.toLong,
-            dut.io.workCompPush.dqpn.toInt,
-            dut.io.workCompPush.sqpn.toInt
-          )
+    )
+    onStreamFire(dut.io.cachedWorkReqAndAck, dut.clockDomain) {
+      val workReqOpCode =
+        dut.io.cachedWorkReqAndAck.cachedWorkReq.workReq.opcode.toEnum
+      val workCompOpCode = WorkCompSim.fromSqWorkReqOpCode(workReqOpCode)
+      inputQueue.enqueue(
+        (
+          dut.io.cachedWorkReqAndAck.cachedWorkReq.workReq.id.toBigInt,
+          workCompOpCode,
+          workCompStatus,
+          dut.io.cachedWorkReqAndAck.cachedWorkReq.workReq.lenBytes.toLong,
+          dut.io.qpAttr.dqpn.toInt,
+          dut.io.qpAttr.sqpn.toInt
         )
-      }
-
-      MiscUtils.checkCondChangeOnceAndHoldAfterwards(
-        dut.clockDomain,
-        dut.io.cachedWorkReqAndAck.valid.toBoolean && dut.io.cachedWorkReqAndAck.ready.toBoolean,
-        clue =
-          f"${simTime()} time: dut.io.cachedWorkReqAndAck.fire=${dut.io.cachedWorkReqAndAck.valid.toBoolean && dut.io.cachedWorkReqAndAck.ready.toBoolean} should be true always"
-      )
-      MiscUtils.checkCondChangeOnceAndHoldAfterwards(
-        dut.clockDomain,
-        dut.io.workCompPush.valid.toBoolean,
-        clue =
-          f"${simTime()} time: dut.io.workCompPush.valid=${dut.io.workCompPush.valid.toBoolean} should be true always"
-      )
-      MiscUtils.checkInputOutputQueues(
-        dut.clockDomain,
-        inputQueue,
-        outputQueue,
-        MATCH_CNT
       )
     }
+
+    streamMasterPayloadFromQueueNoRandomDelay(
+      dut.io.readRespDmaWriteResp.resp,
+      dut.clockDomain,
+      readWorkReqMetaDataQueue.toMutableQueue(),
+//        maxIntervalCycles = DMA_WRITE_DELAY_CYCLES,
+      payloadAssignFunc = (
+          dmaWriteResp: DmaWriteResp,
+          workReqData: (
+              WorkReqId,
+              PsnStart,
+              PktLen
+          )
+      ) => {
+        val (workReqId, psnStart, pktLen) = workReqData
+        dmaWriteResp.initiator #= DmaInitiator.SQ_WR
+        dmaWriteResp.workReqId #= workReqId
+        dmaWriteResp.psn #= psnStart
+        dmaWriteResp.lenBytes #= pktLen
+        dmaWriteResp.sqpn #= dut.io.qpAttr.sqpn.toInt
+
+        val respValid = true
+        respValid
+      }
+    )
+
+    streamSlaveAlwaysReady(dut.io.workCompPush, dut.clockDomain)
+    onStreamFire(dut.io.workCompPush, dut.clockDomain) {
+      outputQueue.enqueue(
+        (
+          dut.io.workCompPush.id.toBigInt,
+          dut.io.workCompPush.opcode.toEnum,
+          dut.io.workCompPush.status.toEnum,
+          dut.io.workCompPush.lenBytes.toLong,
+          dut.io.workCompPush.dqpn.toInt,
+          dut.io.workCompPush.sqpn.toInt
+        )
+      )
+    }
+
+    MiscUtils.checkCondChangeOnceAndHoldAfterwards(
+      dut.clockDomain,
+      dut.io.cachedWorkReqAndAck.valid.toBoolean && dut.io.cachedWorkReqAndAck.ready.toBoolean,
+      clue =
+        f"${simTime()} time: dut.io.cachedWorkReqAndAck.fire=${dut.io.cachedWorkReqAndAck.valid.toBoolean && dut.io.cachedWorkReqAndAck.ready.toBoolean} should be true always"
+    )
+    MiscUtils.checkCondChangeOnceAndHoldAfterwards(
+      dut.clockDomain,
+      dut.io.workCompPush.valid.toBoolean,
+      clue =
+        f"${simTime()} time: dut.io.workCompPush.valid=${dut.io.workCompPush.valid.toBoolean} should be true always"
+    )
+    MiscUtils.checkExpectedOutputMatch(
+      dut.clockDomain,
+      inputQueue,
+      outputQueue,
+      MATCH_CNT
+    )
+  }
 
   test("WorkCompGen send/write WR case") {
     testFunc(AckType.NORMAL, needDmaWriteResp = false)
