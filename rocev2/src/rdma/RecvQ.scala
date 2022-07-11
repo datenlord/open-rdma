@@ -344,34 +344,7 @@ class ReqCommCheck(busWidth: BusWidth.Value) extends Component {
     }
     // The duplicate request is PSN < ePSN
     val isDupReq = isDupDoneReq || isDupPendingReq
-    /*
-    // OpCode sequence check
-    val isOpSeqCheckPass =
-      OpCodeSeq.checkReqSeq(io.qpAttr.rqPreReqOpCode, inputPktFrag.bth.opcode)
-    // Is valid request opcode?
-    val isSupportedOpCode = OpCode.isValidCode(inputPktFrag.bth.opcode) &&
-      Transports.isSupportedType(inputPktFrag.bth.transport)
-    // Packet padding count check
-    val isPadCntCheckPass = reqPadCountCheck(
-      inputPktFrag.bth.opcode,
-      inputPktFrag.bth.padCnt,
-      inputPktFrag.mty,
-      isLastFrag,
-      busWidth
-    )
 
-    // TODO: should RQ check for # of pending requests?
-    // Check for # of pending read/atomic requests
-    val isReadOrAtomicReq = OpCode.isReadReqPkt(inputPktFrag.bth.opcode) ||
-      OpCode.isAtomicReqPkt(inputPktFrag.bth.opcode)
-    val isReadAtomicRstCacheFull = inputValid && isReadOrAtomicReq &&
-      io.readAtomicRstCacheOccupancy >=
-      io.qpAttr.getMaxPendingReadAtomicWorkReqNum()
-    val isCheckPass =
-      isOpSeqCheckPass && isSupportedOpCode &&
-        isPadCntCheckPass && !isReadAtomicRstCacheFull
-    val isExpectedNormalPkt = inputValid && isPsnExpected && isCheckPass
-     */
     // FIXME: should handle duplicate pending requests?
     when(isDupPendingReq) {
       report(
@@ -421,26 +394,6 @@ class ReqCommCheck(busWidth: BusWidth.Value) extends Component {
       result.last := isLastFrag
       result
     }
-    /*
-    val output = io.rx.pktFrag
-      .throwWhen(isDupPendingReq) // No flush this stage
-      .translateWith {
-        val result = Fragment(RqReqCheckInternalOutput(busWidth))
-        result.pktFrag := inputPktFrag
-        result.checkRst.isCheckPass := isCheckPass
-        result.checkRst.isDupReq := isDupReq
-        result.checkRst.isOpSeqCheckPass := isOpSeqCheckPass
-        result.checkRst.isPadCntCheckPass := isPadCntCheckPass
-        result.checkRst.isPsnExpected := isPsnExpected
-        result.checkRst.isReadAtomicRstCacheFull := isReadAtomicRstCacheFull
-        result.checkRst.isSeqErr := isSeqErr
-        result.checkRst.isSupportedOpCode := isSupportedOpCode
-        result.checkRst.epsn := io.qpAttr.epsn
-        result.checkRst.preOpCode := io.qpAttr.rqPreReqOpCode
-        result.last := io.rx.pktFrag.last
-        result
-      }
-     */
 
     // Increase ePSN
     io.epsnInc.inc := isPsnExpected && input.lastFire // Only update ePSN when each request packet ended
@@ -451,56 +404,6 @@ class ReqCommCheck(busWidth: BusWidth.Value) extends Component {
     io.seqErrNotifier.psn := inputPktFrag.bth.psn
     io.seqErrNotifier.preOpCode := io.qpAttr.rqPreReqOpCode
   }
-  /*
-  val outputStage = new Area {
-    val input = cloneOf(checkStage.output)
-    input <-/< checkStage.output
-
-//    val isDupReq = input.checkRst.isDupReq
-//    val isPsnExpected = input.checkRst.isPsnExpected
-    val isCheckPass = input.checkRst.isCheckPass
-//input.checkRst.isOpSeqCheckPass && input.checkRst.isSupportedOpCode &&
-//  input.checkRst.isPadCntCheckPass && !input.checkRst.isReadAtomicRstCacheFull
-
-    val hasNak = True
-    val ackAeth = AETH().set(AckType.NORMAL)
-    when(input.valid) {
-      when(
-        input.checkRst.isDupReq || (input.checkRst.isPsnExpected && isCheckPass)
-      ) {
-        hasNak := False
-      } elsewhen (input.checkRst.isSeqErr) {
-        hasNak := True
-        ackAeth.set(AckType.NAK_SEQ)
-      } elsewhen (!isCheckPass) {
-        hasNak := True
-        ackAeth.set(AckType.NAK_INV)
-//      } otherwise {
-//        assert(
-//          assertion = isPsnExpected && isCheckPass && !isDupReq,
-//          message =
-//            L"${REPORT_TIME} time: isPsnExpected=${isPsnExpected} should be true, isCheckPass=${isCheckPass} should be true, isDupReq=${isDupReq} should be false".toSeq,
-//          severity = FAILURE
-//        )
-      }
-    }
-
-    io.tx.checkRst <-/< input.translateWith {
-      val result = cloneOf(io.tx.checkRst.payloadType)
-      result.pktFrag := input.pktFrag
-      when(input.checkRst.isSeqErr) {
-        // If NAK SEQ, set the input PSN to ePSN, to facilitate NAK SEQ generation
-        result.pktFrag.bth.psn := io.qpAttr.epsn
-      }
-      result.preOpCode := input.checkRst.preOpCode
-      result.hasNak := hasNak
-      result.isDupReq := input.checkRst.isDupReq
-      result.ackAeth := ackAeth
-      result.last := input.last
-      result
-    }
-  }
-   */
 }
 
 class ReqRnrCheck(busWidth: BusWidth.Value) extends Component {
@@ -1289,7 +1192,7 @@ class ReqPktLenCheck(busWidth: BusWidth.Value) extends Component {
       assertion = !isReqTotalLenCheckErr,
       message =
         L"${REPORT_TIME} time: request total length check failed, opcode=${inputPktFrag.bth.opcode}, PSN=${inputPktFrag.bth.psn}, dmaTargetLenBytes=${dmaTargetLenBytes}, reqTotalLenBytes=${reqTotalLenBytes}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
-      severity = FAILURE
+      severity = ERROR
     )
   }
 

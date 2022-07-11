@@ -3,7 +3,6 @@ package rdma
 import spinal.core._
 import spinal.core.sim._
 import spinal.lib._
-import spinal.sim._
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers._
 import org.scalatest.AppendedClues._
@@ -1338,11 +1337,8 @@ class ReqPktLenCheckTest extends AnyFunSuite {
 
   // NOTE: since this test case expects exception, it must be the last test case
   test("PktLenCheck check fail case") {
-    intercept[SimFailure] {
-      testFunc(inputHasNak = false, hasLenCheckErr = true)
-    }
+    testFunc(inputHasNak = false, hasLenCheckErr = true)
   }
-
 }
 
 class ReqSplitterAndNakGenTest extends AnyFunSuite {
