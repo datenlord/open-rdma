@@ -2766,7 +2766,7 @@ object ReqRespTotalLenCalculator {
             default {
               report(
                 message =
-                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${pktFireFlowValid}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
+                  L"${REPORT_TIME} time: illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${pktFireFlowValid}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
                 severity = FAILURE
               )
             }
@@ -2816,7 +2816,7 @@ object ReqRespTotalLenCalculator {
             default {
               report(
                 message =
-                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${pktFireFlowValid}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
+                  L"${REPORT_TIME} time: illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${pktFireFlowValid}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
                 severity = FAILURE
               )
             }
@@ -2858,7 +2858,7 @@ object ReqRespTotalLenCalculator {
             default {
               report(
                 message =
-                  L"illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${pktFireFlowValid}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
+                  L"${REPORT_TIME} time: illegal packet opcode=${opcode}, should be first/middle/last/only read response, when fire=${pktFireFlowValid}, isFirstFrag=${isFirstFrag}, isLastFrag=${isLastFrag}".toSeq,
                 severity = FAILURE
               )
             }
