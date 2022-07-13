@@ -421,6 +421,17 @@ object WorkReqSim {
     result
   }
 
+  def randomWriteOpCode(): SpinalEnumElement[WorkReqOpCode.type] = {
+    val opCodes = workReqWrite
+    val randIdx = scala.util.Random.nextInt(opCodes.size)
+    val result = opCodes(randIdx)
+    require(
+      opCodes.contains(result),
+      s"${simTime()} time: WR WriteOpCode should contain ${result}"
+    )
+    result
+  }
+
   def randomSendWriteReadOpCode(): SpinalEnumElement[WorkReqOpCode.type] = {
     val opCodes = WorkReqOpCode.RDMA_READ +: (workReqSend ++ workReqWrite)
     val randIdx = scala.util.Random.nextInt(opCodes.size)
@@ -432,8 +443,7 @@ object WorkReqSim {
     result
   }
 
-  def randomSendWriteReadAtomicOpCode()
-      : SpinalEnumElement[WorkReqOpCode.type] = {
+  def randomRdmaReqOpCode(): SpinalEnumElement[WorkReqOpCode.type] = {
     val opCodes =
       WorkReqOpCode.RDMA_READ +: (workReqSend ++ workReqWrite ++ workReqAtomic)
     val randIdx = scala.util.Random.nextInt(opCodes.size)
@@ -1275,7 +1285,7 @@ trait QueryRespSim[
 //  ): Unit
 
   // Need to override if generate multiple responses
-  protected def buildMultiResp(
+  protected def buildMultiFragResp(
       reqData: ReqData,
       respAlwaysSuccess: Boolean
   ): Seq[RespData]
@@ -1298,7 +1308,7 @@ trait QueryRespSim[
       clockDomain: ClockDomain,
       hasProcessDelay: Boolean,
       processDelayCycles: Int,
-      hasMultiResp: Boolean,
+      respHasMultiFrags: Boolean,
       respAlwaysSuccess: Boolean
   ): mutable.Queue[RespData] = {
     val reqStream = queryBus.req
@@ -1358,15 +1368,16 @@ trait QueryRespSim[
 //    println(f"${simTime()} time: hasProcessDelay=${hasProcessDelay}")
 
     // Handle response
-    if (hasMultiResp) {
+    if (respHasMultiFrags) {
       val multiRespQueue = mutable.Queue[RespData]()
       fork {
         clockDomain.waitSampling()
 
         while (true) {
           val inputReq = MiscUtils.safeDeQueue(delayedReqQueue, clockDomain)
-          val multiRespData = buildMultiResp(inputReq, respAlwaysSuccess)
-          multiRespQueue.appendAll(multiRespData)
+          val multiFragRespData =
+            buildMultiFragResp(inputReq, respAlwaysSuccess)
+          multiRespQueue.appendAll(multiFragRespData)
 
 //          println(f"${simTime()} time: multiRespQueue.length=${multiRespQueue.length}")
         }
@@ -1421,7 +1432,7 @@ trait SingleRespQuerySim[
       clockDomain,
       hasProcessDelay = false,
       processDelayCycles = 0,
-      hasMultiResp = false,
+      respHasMultiFrags = false,
       respAlwaysSuccess = true
     )
   }
@@ -1435,7 +1446,7 @@ trait SingleRespQuerySim[
       clockDomain,
       hasProcessDelay = false,
       processDelayCycles = 0,
-      hasMultiResp = false,
+      respHasMultiFrags = false,
       respAlwaysSuccess = false
     )
   }
@@ -1450,7 +1461,7 @@ trait SingleRespQuerySim[
       clockDomain,
       hasProcessDelay = true,
       processDelayCycles = fixedRespDelayCycles,
-      hasMultiResp = false,
+      respHasMultiFrags = false,
       respAlwaysSuccess = true
     )
   }
@@ -1465,7 +1476,7 @@ trait SingleRespQuerySim[
       clockDomain,
       hasProcessDelay = true,
       processDelayCycles = fixedRespDelayCycles,
-      hasMultiResp = false,
+      respHasMultiFrags = false,
       respAlwaysSuccess = false
     )
   }
@@ -1480,7 +1491,7 @@ trait SingleRespQuerySim[
       clockDomain,
       hasProcessDelay = true,
       processDelayCycles = fixedRespDelayCycles,
-      hasMultiResp = true,
+      respHasMultiFrags = true,
       respAlwaysSuccess = true
     )
   }
@@ -1501,7 +1512,7 @@ trait SingleRespQuerySim[
 //  }
 
   // No multiple responses generated for a single request
-  override def buildMultiResp(
+  override def buildMultiFragResp(
       reqData: ReqData,
       respAlwaysSuccess: Boolean
   ): Seq[RespData] = {
@@ -1540,7 +1551,7 @@ trait MultiRespQuerySim[
       clockDomain,
       hasProcessDelay = false,
       processDelayCycles = 0,
-      hasMultiResp = true,
+      respHasMultiFrags = true,
       respAlwaysSuccess = true
     )
   }
@@ -1554,7 +1565,7 @@ trait MultiRespQuerySim[
       clockDomain,
       hasProcessDelay = false,
       processDelayCycles = 0,
-      hasMultiResp = true,
+      respHasMultiFrags = true,
       respAlwaysSuccess = false
     )
   }
@@ -1569,7 +1580,7 @@ trait MultiRespQuerySim[
       clockDomain,
       hasProcessDelay = true,
       processDelayCycles = fixedRespDelayCycles,
-      hasMultiResp = true,
+      respHasMultiFrags = true,
       respAlwaysSuccess = true
     )
   }
@@ -1584,7 +1595,7 @@ trait MultiRespQuerySim[
       clockDomain,
       hasProcessDelay = true,
       processDelayCycles = fixedRespDelayCycles,
-      hasMultiResp = true,
+      respHasMultiFrags = true,
       respAlwaysSuccess = false
     )
   }
@@ -1620,21 +1631,22 @@ object AddrCacheSim
       )
     ] {
 
-  override def onReqFire(req: QpAddrCacheAgentReadReq):
-//      reqQueue: mutable.Queue[
-  (
+//  def setRespFailureType(invalidRequestOrRemoteAccess: Boolean): (KeyValid, SizeValid, AccessValid) = {
+//    if (invalidRequestOrRemoteAccess) {
+//      (false, false, true)
+//    } else {
+//      (true, true, false)
+//    }
+//  }
+
+  override def onReqFire(req: QpAddrCacheAgentReadReq): (
       PSN,
       LRKey,
       Boolean,
       VirtualAddr,
       PktLen
   ) = {
-//      ]
-//  ): Unit = {
-
 //    println(f"${simTime()} time: AddrCacheSim receive request PSN=${req.psn.toInt}%X")
-
-//    reqQueue.enqueue(
     (
       req.psn.toInt,
       req.key.toLong,
@@ -1642,7 +1654,6 @@ object AddrCacheSim
       req.va.toBigInt,
       req.dataLenBytes.toLong
     )
-    //    )
   }
 
   override def buildRespFromReqData(
@@ -1665,8 +1676,8 @@ object AddrCacheSim
       resp.sizeValid #= true
       resp.accessValid #= true
     } else {
-      resp.keyValid #= false
-      resp.sizeValid #= false
+      resp.keyValid #= true
+      resp.sizeValid #= true
       resp.accessValid #= false
     }
 
@@ -1675,18 +1686,13 @@ object AddrCacheSim
     respValid
   }
 
-  override def onRespFire(respData: QpAddrCacheAgentReadResp):
-//      respQueue: mutable.Queue[
-  (
+  override def onRespFire(respData: QpAddrCacheAgentReadResp): (
       PSN,
       KeyValid,
       SizeValid,
       AccessValid,
       PhysicalAddr
   ) = {
-//      ]
-//  ): Unit = {
-//    respQueue.enqueue(
     (
       respData.psn.toInt,
       respData.keyValid.toBoolean,
@@ -1694,7 +1700,6 @@ object AddrCacheSim
       respData.accessValid.toBoolean,
       respData.pa.toBigInt
     )
-    //    )
   }
 }
 
@@ -2094,7 +2099,7 @@ case class DmaReadBusSim(busWidth: BusWidth.Value)
 //    )
   }
 
-  override def buildMultiResp(
+  override def buildMultiFragResp(
       reqData: (
           SpinalEnumElement[DmaInitiator.type],
           PSN,
@@ -2430,10 +2435,12 @@ object RdmaDataPktSim {
       stream: Fragment[RdmaDataPkt],
       psnStart: PSN,
       numWorkReq: Int,
-      isReadRespGen: Boolean,
-      isSendWriteImmReqOnly: Boolean,
-      isSendWriteReqOnly: Boolean,
-      isReadAtomicReqOnly: Boolean,
+      genReadResp: Boolean,
+      genSendReq: Boolean,
+      genWriteReq: Boolean,
+      genWriteImmReq: Boolean,
+      genReadReq: Boolean,
+      genAtomicReq: Boolean,
       pmtuLen: PMTU.Value,
       busWidth: BusWidth.Value,
       maxFragNum: Int
@@ -2452,14 +2459,16 @@ object RdmaDataPktSim {
           OpCode.Value
       ) => Unit
   ): Unit = {
-    require(
-      (isReadRespGen && !isSendWriteImmReqOnly && !isSendWriteReqOnly && !isReadAtomicReqOnly == true) ||
-        (!isReadRespGen && isSendWriteImmReqOnly && !isSendWriteReqOnly && !isReadAtomicReqOnly == true) ||
-        (!isReadRespGen && !isSendWriteImmReqOnly && isSendWriteReqOnly && !isReadAtomicReqOnly == true) ||
-        (!isReadRespGen && !isSendWriteImmReqOnly && !isSendWriteReqOnly && isReadAtomicReqOnly == true) ||
-        (!isReadRespGen && !isSendWriteImmReqOnly && !isSendWriteReqOnly && !isReadAtomicReqOnly == true),
-      s"${simTime()} time: isReadRespGen=${isReadRespGen}, isSendWriteImmReqOnly=${isSendWriteImmReqOnly}, isSendWriteReqOnly=${isSendWriteReqOnly}, isReadAtomicReqOnly=${isReadAtomicReqOnly}, no more than one can be true"
-    )
+    if (genReadResp) {
+      require(
+        !(genSendReq &&
+          genWriteReq &&
+          genWriteImmReq &&
+          genReadReq &&
+          genAtomicReq),
+        s"${simTime()} time: genSendReq=${genSendReq}, genWriteReq=${genWriteReq}, genWriteImmReq=${genWriteImmReq}, genReadReq=${genReadReq}, genAtomicReq=${genAtomicReq}, must all be false when genReadResp=${genReadResp}"
+      )
+    }
 
     val (payloadFragNumItr, pktNumItr, psnStartItr, payloadLenItr) =
       SendWriteReqReadRespInputGen.getItr(
@@ -2476,21 +2485,53 @@ object RdmaDataPktSim {
       val psnStart = psnStartItr.next()
       val payloadLenBytes = payloadLenItr.next()
 
-      val workReqOpCode = if (isSendWriteImmReqOnly) {
-        WorkReqSim.randomSendWriteImmOpCode()
-      } else if (isSendWriteReqOnly) {
-        WorkReqSim.randomSendWriteOpCode()
-      } else if (isReadAtomicReqOnly) {
-        if (totalPktNum == 1) {
+      val shouldGenAtomicReq = genAtomicReq && totalPktNum == 1
+      val workReqOpCode = (
+        genSendReq,
+        genWriteReq,
+        genWriteImmReq,
+        genReadReq,
+        shouldGenAtomicReq
+      ) match {
+        case (true, true, true, true, true) => WorkReqSim.randomRdmaReqOpCode()
+        case (true, true, true, true, false) =>
+          WorkReqSim.randomSendWriteReadOpCode()
+        case (true, true, true, false, false) =>
+          WorkReqSim.randomSendWriteOpCode()
+        case (true, false, true, false, false) =>
+          WorkReqSim.randomSendWriteImmOpCode()
+        case (false, false, false, true, true) =>
           WorkReqSim.randomReadAtomicOpCode()
-        } else {
-          WorkReqOpCode.RDMA_READ
-        }
-      } else if (totalPktNum == 1) {
-        WorkReqSim.randomSendWriteReadAtomicOpCode()
-      } else {
-        WorkReqSim.randomSendWriteReadOpCode()
+        case (true, false, false, false, false) => WorkReqSim.randomSendOpCode()
+        case (false, true, true, false, false) => WorkReqSim.randomWriteOpCode()
+        case (false, false, true, false, false) =>
+          WorkReqOpCode.RDMA_WRITE_WITH_IMM
+        case (false, false, false, true, false) => WorkReqOpCode.RDMA_READ
+        case _ =>
+          if (genReadResp) {
+            WorkReqSim.randomAtomicOpCode()
+          } else {
+            SpinalExit(
+              f"${simTime()} time: invalid WR generation combo, totalPktNum=${totalPktNum}, genSendReq=${genSendReq}, genWriteReq=${genWriteReq}, genWriteImmReq=${genWriteImmReq}, genReadReq=${genReadReq}, genAtomicReq=${genAtomicReq}"
+            )
+          }
       }
+
+//      val workReqOpCode = if (isSendWriteImmReqOnly) {
+//        WorkReqSim.randomSendWriteImmOpCode()
+//      } else if (isSendWriteReqOnly) {
+//        WorkReqSim.randomSendWriteOpCode()
+//      } else if (isReadAtomicReqOnly) {
+//        if (totalPktNum == 1) {
+//          WorkReqSim.randomReadAtomicOpCode()
+//        } else {
+//          WorkReqOpCode.RDMA_READ
+//        }
+//      } else if (totalPktNum == 1) {
+//        WorkReqSim.randomRdmaReqOpCode()
+//      } else {
+//        WorkReqSim.randomSendWriteReadOpCode()
+//      }
 
       val isReadReq = workReqOpCode == WorkReqOpCode.RDMA_READ
       val isAtomicReq = Seq(
@@ -2498,7 +2539,7 @@ object RdmaDataPktSim {
         WorkReqOpCode.ATOMIC_FETCH_AND_ADD
       ).contains(workReqOpCode)
 
-      val (pktNum4Loop, reqPktNum, respPktNum) = if (isReadRespGen) {
+      val (pktNum4Loop, reqPktNum, respPktNum) = if (genReadResp) {
         (totalPktNum, 1, totalPktNum)
       } else if (isReadReq) {
         (1, 1, totalPktNum) // Only 1 packet for read request
@@ -2512,7 +2553,7 @@ object RdmaDataPktSim {
 
       // Inner loop
       for (pktIdx <- 0 until pktNum4Loop) {
-        val opcode = if (isReadRespGen) {
+        val opcode = if (genReadResp) {
           WorkReqSim.assignReadRespOpCode(pktIdx, pktNum4Loop)
         } else {
           WorkReqSim.assignReqOpCode(workReqOpCode, pktIdx, pktNum4Loop)
@@ -2520,7 +2561,7 @@ object RdmaDataPktSim {
 
         val headerLenBytes = opcode.getPktHeaderLenBytes()
         val psn = psnStart + pktIdx
-        val pktFragNum = if (!isReadRespGen && (isReadReq || isAtomicReq)) {
+        val pktFragNum = if (!genReadResp && (isReadReq || isAtomicReq)) {
           1 // Only 1 fragment for read/atomic request
         } else {
           computePktFragNum(
@@ -2538,7 +2579,7 @@ object RdmaDataPktSim {
 
         for (fragIdx <- 0 until pktFragNum) {
           val fragLast = fragIdx == pktFragNum - 1
-          val mty = if (!isReadRespGen && (isReadReq || isAtomicReq)) {
+          val mty = if (!genReadResp && (isReadReq || isAtomicReq)) {
             computeHeaderMty(headerLenBytes, busWidth)
           } else {
             computePktFragMty(
@@ -2593,6 +2634,43 @@ object RdmaDataPktSim {
     }
   }
 
+  def writeImmReqPktFragStreamMasterGen(
+      fragment: Fragment[RdmaDataPkt],
+      psnStart: PSN,
+      numWorkReq: Int,
+      pmtuLen: PMTU.Value,
+      busWidth: BusWidth.Value,
+      maxFragNum: Int
+  )(
+      innerLoopFunc: (
+          PSN,
+          PsnStart,
+          FragLast,
+          FragIdx,
+          FragNum,
+          PktIdx,
+          ReqPktNum,
+          RespPktNum,
+          PktLen,
+          HeaderLen, // TODO: remove this field
+          OpCode.Value
+      ) => Unit
+  ): Unit =
+    rdmaPktFragStreamMasterGenHelper(
+      fragment,
+      psnStart,
+      numWorkReq,
+      genReadResp = false,
+      genSendReq = false,
+      genWriteReq = false,
+      genWriteImmReq = true,
+      genReadReq = false,
+      genAtomicReq = false,
+      pmtuLen = pmtuLen,
+      busWidth = busWidth,
+      maxFragNum = maxFragNum
+    )(innerLoopFunc)
+
   def sendWriteImmReqPktFragStreamMasterGen(
       fragment: Fragment[RdmaDataPkt],
       psnStart: PSN,
@@ -2619,10 +2697,12 @@ object RdmaDataPktSim {
       fragment,
       psnStart,
       numWorkReq,
-      isReadRespGen = false,
-      isSendWriteImmReqOnly = true,
-      isSendWriteReqOnly = false,
-      isReadAtomicReqOnly = false,
+      genReadResp = false,
+      genSendReq = true,
+      genWriteReq = false,
+      genWriteImmReq = true,
+      genReadReq = false,
+      genAtomicReq = false,
       pmtuLen = pmtuLen,
       busWidth = busWidth,
       maxFragNum = maxFragNum
@@ -2654,10 +2734,12 @@ object RdmaDataPktSim {
       fragment,
       psnStart,
       numWorkReq,
-      isReadRespGen = false,
-      isSendWriteImmReqOnly = false,
-      isSendWriteReqOnly = true,
-      isReadAtomicReqOnly = false,
+      genReadResp = false,
+      genSendReq = true,
+      genWriteReq = true,
+      genWriteImmReq = true,
+      genReadReq = false,
+      genAtomicReq = false,
       pmtuLen = pmtuLen,
       busWidth = busWidth,
       maxFragNum = maxFragNum
@@ -2688,10 +2770,12 @@ object RdmaDataPktSim {
     fragment,
     psnStart,
     numWorkReq,
-    isReadRespGen = false,
-    isSendWriteImmReqOnly = false,
-    isSendWriteReqOnly = false,
-    isReadAtomicReqOnly = true,
+    genReadResp = false,
+    genSendReq = false,
+    genWriteReq = false,
+    genWriteImmReq = false,
+    genReadReq = true,
+    genAtomicReq = true,
     pmtuLen = pmtuLen,
     busWidth = busWidth,
     maxFragNum = maxFragNum
@@ -2722,10 +2806,12 @@ object RdmaDataPktSim {
     fragment,
     psnStart,
     numWorkReq,
-    isReadRespGen = false,
-    isSendWriteImmReqOnly = false,
-    isSendWriteReqOnly = false,
-    isReadAtomicReqOnly = false,
+    genReadResp = false,
+    genSendReq = true,
+    genWriteReq = true,
+    genWriteImmReq = true,
+    genReadReq = true,
+    genAtomicReq = true,
     pmtuLen = pmtuLen,
     busWidth = busWidth,
     maxFragNum = maxFragNum
@@ -2798,7 +2884,7 @@ object RdmaDataPktSim {
           WorkReqSim.randomSendWriteOpCode()
         } else {
           if (totalPktNum == 1) {
-            WorkReqSim.randomSendWriteReadAtomicOpCode()
+            WorkReqSim.randomRdmaReqOpCode()
           } else {
             WorkReqSim.randomSendWriteReadOpCode()
           }
@@ -3749,24 +3835,23 @@ object RqNakSim {
 object QpCtrlSim {
   import PsnSim._
 
-  object RqSubState extends SpinalEnum {
+  object RqSubState extends Enumeration {
     val WAITING, NORMAL, NAK_SEQ_TRIGGERED, NAK_SEQ, RNR_TRIGGERED, RNR_TIMEOUT,
-        RNR =
-      newElement()
+        RNR = Value
   }
 
-  object SqSubState extends SpinalEnum {
+  object SqSubState extends Enumeration {
     val WAITING, NORMAL, RETRY_FLUSH, RETRY_WORK_REQ, DRAINING, DRAINED,
-        COALESCE, ERR_FLUSH = newElement()
+        COALESCE, ERR_FLUSH = Value
   }
 
 //  val rxQCtrl = RxQCtrl()
 //  val txQCtrl = TxQCtrl()
 //  val qpAttr = QpAttrData()
-//  val rqSubState = RqSubState()
-//  val sqSubState = SqSubState()
+  var rqSubState = RqSubState.WAITING
+  var sqSubState = SqSubState.WAITING
 
-  private def initQpAttrData(qpAttr: QpAttrData, pmtuLen: PMTU.Value): Unit = {
+  def initQpAttrData(qpAttr: QpAttrData, pmtuLen: PMTU.Value): Unit = {
     qpAttr.npsn #= INIT_PSN
     qpAttr.epsn #= INIT_PSN
     qpAttr.rqOutPsn #= INIT_PSN -% 1
@@ -3789,8 +3874,20 @@ object QpCtrlSim {
     qpAttr.respTimeOut #= DEFAULT_RESP_TIME_OUT
 
     qpAttr.state #= QpState.RESET
-//    rqSubState #= RqSubState.WAITING
-//    sqSubState #= SqSubState.WAITING
+    rqSubState = RqSubState.WAITING
+    sqSubState = SqSubState.WAITING
+  }
+
+  def resetQpAttr2Normal(qpAttr: QpAttrData): Unit = {
+    qpAttr.state #= QpState.RTS
+    qpAttr.epsn #= SimSettings.INIT_PSN
+    qpAttr.npsn #= INIT_PSN
+    qpAttr.epsn #= INIT_PSN
+    qpAttr.rqOutPsn #= INIT_PSN -% 1
+    qpAttr.sqOutPsn #= INIT_PSN -% 1
+
+    rqSubState = RqSubState.NORMAL
+    sqSubState = SqSubState.NORMAL
   }
 
   private def rqHasFatalNak(rqNotifier: RqNotifier): Boolean = {
@@ -3896,12 +3993,12 @@ object QpCtrlSim {
   ) = {
     initQpAttrData(qpAttr, pmtuLen)
     qpAttr.state #= QpState.RTR
-    var rqSubState = RqSubState.NORMAL
+    rqSubState = RqSubState.NORMAL
 
     fork {
       while (true) {
-//        updateQpAttr(thatQpAttr)
         clockDomain.waitSampling()
+//        println(f"${simTime()} time: rqSubState=${rqSubState}")
 
         // Update PSN
         if (rqSubState == RqSubState.NORMAL) {
@@ -3927,9 +4024,9 @@ object QpCtrlSim {
             qpAttr.epsn #= rqNotifier.nak.rnr.psn.toInt
             qpAttr.rqPreReqOpCode #= rqNotifier.nak.rnr.preOpCode.toInt
 
-            println(
-              f"${simTime()} time: received rqNotifier.nak.rnr.pulse=${rqNotifier.nak.rnr.pulse.toBoolean} and rqNotifier.nak.rnr.psn=${rqNotifier.nak.rnr.psn.toInt}, RqSubState.RNR_TRIGGERED=${RqSubState.RNR_TRIGGERED}"
-            )
+//            println(
+//              f"${simTime()} time: received rqNotifier.nak.rnr.pulse=${rqNotifier.nak.rnr.pulse.toBoolean} and rqNotifier.nak.rnr.psn=${rqNotifier.nak.rnr.psn.toInt}, RqSubState.RNR_TRIGGERED=${RqSubState.RNR_TRIGGERED}"
+//            )
           } else if (
             rqSubState == RqSubState.RNR_TRIGGERED && rqNotifier.retryNakHasSent.pulse.toBoolean
           ) {
@@ -3937,9 +4034,9 @@ object QpCtrlSim {
             sleep(qpAttr.negotiatedRnrTimeOut.toLong)
             rqSubState = RqSubState.RNR
 
-            println(
-              f"${simTime()} time: received rqNotifier.retryNakHasSent.pulse=${rqNotifier.retryNakHasSent.pulse.toBoolean}, RqSubState.RNR=${RqSubState.RNR}"
-            )
+//            println(
+//              f"${simTime()} time: received rqNotifier.retryNakHasSent.pulse=${rqNotifier.retryNakHasSent.pulse.toBoolean}, RqSubState.RNR=${RqSubState.RNR}"
+//            )
           } else if (
             rqSubState == RqSubState.NORMAL && rqNotifier.nak.seqErr.pulse.toBoolean
           ) {
@@ -3947,26 +4044,26 @@ object QpCtrlSim {
 //            qpAttr.epsn #= rqNotifier.nak.seqErr.psn.toInt
 //            qpAttr.rqPreReqOpCode #= rqNotifier.nak.seqErr.preOpCode.toInt
 
-            println(
-              f"${simTime()} time: received rqNotifier.nak.seqErr.pulse=${rqNotifier.nak.seqErr.pulse.toBoolean} and rqNotifier.nak.seqErr.psn=${rqNotifier.nak.seqErr.psn.toInt}%X, RqSubState.NAK_SEQ_TRIGGERED=${RqSubState.NAK_SEQ_TRIGGERED}"
-            )
+//            println(
+//              f"${simTime()} time: received rqNotifier.nak.seqErr.pulse=${rqNotifier.nak.seqErr.pulse.toBoolean} and rqNotifier.nak.seqErr.psn=${rqNotifier.nak.seqErr.psn.toInt}%X, RqSubState.NAK_SEQ_TRIGGERED=${RqSubState.NAK_SEQ_TRIGGERED}"
+//            )
           } else if (
             rqSubState == RqSubState.NAK_SEQ_TRIGGERED && rqNotifier.retryNakHasSent.pulse.toBoolean
           ) {
             rqSubState = RqSubState.NAK_SEQ
 
-            println(
-              f"${simTime()} time: received rqNotifier.retryNakHasSent.pulse=${rqNotifier.retryNakHasSent.pulse.toBoolean}, RqSubState.NAK_SEQ=${RqSubState.NAK_SEQ}"
-            )
+//            println(
+//              f"${simTime()} time: received rqNotifier.retryNakHasSent.pulse=${rqNotifier.retryNakHasSent.pulse.toBoolean}, RqSubState.NAK_SEQ=${RqSubState.NAK_SEQ}"
+//            )
           } else if (
             (rqSubState == RqSubState.NAK_SEQ || rqSubState == RqSubState.RNR) &&
             rqNotifier.clearRetryNakFlush.pulse.toBoolean
           ) {
             rqSubState = RqSubState.NORMAL
 
-            println(
-              f"${simTime()} time: received rqNotifier.clearRetryNakFlush.pulse=${rqNotifier.clearRetryNakFlush.pulse.toBoolean}, RqSubState.NORMAL=${RqSubState.NORMAL}"
-            )
+//            println(
+//              f"${simTime()} time: received rqNotifier.clearRetryNakFlush.pulse=${rqNotifier.clearRetryNakFlush.pulse.toBoolean}, RqSubState.NORMAL=${RqSubState.NORMAL}"
+//            )
           }
         }
         // TODO: check RQ behavior under ERR
@@ -3982,10 +4079,7 @@ object QpCtrlSim {
         val rnrWait4Clear = rqSubState == RqSubState.RNR
         // RQ flush
         rxQCtrl.stateErrFlush #= isQpStateWrong
-//        rxQCtrl.nakSeqTriggered #= nakSeqTriggered
         rxQCtrl.nakSeqFlush #= nakSeqTriggered || nakSeqWait4Clear
-//        rxQCtrl.rnrTriggered #= rnrTriggered
-//        rxQCtrl.rnrTimeOut #= rnrTimeOut
         rxQCtrl.rnrFlush #= rnrTriggered || rnrTimeOut || rnrWait4Clear
         rxQCtrl.isRetryNakNotCleared #= rnrTriggered || rnrTimeOut || rnrWait4Clear || nakSeqTriggered || nakSeqWait4Clear
       }
@@ -4002,12 +4096,12 @@ object QpCtrlSim {
   ) = {
     initQpAttrData(qpAttr, pmtuLen)
     qpAttr.state #= QpState.RTS
-    var sqSubState = SqSubState.NORMAL
+    sqSubState = SqSubState.NORMAL
 
     fork {
       while (true) {
-//        updateQpAttr(thatQpAttr)
         clockDomain.waitSampling()
+//        println(f"${simTime()} time: sqSubState=${sqSubState}")
 
         // Update PSN
         if (sqSubState == SqSubState.NORMAL) {

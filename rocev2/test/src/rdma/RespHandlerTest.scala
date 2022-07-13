@@ -693,7 +693,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifierTest extends AnyFunSuite {
           val expectedWorkCompStatus = if (addrCacheQuerySuccess) {
             WorkCompStatus.SUCCESS
           } else {
-            WorkCompStatus.LOC_LEN_ERR
+            WorkCompStatus.LOC_ACCESS_ERR
           }
 
           inputWorkReqAndAckQueue.enqueue(

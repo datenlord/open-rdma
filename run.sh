@@ -76,9 +76,13 @@ $MILL rocev2.test.testSim rdma.ReadDmaReqInitiatorTest
 $MILL rocev2.test.testSim rdma.RqReadDmaRespHandlerTest
 $MILL rocev2.test.testSim rdma.ReadRespGeneratorTest
 $MILL rocev2.test.testSim rdma.RqOutTest
-# Slow test
-$MILL rocev2.test.testSim rdma.SendWriteRespGeneratorTest
-$MILL rocev2.test.testSim rdma.RqSendWriteWorkCompGeneratorTest
+$MILL rocev2.test.testSim rdma.SendWriteRespGeneratorTest # Slow test
+$MILL rocev2.test.testSim rdma.RqSendWriteWorkCompGeneratorTest # Slow test
+
+if [ "$CI_ENV" = "true" ]; then
+  rm -rf simWorkspace/ # Delete simulation data to save space for GitHub CI
+fi
+
 # E2E test
 $MILL rocev2.test.testSim rdma.RecvQTest
 
