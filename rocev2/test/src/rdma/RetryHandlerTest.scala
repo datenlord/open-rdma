@@ -69,7 +69,7 @@ class RetryHandlerTest extends AnyFunSuite {
       streamMasterDriver(dut.io.retryWorkReqIn, dut.clockDomain) {
         val curPsn = nextPsn
         dut.io.retryWorkReqIn.scanOutData.psnStart #= curPsn
-        val workReqOpCode = WorkReqSim.randomSendWriteReadAtomicOpCode()
+        val workReqOpCode = WorkReqSim.randomRdmaReqOpCode()
         dut.io.retryWorkReqIn.scanOutData.workReq.opcode #= workReqOpCode
         val pktLen = if (workReqOpCode.isAtomicReq()) {
           ATOMIC_DATA_LEN.toLong

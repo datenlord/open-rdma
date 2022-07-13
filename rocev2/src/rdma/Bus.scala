@@ -1748,7 +1748,7 @@ case class WorkComp() extends Bundle {
   def setOpCodeFromRqReqOpCode(reqOpCode: Bits): this.type = {
     when(OpCode.isSendReqPkt(reqOpCode)) {
       opcode := WorkCompOpCode.RECV
-    } elsewhen (OpCode.isWriteWithImmReqPkt(reqOpCode)) {
+    } elsewhen (OpCode.isWriteImmReqPkt(reqOpCode)) {
       opcode := WorkCompOpCode.RECV_RDMA_WITH_IMM
     } otherwise {
       report(

@@ -568,7 +568,7 @@ class ReadAtomicRespVerifierAndFatalNakNotifier(busWidth: BusWidth.Value)
         result.workCompStatus := WorkCompStatus.LOC_LEN_ERR
       } elsewhen (keyErr || accessErr) {
         ack.aeth.set(AckType.NAK_RMT_ACC)
-        result.workCompStatus := WorkCompStatus.LOC_PROT_ERR
+        result.workCompStatus := WorkCompStatus.LOC_ACCESS_ERR
       }
     }
 

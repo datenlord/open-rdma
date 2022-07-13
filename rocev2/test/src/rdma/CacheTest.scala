@@ -471,7 +471,7 @@ class WorkReqCacheTest extends AnyFunSuite {
     ]()
 
     streamMasterDriver(dut.io.push, dut.clockDomain) {
-      dut.io.push.workReq.opcode #= WorkReqSim.randomSendWriteReadAtomicOpCode()
+      dut.io.push.workReq.opcode #= WorkReqSim.randomRdmaReqOpCode()
     }
     onStreamFire(dut.io.push, dut.clockDomain) {
       inputWorkReqQueue.enqueue(
@@ -612,7 +612,7 @@ class WorkReqCacheTest extends AnyFunSuite {
                 dut.io.push.psnStart.toInt,
                 dut.io.push.pktNum.toInt,
                 dut.io.push.workReq.lenBytes.toLong,
-                WorkReqSim.randomSendWriteReadAtomicOpCode(),
+                WorkReqSim.randomRdmaReqOpCode(),
                 dut.io.push.workReq.raddr.toBigInt,
                 dut.io.push.workReq.rkey.toLong
               )

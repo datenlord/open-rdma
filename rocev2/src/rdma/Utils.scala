@@ -1117,6 +1117,7 @@ object FragmentStreamForkQueryJoinResp {
       queryStream: Stream[Tquery],
       respStream: Stream[Tresp],
       waitQueueDepth: Int,
+      waitQueueName: String,
       buildQuery: Stream[Fragment[Tin]] => Tquery,
       queryCond: Stream[Fragment[Tin]] => Bool,
       expectResp: Stream[Fragment[Tin]] => Bool,
@@ -1138,7 +1139,7 @@ object FragmentStreamForkQueryJoinResp {
         depth = waitQueueDepth,
         push = input4Queue,
         flush = False, // TODO: enable queue flush
-        queueName = "inputFragQueue"
+        queueName = waitQueueName
       )
       val emptyStream = StreamSource().translateWith(respStream.payload)
       // When not expect query response, join with StreamSource()
@@ -1613,6 +1614,35 @@ object setAllBits {
       val one = U(1, 1 bit)
       val shift = (one << width) - 1
       val result = shift.asBits
+    }.result
+}
+
+// For normal ACK or non-retry NAK, they are responded at
+// the last fragment of the last or the only request packet.
+object rqGenRespCond {
+  def apply(bth: BTH, hasNak: Bool, aeth: AETH): Bool =
+    new Composite(bth, "rqRespCond") {
+      val opcode = bth.opcode
+      val isSendReq = OpCode.isSendReqPkt(opcode)
+      val isWriteReq = OpCode.isWriteReqPkt(opcode)
+      val isReadReq = OpCode.isReadReqPkt(opcode)
+      val isAtomicReq = OpCode.isAtomicReqPkt(opcode)
+      val isFirstOrOnlyReqPkt = OpCode.isFirstOrOnlyReqPkt(opcode)
+      val isLastOrOnlyReqPkt = OpCode.isLastOrOnlyReqPkt(opcode)
+      val ackReq =
+        ((isSendReq || isWriteReq) && bth.ackreq) || isReadReq || isAtomicReq
+      val respAtFirstOrLastPkt =
+        (hasNak && aeth.isRetryNak()) ? isFirstOrOnlyReqPkt | isLastOrOnlyReqPkt
+      val result = (hasNak && respAtFirstOrLastPkt) || ackReq
+    }.result
+}
+
+// For retry NAK, it is responded at the last fragment of
+// the first or the only request packet.
+object retryNakTriggerCond {
+  def apply(lastFire: Bool, hasRetryNak: Bool): Bool =
+    new Composite(lastFire, "retryNakTriggerCond") {
+      val result = lastFire && hasRetryNak
     }.result
 }
 
@@ -2893,6 +2923,7 @@ object AddrCacheQueryAndRespHandler {
       addrCacheRead.req,
       addrCacheRead.resp,
       waitQueueDepth = ADDR_CACHE_QUERY_FIFO_DEPTH,
+      waitQueueName = "AddrCacheQueryWaitQueue",
       buildQuery = buildAddrCacheQuery,
       queryCond = addrCacheQueryCond,
       expectResp = expectAddrCacheResp,

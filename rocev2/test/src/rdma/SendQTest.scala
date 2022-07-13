@@ -83,7 +83,7 @@ class WorkReqValidatorTest extends AnyFunSuite {
       val pktNum = MiscUtils.computePktNum(pktLen.toLong, pmtuLen)
 //      val psnEnd = psnStart +% (pktNum - 1)
 
-      val workReqOpCode = WorkReqSim.randomSendWriteReadAtomicOpCode()
+      val workReqOpCode = WorkReqSim.randomRdmaReqOpCode()
       dut.io.workReq.opcode #= workReqOpCode
       dut.io.workReq.lenBytes #= pktLen
       val noFlags = 0
@@ -110,7 +110,7 @@ class WorkReqValidatorTest extends AnyFunSuite {
       if (!normalOrErrorCase) { // Error case
         val workCompStatus = if (addrCacheQueryErrOrFlushErr) {
           // AddrCache query response error
-          WorkCompStatus.LOC_LEN_ERR
+          WorkCompStatus.LOC_ACCESS_ERR
         } else { // Flush error
           WorkCompStatus.WR_FLUSH_ERR
         }
@@ -341,7 +341,7 @@ class WorkReqCacheAndOutPsnRangeHandlerTest extends AnyFunSuite {
       dut.io.normalWorkReq
     }
     streamMasterDriver(inputWorkReqStream, dut.clockDomain) {
-      val workReqOpCode = WorkReqSim.randomSendWriteReadAtomicOpCode()
+      val workReqOpCode = WorkReqSim.randomRdmaReqOpCode()
       inputWorkReqStream.workReq.opcode #= workReqOpCode
       val workReqLen = inputWorkReqStream.workReq.lenBytes.toLong
       val pktNum = MiscUtils.computePktNum(workReqLen, pmtuLen)
@@ -747,7 +747,7 @@ class SqOutTest extends AnyFunSuite {
       val pktNum = pktNumItr.next()
       val psnStart = psnStartItr.next()
       val payloadLenBytes = payloadLenItr.next()
-      val workReqOpCode = WorkReqSim.randomSendWriteReadAtomicOpCode()
+      val workReqOpCode = WorkReqSim.randomRdmaReqOpCode()
       val psnEnd = psnStart +% (pktNum - 1)
 
       val isReadReq = workReqOpCode.isReadReq()

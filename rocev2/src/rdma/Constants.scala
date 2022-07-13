@@ -949,7 +949,7 @@ object OpCode extends Enumeration {
       }
     }.result
 
-  def isWriteWithImmReqPkt(opcode: Bits): Bool =
+  def isWriteImmReqPkt(opcode: Bits): Bool =
     new Composite(opcode, "OpCode_isWriteWithImmReqPkt") {
       val result = Bool()
       switch(opcode) {
@@ -963,6 +963,11 @@ object OpCode extends Enumeration {
           result := False
         }
       }
+    }.result
+
+  def needRxBuf(opcode: Bits): Bool =
+    new Composite(opcode, "OpCode_needRxBuf") {
+      val result = isSendReqPkt(opcode) || isWriteImmReqPkt(opcode)
     }.result
 
   def hasImmDt(opcode: Bits): Bool =

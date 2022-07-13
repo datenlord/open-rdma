@@ -133,7 +133,7 @@ class QPTest extends AnyFunSuite {
         } else if (noDmaRead) {
           WorkReqSim.randomReadAtomicOpCode()
         } else {
-          WorkReqSim.randomSendWriteReadAtomicOpCode()
+          WorkReqSim.randomRdmaReqOpCode()
         }
         val pktLen = if (workReqOpCode.isAtomicReq()) {
           ATOMIC_DATA_LEN.toLong
@@ -258,7 +258,7 @@ class QPTest extends AnyFunSuite {
             WorkReqOpCode.RDMA_READ
           } else {
             // TODO: check if RQ supports atomic
-            WorkReqSim.randomSendWriteReadAtomicOpCode()
+            WorkReqSim.randomRdmaReqOpCode()
           }
 //        println(
 //          f"${simTime()} time: WR opcode=${workReqOpCode}, pktNum=${pktNum}, totalFragNum=${totalFragNum}, psnStart=${psnStart}, totalLenBytes=${totalLenBytes}"
