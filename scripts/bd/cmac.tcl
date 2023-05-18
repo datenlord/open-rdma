@@ -17,21 +17,21 @@ proc create_cmac_bd { name } {
 
     set S_AXIS [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:axis_rtl:1.0 S_AXIS ]
     set_property -dict [ list \
-    CONFIG.FREQ_HZ [dict get $cfg user_clk] \
-    CONFIG.HAS_TKEEP {1} \
-    CONFIG.HAS_TLAST {1} \
-    CONFIG.HAS_TREADY {1} \
-    CONFIG.HAS_TSTRB {0} \
-    CONFIG.LAYERED_METADATA {undef} \
-    CONFIG.TDATA_NUM_BYTES {64} \
-    CONFIG.TDEST_WIDTH {0} \
-    CONFIG.TID_WIDTH {0} \
-    CONFIG.TUSER_WIDTH {0} \
+        CONFIG.FREQ_HZ [dict get $cfg user_clk] \
+        CONFIG.HAS_TKEEP {1} \
+        CONFIG.HAS_TLAST {1} \
+        CONFIG.HAS_TREADY {1} \
+        CONFIG.HAS_TSTRB {0} \
+        CONFIG.LAYERED_METADATA {undef} \
+        CONFIG.TDATA_NUM_BYTES {64} \
+        CONFIG.TDEST_WIDTH {0} \
+        CONFIG.TID_WIDTH {0} \
+        CONFIG.TUSER_WIDTH {0} \
     ] $S_AXIS
 
     set diff_clock_rtl [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_clock_rtl:1.0 diff_clock_rtl ]
     set_property -dict [ list \
-    CONFIG.FREQ_HZ [dict get $cfg qsfp_clk] \
+        CONFIG.FREQ_HZ [dict get $cfg qsfp_clk] \
     ] $diff_clock_rtl
 
     set gt_rtl [ create_bd_intf_port -mode Master -vlnv xilinx.com:interface:gt_rtl:1.0 gt_rtl ]
@@ -40,11 +40,11 @@ proc create_cmac_bd { name } {
     # Create ports
     set sys_clk_p [ create_bd_port -dir I -type clk -freq_hz [dict get $cfg sys_clk] sys_clk_p ]
     set_property -dict [ list \
-    CONFIG.ASSOCIATED_RESET {sys_reset} \
+        CONFIG.ASSOCIATED_RESET {sys_reset} \
     ] $sys_clk_p
     set sys_reset [ create_bd_port -dir I -type rst sys_reset ]
     set_property -dict [ list \
-    CONFIG.POLARITY {ACTIVE_HIGH} \
+        CONFIG.POLARITY {ACTIVE_HIGH} \
     ] $sys_reset
     set user_clk [ create_bd_port -dir I -type clk -freq_hz [dict get $cfg user_clk] user_clk ]
     set user_clk_reset_n [ create_bd_port -dir I -type rst user_clk_reset_n ]

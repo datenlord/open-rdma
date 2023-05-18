@@ -13,7 +13,7 @@ proc create_top_bd { name } {
    set diff_clock_rtl [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_clock_rtl:1.0 diff_clock_rtl ]
    set_property -dict [ list \
       CONFIG.FREQ_HZ [dict get $cfg qsfp_clk] \
-      ] $diff_clock_rtl
+   ] $diff_clock_rtl
 
    set gt_rtl [ create_bd_intf_port -mode Master -vlnv xilinx.com:interface:gt_rtl:1.0 gt_rtl ]
 
