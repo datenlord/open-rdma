@@ -53,7 +53,6 @@ puts "\033\[0m";
 
 source ./bd/cmac.tcl
 source ./bd/xdma.tcl
-source ./bd/qdma.tcl
 source ./bd/top.tcl
 
 create_project [dict get $cfg project_name] ./build/[dict get $cfg project_name] -part [dict get $cfg part] -force
