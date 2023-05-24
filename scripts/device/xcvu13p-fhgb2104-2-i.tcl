@@ -5,14 +5,16 @@ dict set cfg user_clk 500000000
 dict set cfg sys_clk 100000000
 dict set cfg pcie_clk 100000000
 dict set cfg qsfp_clk 161132812
+dict set cfg qsfp_clk_M 161.1328125
+dict set cfg qsfp_lanes 4x25
 dict set cfg cmac_property [list \
     CONFIG.ADD_GT_CNRL_STS_PORTS {0} \
     CONFIG.CMAC_CAUI4_MODE {1} \
     CONFIG.ENABLE_AXI_INTERFACE {0} \
-    CONFIG.GT_REF_CLK_FREQ {161.1328125} \
+    CONFIG.GT_REF_CLK_FREQ $qsfp_clk_M \
     CONFIG.INCLUDE_RS_FEC {0} \
     CONFIG.INS_LOSS_NYQ {1} \
-    CONFIG.NUM_LANES {4x25} \
+    CONFIG.NUM_LANES $qsfp_lanes \
     CONFIG.RX_EQ_MODE {DFE} \
     CONFIG.RX_FLOW_CONTROL {0} \
     CONFIG.TX_FLOW_CONTROL {0} \

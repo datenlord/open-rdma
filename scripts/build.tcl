@@ -66,6 +66,10 @@ create_xdma_bd "xdma"
 # create_qdma_bd "qdma"
 create_top_bd "top"
 
+add_files -fileset constraints -norecurse "constraints/pblock.xdc"
+set_property constrset constraints [get_runs synth_1]
+set_property constrset constraints [get_runs impl_1]
+
 # start_gui
 
 puts -nonewline "\033\[32m";
@@ -73,3 +77,4 @@ puts -nonewline "Running synthesis... It may take a while...";
 puts "\033\[0m";
 
 launch_runs synth_1 -jobs [get_param general.maxThreads]
+wait_on_run synth_1
