@@ -66,7 +66,8 @@ create_xdma_bd "xdma"
 # create_qdma_bd "qdma"
 create_top_bd "top"
 
-add_files -fileset constraints -norecurse "constraints/pblock.xdc"
+create_fileset -constrset constraints
+add_files -fileset constraints ./constraint
 set_property constrset constraints [get_runs synth_1]
 set_property constrset constraints [get_runs impl_1]
 
@@ -78,3 +79,14 @@ puts "\033\[0m";
 
 launch_runs synth_1 -jobs [get_param general.maxThreads]
 wait_on_run synth_1
+
+#puts -nonewline "\033\[32m";
+#puts -nonewline "Running implementation... It may take a while...";
+#puts "\033\[0m";
+
+#launch_runs impl_1 -to_step write_bitstream
+#wait_on_run impl_1
+
+#puts -nonewline "\033\[32m";
+#puts -nonewline "Write to bitstream successfully.";
+#puts "\033\[0m";

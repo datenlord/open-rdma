@@ -90,9 +90,6 @@ proc create_top_bd { name } {
    connect_bd_net [get_bd_ports sys_reset] [get_bd_pins clk_wiz/reset] [get_bd_pins cmac/sys_reset]
    connect_bd_net [get_bd_ports pcie_lnk_up] [get_bd_pins xdma/pcie_lnk_up]
 
-   # Create address segments
-   assign_bd_address
-
    # Validate block design
    validate_bd_design
    save_bd_design

@@ -11,10 +11,10 @@ dict set cfg cmac_property [list \
     CONFIG.ADD_GT_CNRL_STS_PORTS {0} \
     CONFIG.CMAC_CAUI4_MODE {1} \
     CONFIG.ENABLE_AXI_INTERFACE {0} \
-    CONFIG.GT_REF_CLK_FREQ $qsfp_clk_M \
+    CONFIG.GT_REF_CLK_FREQ [dict get $cfg qsfp_clk_M] \
     CONFIG.INCLUDE_RS_FEC {0} \
     CONFIG.INS_LOSS_NYQ {1} \
-    CONFIG.NUM_LANES $qsfp_lanes \
+    CONFIG.NUM_LANES [dict get $cfg qsfp_lanes] \
     CONFIG.RX_EQ_MODE {DFE} \
     CONFIG.RX_FLOW_CONTROL {0} \
     CONFIG.TX_FLOW_CONTROL {0} \
