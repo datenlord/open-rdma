@@ -1,0 +1,9 @@
+[submodule "blue-rdma"]
+	path = blue-rdma
+	url = https://github.com/datenlord/blue-rdma.git
+[submodule "async-rdma"]
+	path = async-rdma
+	url = https://github.com/datenlord/async-rdma.git
+[submodule "roce-sim"]
+	path = roce-sim
+	url = https://github.com/datenlord/roce-sim.git
