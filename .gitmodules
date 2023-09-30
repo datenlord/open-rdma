@@ -7,3 +7,6 @@
 [submodule "roce-sim"]
 	path = roce-sim
 	url = https://github.com/datenlord/roce-sim.git
+[submodule "rdma-driver-rs"]
+	path = rdma-driver-rs
+	url = https://github.com/datenlord/rdma-driver-rs
