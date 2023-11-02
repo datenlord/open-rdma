@@ -10,3 +10,6 @@
 [submodule "open-rdma-driver"]
 	path = open-rdma-driver
 	url = https://github.com/datenlord/open-rdma-driver
+[submodule "rdma-driver-rs"]
+	path = rdma-driver-rs
+	url = https://github.com/datenlord/rdma-driver-rs
